@@ -1,0 +1,7 @@
+GET / HTTP/1.1
+host: x
+Upgrade: webcx
+Upgrade: cke-P22, r
+connection:Se-Proto13, otPbSocro, otPbSp-v1, otPbSo, otPbSockkeOtPbSocro, otPbSp-v3, otPbSo, otPbSockr
+Connection:Se-Pro, otPbSp-v4, otPbSocket-P2, ltotPbSocket-v21, otPbSocro, Sp-v2, otPb, o2, otPbSocket-Prot/r
+

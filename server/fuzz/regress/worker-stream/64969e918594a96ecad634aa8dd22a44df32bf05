@@ -1,0 +1,16 @@
+¸kGET / HTTP/1.1
+Host: x
+Upgrade: 
+Connection: [w: Upgrade
+Sec-WebSocket-Key: dGhlIÿÿÿÿÿÿÿÿÿÿÿHNhbXBs
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==Upgrade: websocket
+Con`nection: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebSocket-Version: 13
+
+‚‘7ú!=6û!=8û},ÈÔ‚‘7ú!=6ø!=7û}(È(Ô‚‘7ú!=6ù!=7û},ÈÔ‚é7ú!=5û!=8ËË[ËËËËËËËËËËÉÉÉÉÉÉ
+Sec-WebSocket-Version: 13
+
+‚‘7ú!=6û!=7û}ÕÈÔ‚‘0ú!=1ã=7û},ÈÔ‚‘7ú!=iÿÿÿÿÿÿÿÅo

@@ -1,0 +1,8 @@
+ZGET ? HTTP/1.1
+Host: x
+Upgrade: websocket
+Connection: UpgradE
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub24jZQ==
+Sec-WebSocket-Version: 13
+
+‚“7ú!=6û!=7ûq=)‚XO›LM[Õ

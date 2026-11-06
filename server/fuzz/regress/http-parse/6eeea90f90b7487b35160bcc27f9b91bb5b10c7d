@@ -1,0 +1,13 @@
+GET / HTTP/1.1
+Hos: websockeonnection: 
+Connection: Upgrade
+SecWebSde:
+Sec-WebSocketrade:
+Sec-We-de:
+Sec-WebSocketrade:
+Sec-c-de:
+Sec-WebSocketrade:: x
+Upgrade: websocket
+Coet-Krade:
+Sec-WebSocket-VErsion: 13
+

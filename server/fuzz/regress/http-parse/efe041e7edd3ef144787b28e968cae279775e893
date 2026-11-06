@@ -1,0 +1,7 @@
+GET / HTTP/1.1
+Host: x
+Upgrade: websocket
+Upgrade: websocket
+Connecn: Upgr
+SbSers:ni o13
+

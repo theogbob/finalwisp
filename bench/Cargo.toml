@@ -1,0 +1,22 @@
+[package]
+name = "wbench"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Wisp v1 load generator + TCP target (pointer 30.01)"
+
+[[bin]]
+name = "wbench"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "macros", "sync"] }
+bytes = "1"
+hdrhistogram = { version = "7", default-features = false }
+clap = { version = "4", features = ["derive"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"

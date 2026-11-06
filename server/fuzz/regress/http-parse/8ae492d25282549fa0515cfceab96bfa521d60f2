@@ -1,0 +1,4 @@
+GET / HTTP/1.1
+XFor: ::f.1, unknown, 10.0.0.5
+X-Forwarded-For: ::ffff:fff:127.0.0.0
+

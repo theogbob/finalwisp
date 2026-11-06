@@ -1,0 +1,11 @@
+GET / HTTP/1.1
+-de:Gs
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Protocol:
+cti*n:Q==@
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Protocol:
+ee:
+
+ é

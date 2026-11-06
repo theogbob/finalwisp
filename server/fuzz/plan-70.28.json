@@ -1,0 +1,84 @@
+{
+ "lanes": [
+  [
+   {
+    "target": "worker-stream",
+    "secs": 25200,
+    "max_len": 140000
+   }
+  ],
+  [
+   {
+    "target": "worker-wisp",
+    "secs": 25200,
+    "max_len": 16384
+   }
+  ],
+  [
+   {
+    "target": "worker-tls",
+    "secs": 25200,
+    "max_len": 16384
+   }
+  ],
+  [
+   {
+    "target": "config-parse",
+    "secs": 25200,
+    "max_len": 8192
+   }
+  ],
+  [
+   {
+    "target": "upstream-parse",
+    "secs": 25200,
+    "max_len": 9000
+   }
+  ],
+  [
+   {
+    "target": "policy-host",
+    "secs": 25200,
+    "max_len": 4096
+   }
+  ],
+  [
+   {
+    "target": "http-parse",
+    "secs": 25200,
+    "max_len": 20000
+   }
+  ],
+  [
+   {
+    "target": "cli-parse",
+    "secs": 25200,
+    "max_len": 2048
+   }
+  ],
+  [
+   {
+    "target": "config-parse",
+    "secs": 12600,
+    "max_len": 8192
+   },
+   {
+    "target": "upstream-parse",
+    "secs": 12600,
+    "max_len": 9000
+   }
+  ],
+  [
+   {
+    "target": "dns-parse",
+    "secs": 12600,
+    "max_len": 2048
+   },
+   {
+    "target": "worker-wisp",
+    "secs": 12600,
+    "max_len": 16384
+   }
+  ]
+ ]
+}

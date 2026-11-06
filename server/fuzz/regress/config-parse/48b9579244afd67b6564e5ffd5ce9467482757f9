@@ -1,0 +1,55 @@
+ÿþ# all 1!MJupload-rate-per-st/isten-unix /tmp/fw.sotream 513K
+log-level debug
+log-conns
+metrics-listen 214
+listen-unix /pmp/fw.sock fla-ser-s888888 214
+listen-unix /pmp/fw.sock fla-ser-s888888g-level debug
+log-conns
+metrics-listen 214
+listen-unix /pmp/fw.so	ck cog-conns
+metrics-listen 1
+log-level debug
+log-conns
+metrics-listen 214
+listen-unix /pmp/fw.27.0.0.1:9100
+listen-unix /tmp/fw.sotre-listen 1
+log-level debug
+log-conns
+metrics-listen 214
+listen-unix /pmp/fwg-level debug
+log-conns
+metrics-listen 214
+listen-unix /pmp/fw.oad-rate-per-st/isten-unix /tmp/fw.sotream 513K
+log-level debug
+log-conns
+metrics-listen 214
+listen-unix /pmpebug
+log-conns
+metrics-listen 214
+listen-unix /pmp/fw.sock fla-ser-s888888 214
+listen-unix /pmp/fw.sock fla-ser-s888888g-level debug
+log-conns
+metrics-listen 214
+listen-unix /pmp/fw.so	ck cog-conns
+metrics-listen 1
+log-level debug
+log-conns
+metrics-listen 214
+listen-unix tmp/fw.sotream 512K
+log-level debug
+log-conns
+metrics-listen 214
+listen-unix /pmp/fw.sock fla-ser-s888888g-level debug
+log-conns
+metrics-listen 214
+listen-unix /pmp/fw.so	ck cog-conns
+metrics-listen 1
+log-level debug
+log-conns
+metrics-listen 214
+listen-unix /pmp/fw.27.0.0.1:9100
+listen-unix /tmp/fw.sotre-listen 1
+log-level debug
+log-conns
+metrics-listen 214
+listen-unix /pmp/fw.27.0.0.1:ns

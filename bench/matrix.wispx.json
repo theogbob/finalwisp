@@ -1,0 +1,64 @@
+{
+ "_doc": "UNOFFICIAL, for fun: matrix.main.json + WispX-Rust (wispx, wispx-nodelay). `bench/wst matrix bench/matrix.wispx.json --reps 3`",
+ "duration": 5,
+ "warmup": 1,
+ "port": 6001,
+ "servers": [
+  "finalwisp",
+  "epoxy",
+  "wisp-js",
+  "python",
+  "wispurr",
+  "wispx",
+  "wispx-nodelay"
+ ],
+ "cases": [
+  {
+   "test": "upload",
+   "conns": 1,
+   "streams": 1,
+   "size": 16384
+  },
+  {
+   "test": "upload",
+   "conns": 10,
+   "streams": 10,
+   "size": 16384
+  },
+  {
+   "test": "download",
+   "conns": 10,
+   "streams": 10
+  },
+  {
+   "test": "echo",
+   "conns": 1,
+   "streams": 1,
+   "size": 16384
+  },
+  {
+   "test": "echo",
+   "conns": 10,
+   "streams": 10,
+   "size": 16384
+  },
+  {
+   "test": "rr",
+   "conns": 1,
+   "streams": 1,
+   "size": 64
+  },
+  {
+   "test": "rr",
+   "conns": 10,
+   "streams": 10,
+   "size": 64
+  },
+  {
+   "test": "churn",
+   "conns": 10,
+   "streams": 10,
+   "size": 64
+  }
+ ]
+}

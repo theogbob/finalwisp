@@ -1,0 +1,13 @@
+GET / HTTP/1.1
+Host: x
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSot-Key: dGhlIHNhbXSBubhbXE==
+Sec-WebSocket-Version: 13
+ection:de
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub23jZQ==
+#####n: 13
+Sec-WebSocket-Protocol:0#################################wiEEEEEEEEEEEEEEEEEEEEEEEEEEEEeEEEEEEEEE0EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
+
+v2[ other
+

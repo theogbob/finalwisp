@@ -1,0 +1,105 @@
+ÿþ
+
+
+
+
+
+
+				
+
+
+
+
+			
+port 40
+
+
+
+
+
+
+
+
+allow-host ajjjjjjjjjjjajjj,jjjjjjjjjjj0
+
+
+
+
+
+
+
+
+allow-host ajjjjj,ffff,ffffffffffff,fffffffffffffffff
+
+
+
+
+
+				
+
+
+
+
+			
+port 80
+
+
+
+
+
+
+
+
+allow-host ajjj
+
+
+
+
+
+allow-host ajjjjj,ffff,ffffffffffff,fffffffffffffffff
+
+
+
+
+
+				
+
+
+
+
+			
+port 80
+
+
+
+
+
+
+
+
+allow-host ajjjjjjjjjjjajjj,jjjjjjjjjjj0
+
+
+
+
+
+
+
+
+allow-host ajjjjj,ffff,ffffffffffff,fffffffffffffffffffffffffffffffffffffffffffffffffffjjjjjjjffj,ffffff________________________________
+auth-file /tmp/jj2
+dns-own
+dns-server 1.1.1.15:3
+no-prio
+auth-file /tmp/auth
+cert-auth-key /t
+no-prio
+auth-file /tffff,ffffjjjjjjj,ffffffffffffffffffffffffjjjjjjjffj,ffffff________________________________
+auth-file /tmp/jj2
+dns-own
+dns-server 1.1.1.15:3
+no-prio
+auth-file /tmp/auth
+cert-auth-key /t
+no-prio
+auth-file /tffff,ffffjjjjjjj,fffffffjjjjjjj,ffff,fffffffffffffffffffffjjjjjjj,jfffffflow-fff

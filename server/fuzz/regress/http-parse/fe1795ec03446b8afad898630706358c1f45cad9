@@ -1,0 +1,9 @@
+GET / HTTP/1.1
+Upgrade:,,񪏘r,,񪏘ae,񪏘Pst
+Upgrade: websocket
+Connection: Upgrade
+Key:(�EEE
+Sec-WebSocket-Version: 13
+
+
+dew

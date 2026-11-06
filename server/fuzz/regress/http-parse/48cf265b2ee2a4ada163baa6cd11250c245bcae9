@@ -1,0 +1,8 @@
+GET / HTTP/1.1
+Host:xd[: x
+Upgrade: websocket
+Conetncion: Upgradewebs
+Connection: Upgrade
+Sade: xhl
+Sec-WebSocket-Version: 13
+

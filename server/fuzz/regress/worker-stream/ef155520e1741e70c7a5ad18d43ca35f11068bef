@@ -1,0 +1,11 @@
+ZGET / HTTP/1.1
+Host`: x
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Protocol: wisp-v2
+
+‚7ú!=2ú!=7ø!?4ú!=6Ñ‚‘7ú!=6ûO‚YEOYEO‚ wisp-v2
+
+‚…7ú!=2ú!=7

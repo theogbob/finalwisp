@@ -1,0 +1,63 @@
+��# bow-ports 800,47     
+allow-ports 04,479,443,10         
+allow-ports 80,479,443,05 
+allow-ports 04,479,443,10       ,10         
+allow-ports 9,443,10         
+allow-ports 80,479,443,05 
+allow-ports 04,479,443,10       ,10         
+allow-ports 80,479,44          ,479,443,10                        
+allow-ports 80,47   ,10         
+allow-ports 80,479,443,05 
+allow-ports 04,479,443,10       ,10         
+allow-ports 80,479,44          ,479,443,10                        
+allow-ports 80,47     
+allow-ports 04443,10         
+allow-ports 80,749,443,10 ,47     
+allow-ports 02,479,443,10       ,10         
+allow-ports 80,479,44  ,479,44    
+allow-ports 80,47     
+allow-ports 04443,10         
+allow-ports 80,749   ,749,443,10 ,47     
+allow-ports 02,479,443,10       ,10         
+allow-ports 80,479,44  ,479,44    
+allow-ports 02,479,443    
+allow-ports 80,47443,10         
+allow-ports 80,479,443,10 ,47     
+allow-ports 24,4790         
+allow-ports 80,479,443,10 ,47     
+allow-ports 04,479,443,10          ,749,443,10 ,47     
+allow-ports 02,479,443,10       ,10         
+allow-ports 80,479,44  ,479,44    
+allow-ports 02,479,443    
+allow-ports 80,47443,10         
+allow-ports 80,479,443,10 ,47     
+allow-ports 24,479,443        
+allow-ports 80,479,44        ,479,443,10                        
+allow-ports 80,47   ,10         
+allow-ports 80,479,443,05 
+allow-ports 04,479,443,10       ,10         
+allow-ports 8   
+ 　    
+#$ 
+
+# 
+#     
+　   
+#$  　       $ 
+
+# 
+#    
+#$   $ 
+
+# 
+#     
+　   
+#$  　       $ 
+
+# 
+#    
+#$   
+　   
+#$      ,09    　        　    
+#      
+allow-ports   80,47 

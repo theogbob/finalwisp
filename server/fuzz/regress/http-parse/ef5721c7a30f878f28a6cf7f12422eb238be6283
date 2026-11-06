@@ -1,0 +1,5 @@
+GET / HTTP/1.1
+ost:n:
+Sec-WebSocket-Protocol:r¯io
+Sec-WebSocket-Protocol: i
+

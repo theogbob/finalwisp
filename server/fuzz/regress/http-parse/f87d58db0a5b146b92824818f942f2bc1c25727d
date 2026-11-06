@@ -1,0 +1,11 @@
+GET / HTTP/1.1
+Hosmientcn: 
+Connection: Upgrade
+Scc-e:x
+Upgrade: websocket
+Coct: ecket
+CGETection:ùt
+CGETection:ctie
+CGETection:Kr:=
+Sec-WebSocket-Version: 13
+

@@ -1,0 +1,40 @@
+ÿþ
+
+
+
+
+
+
+				
+
+
+
+
+			
+port 40
+
+
+
+
+
+
+
+
+allow-host ajjjjjjjjjjjajjj,jjjjjjjjjjj0
+
+
+
+
+
+
+
+
+allow-host ajf,fffffffffff,fffffffffffffffffffffffffffffffffffffffffffffffffffjjjjjjjffj,ffffff________________________________
+auth-file /tmp/jj2
+dns-own
+dns-server 1.1.1.15:3
+no-prio
+auth-file /tmp/auth
+cert-auth-key /t
+no-prio
+auth-file /tffffffffffffffffffffffffjjfffflow-fff

@@ -1,0 +1,9 @@
+GET / HTTP/1.1
+HostSockc-Wet-Version:%14
+Sec-WebSocket-ProtoHost: x
+Upgrade: websocket
+onnection: Upgr=
+Sec-WebSocket-Version: 13
+S-WH:st:/%aNhb
+Connection: Upgrade
+

@@ -1,0 +1,32 @@
+#co00co000
+stream-rate-per-ip 001/0100002
+stream-rate-per-ip 001/0100002
+stream-rate-per-ip 001/0100002
+stream-rate
+dns-server ::2%16666120 
+#-u
+dns-server ::2%1666632
+dns-server ::2%16666120 
+#-u
+dns-server ::2%1666632
+dns-server ::2%1-per-ip 002/00002
+stream-rate-per-ip 001/0100002
+stream-rate-per-trics-interval 10)max-conns 1000
+max-streams-per-conn 64
+allow-host eer
+
+Uÿş# all 1M
+upload-rate	000000000000000000000000000356613157993kp 001/02
+stream-rate-per-ip 002/00002
+stream-rate-per-ip 001/0100002
+stream-rate-per-ip 001/02
+stream-rate-per-ip 001/0100002
+stream-rate-per-ip 002/00002
+stream-rate-per-ip 001/0100002
+stream660 
+#-us-66ver ::2%1660 
+-rate-per-ip 248685016
+stream-rate-per-ip 001/010000#-2
+stream-rate-per-ip 002/00002
+stream-rate-per-us-6ip 066601/0100*002
+strea

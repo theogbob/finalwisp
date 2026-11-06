@@ -1,0 +1,20 @@
+GET / HTTP/1.1
+Upgrade:Y,,	±ET / HTTP/1.1
+Upgrade:Y,,	GET / HTTP/1
+Upgrade:Y,,	 	 	=2
+Upgrade:Y
+Upgrade: websocket
+Connection: Upgrade
+Sec-Wock:e d=`
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Protocol:À,,	GET / HTTP/1
+Upcrade:Y,,	 	 	=,:Y,,	 	 	=, 	 	=, HTTP/1
+Upgrade:Y,,	 	 	=, 	 .1
+Upgrade:Y,,	 	 	=, 	 ,:Y',,	 	 	=, 	 	=, Hormr2
+Upgrade:Y,,	 	 	=, 	 .1
+Upgrade:Y,,	 	 	=, 	 ]=PK/,'	,d	h,,,,,.	,,.	,,IH,rded-For: 10>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+Sec-WebSocket-Ve2sion:
+S:>>>>ˇ>>>>>>>> / HTTP/1.1
+X-Forwarded-For: 10>>,Gùa	,TPK/,'	,d	,,1
+X-Forwarded-For: ,
+

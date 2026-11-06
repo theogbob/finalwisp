@@ -1,0 +1,5 @@
+ÿş# 1M
+upload-rate-per-stream 51M
+upload-rate-per-stream 512K
+log-conns
+metrics-listen 5

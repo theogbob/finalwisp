@@ -1,0 +1,23 @@
+ÿş# all 1M
+upload-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9
+upload-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/fw.so
+upload-rate-per-stream 512K
+log-level debug
+listen-unix /tm 1M
+upload-rate-per-stream 512K
+log-level debug
+listen-100
+listen-unix /tmp/fw.so
+upload-rate-per-stream 512K
+log-level debug
+listen-unix /tm 1M
+upload-rate-per-stream 512K
+log-level debug
+listen-unix /tmprust-dns

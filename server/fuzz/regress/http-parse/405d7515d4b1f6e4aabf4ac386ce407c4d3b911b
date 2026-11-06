@@ -1,0 +1,11 @@
+GET /- HTTP/1.1
+Upgrade: websocket
+edec:
+Sec-WebSocket-Key:
+dSecWeec:
+Sec-WebSocket-Key:
+Sec-WeSn:l
+Connection: Upgrade
+Sec-WebSocket-Key:2 dGhQ==
+Sec-WebSocket-Version: 13
+

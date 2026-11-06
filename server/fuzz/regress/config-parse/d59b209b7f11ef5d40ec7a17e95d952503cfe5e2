@@ -1,0 +1,116 @@
+ÿþ#%153
+no-prio
+auth-file /t
+no-prio
+auth-file /pd
+mem-budget 0000000000001k
+motd //mot153
+no-prio
+auth-file /t
+no-prio
+auth-file /tZmpd
+mem-budget 0000000000001k
+motd //mot$io
+auth-file /ttd //mgt$  tZmpd
+mem-budget 000000000000253
+no-prio
+auth-file /t
+no-prio
+auth-file /pd
+mem-budget 0000000000001k
+motd //mot153(
+no-prio
+auth-file /t
+no-prio
+auth-file /tZmpd
+mem-budget 0000000000001k
+motd //mot$io
+auth-file /ttd //mgt$  tZmpd
+mem-budget 0000000000002k
+motd //mot1 /t
+no-prio
+auth-file /tZmpd
+mem-budget 0000000000001k
+motd //mot$io
+auth-file /tZmpd
+mem-budget 0000000000001k
+motd //mot$io
+auth-file th-file /pd
+mem-budget 0000000000001k
+motd //mot153
+no-prio
+auth-file /t
+no-prio
+auth-file /tZmpd
+mem-budget 0000000000001k
+motd //mot$io
+auth-file /ttd //mgt$  tZmpd
+mem-budget 000000000000253
+no-prio
+auth-file /t
+no-prio
+auth-file /pd
+mem-budget 0000000000001k
+motd //mot153(
+no-prio
+auth-file /t
+no-prio
+auth-file /tZmpd
+mem-budget 0000000000001k
+motd //mot$io
+auth-file /ttd //mgt$  tZmpd
+mem-budget 0000000000002k
+motd //mot1 /t
+no-prio
+auth-file /tZmpd
+mem-budget 0000000000001k
+motd //mot$io
+auth-file /tZmpd
+mem-budget 0000000000001k
+motd //mot$io
+auth-file file /ttd //mgt$  tZmpdrio
+auth-file /t
+no-prio
+auth-file /tZmpd
+mem-budget 000000000000
+auth-file /tZmpd
+mem-budget 0000000000001k
+motd //mot$io
+auth-file file /ttd //mgt$  tZmpdrio
+auth-file /t
+no-prio
+auth-file /tZmpd
+mem-budget 0000000000001k
+motd //mot$io
+auth-file /ttd //mgt$  tZmpd
+mem-budget 0000000000002k
+motd //mot1 /t
+no-prio
+auth-file /tZmpd
+mem-budget 1k
+motd //mot$io
+auth-file /ttd //mgt$  tZmpd
+mem-budget 0000000000002k
+motd //mot1 /t
+no-prio
+auth-file /tZmpd
+mem-budget 0000000000001k
+motd //mot$io
+auth-file /tZmpd
+mem-budget 0000000000001k
+motd //mot$io
+auth-file th-file /pd
+mem-budget 0000000000001k
+motd //mot153
+no-prio
+auth-file /t
+no-prio
+auth-file /tZmpd
+mem-budget 0000000000001k
+motd //mot$io
+auth-file /ttio
+auth-file /t
+no-prio
+auth-file /pd
+mem-budget 000000000002k
+motd td //mot$  ///

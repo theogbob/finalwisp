@@ -1,0 +1,57 @@
+ÿþ#%all f127ver 1.1.1!.1:531:5auth-file /tmp/authl 10
+max-conns 1000
+max-streams-per-conn 64
+allow-host example.auth
+cert-auth-key /tmp/ed.td heno-prio
+auth-file /tmp/authl 3
+no-prio
+auth-file /tmp/authl 10
+max-conns 1000
+max-streams-per-conn 28
+allow-host example.auth
+cert-auth-key /tmp/ed.td heno-prio
+auth-file /tmp/authl 10
+max-conns 1000
+max-streams-per-conn 64
+allow-host example.auth
+cert-auth-key /tmp/ed.td hello tmp/ed.td heno-prio
+auth-file /tmp/au 10
+max-conns 1000
+max-streams-per-conn 28
+allow-host example.auth
+cert-auth-key /tmp/ed.td heno-prio
+auth-file /tmp/authl 10
+max-conns 1000
+max-streams-per-conn 64
+allow-host example.auple.auth
+cert-auth-key /tmp/ed.td heno-prio
+auth-file /tmp/authl 10
+max-conns 1000
+max-streams-per-conn 64
+allow-host example.auth
+cert-auth-key /tmp/ed.td hello tmp/ed.td heno-prio
+auth-file /tmp/authl 3
+no-prio
+auth-file /tmp/authl 10
+max-conns 1000
+max-streams-per-conn 64
+allow-host example.auth
+cert-auth-key /th
+cert-auth-key /tmp/ed.td hello tmp/ed.td heno-prio
+auth-file /tmp/authl 3
+no-prio
+auth-file /tmp/authl 10
+max-conns 1000
+max-streams-per-conn 64
+allow-host example.auth
+cert-auth-key /tmp/ed.td heno-prio
+auth-file /tmp/authl 10
+max-conns 1000
+max-streams-per-conn 64
+allow-host example.auth
+cert-auth-key2M
+tcpmem-adapt
+metrics-interval 10
+max-conns 1000
+maxem-adaptutt<--cIh
+cI

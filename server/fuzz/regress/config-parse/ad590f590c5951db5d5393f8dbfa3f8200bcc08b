@@ -1,0 +1,2 @@
+ÿÀÿÿÿÿÿþallow-host c.test
+block-dest 100.0.0.0,100.0.0.0,.0,1/0 /do

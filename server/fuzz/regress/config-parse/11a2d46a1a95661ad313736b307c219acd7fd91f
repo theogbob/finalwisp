@@ -1,0 +1,153 @@
+ÿþ#%153
+no-prio
+auth-file /tZmpd
+mem-budget 01k
+no-prio
+auth-file /tZmfile /tZmpd-budget 01k
+no-prio
+auth-file /tZmfile /tZmpdd
+mem-budget 0
+mem-budget 01k
+no-prio
+auth-file /tZmpd
+mem-budget 0k
+motd //mot$  -prio
+auth-file /tZmpd
+mem-budget 01k
+no-prio
+auth-file /tZmfile /tZmpdd
+mem-budget 0
+mem-budget 01k
+no-prio
+auth-file /tZmpd
+mem-budget 0k
+motd //motd
+mem-budget 0
+mem-budget 01k
+no-prio
+auth-file /tZmpd
+mem-budget 0k
+motd //mot$  -prio
+auth-file /tZmpd
+mem-budget 01k
+no-prio
+auth-file /tZmfile /tZmpdd
+mem-budget 0
+mem-budget 01k
+no-prio
+auth-file /tZmpd
+mem-budget 0k
+motd // 0
+mem-budget 01k
+no-prio
+auth-file /tZmpd
+mem-budget 0k
+motd //motd
+mem-budget 0
+mem-budget 0k
+motd //motd
+mem-budget 0
+mem-budget 01k
+no-prio
+auth-file /tZmpd
+mem-budget 0k
+motd //mot$  -prio
+auth-file /tZmpd
+mem-budget 01k
+no-prio
+auth-file /tZmfile /tZmpdd
+mem-budget 0
+mem-budget 01k
+no-prio
+auth-file /tZmpd
+mem-budget 0k
+motd // 0
+mem-budget 01k
+no-prio
+auth-file /tZmpd
+mem-budget 0k
+motd //motd
+mem-budget 0
+mem-budget 01k
+no-prio
+auth-file /tZmbudget 01k
+no-prio
+auth-file /tZmpd
+mem-budget 0k
+motd //mot$  -prio
+auth-file /tmot$//k
+no-prio
+auth-file /tZmfile k
+no-prio
+auth-file /tZmfile /tZmpdd
+mem-budget 0
+mem-budget 01k
+no-prio
+auth-file /tZmpmem-budget 01k
+no-prio
+auth-file /tZmfile /tZmpd-budget 01k
+no-prio
+auth-file /tZmfile /tZmpdd
+mem-budget 0
+mem-budget 01k
+no-prio
+auth-file /tZmpd
+mem-budget 0k
+motd //mot$  -prio
+auth-file /tZmpd
+mem-budget 01k
+no-prio
+auth-file /tZmfile /tZmpdd
+mem-budget 0
+mem-budget 01k
+no-prio
+auth-file /tZmpd
+mem-budget 0k
+motd //motd
+mem-budget 0
+mem-budget 01k
+no-prio
+auth-file /tZmpd
+mem-budget 0k
+motd //mot$  -prio
+auth-file /tZmpd
+mem-budget 01k
+no-prio
+auth-file /tZmfile /tZmpdd
+mem-budget 0
+mem-budget 01k
+no-prio
+auth-file /tZmpd
+mem-budget 0k
+motd // 0
+mem-budget 01k
+no-prio
+auth-file /tZmpd
+mem-budget 0k
+motd //d
+mem-budget 0k
+motd //motd
+mem-budget 0
+mem-budget 01k
+no-prio
+auth-file /tZmpd
+mem-budget 0k
+motd //mot$  -prio
+auth-file /tZmpd
+mem-budget 01k
+no-prio
+auth-file /tZmpd
+mem-budget 0k
+motd //motd
+mem-budget 0
+mem-budget 01k
+no-prio
+auth-file /tZmpd
+mem-budget 0k
+motd //mot$  -prio
+auth-file /tZmpd
+mem-budget 01k
+no-prio
+auth-file /tZmfile /tZmpdd
+mem-budget 0
+mem-budget 0/

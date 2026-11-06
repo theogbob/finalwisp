@@ -1,0 +1,7 @@
+ÿ1!MJupload-I"a.te/tÿ¶IA´I.t*ÿþ#/fw.sotream 512K
+log-level debug
+log-conns
+metrics-listen 1270
+listen-unix /pmp/fdconns
+metrics-listen 1270
+listen-unix /pns

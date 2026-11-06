@@ -1,0 +1,34 @@
+motd mlowd -hlelo 000n-unix /tmp/fw.sotream15 2K
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmprustprust-w.soteam15 2K
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tm
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmprust-dnsream15 2K
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tm
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmprust-dnsrreamvel5 2K
+log-level debug
+log-conns
+metrics-listen 12700
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tm
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmprust-dnsream15 200
+listen-unix /tmprust-dnsrre-loopbackauth-own
+dns-server 1.1.1.1

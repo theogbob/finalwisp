@@ -1,0 +1,27 @@
+ÿþ#0ï¿½01/0100002-dest 192.168.0.0/16
+block-smtp
+no-direct-ip
+no-ipv6-targets
+allow-self
+allow-embedded-v4
+trusted-proxy 120.0.0.0/8
+#bnocupstream sk-de/16
+block-smtp
+no-direct-ip
+no-ipv6-targets
+allow-self
+allow-embedded-v4
+trusted-proxy 120.0.0.0/8
+#bnocup#0ï¿½01/0100002-dest 192.168.0.0/16
+block-smtp
+no-direct-ip
+no-ipv6-targets
+allow-self
+allow-embedded-v4
+trusted-proxy 120.0.0.0/8
+#bnocupstream sk-de/16
+block-smtp
+no-direct-ip
+no-ipv6-targets
+allow-self
+allow-emstream sk-dst 192.16‘Éc

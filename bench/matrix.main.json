@@ -1,0 +1,62 @@
+{
+ "_doc": "30.10 main comparison matrix: `bench/wst matrix bench/matrix.main.json` (servers from bench/servers.json)",
+ "duration": 5,
+ "warmup": 1,
+ "port": 6001,
+ "servers": [
+  "finalwisp",
+  "epoxy",
+  "wisp-js",
+  "python",
+  "wispurr"
+ ],
+ "cases": [
+  {
+   "test": "upload",
+   "conns": 1,
+   "streams": 1,
+   "size": 16384
+  },
+  {
+   "test": "upload",
+   "conns": 10,
+   "streams": 10,
+   "size": 16384
+  },
+  {
+   "test": "download",
+   "conns": 10,
+   "streams": 10
+  },
+  {
+   "test": "echo",
+   "conns": 1,
+   "streams": 1,
+   "size": 16384
+  },
+  {
+   "test": "echo",
+   "conns": 10,
+   "streams": 10,
+   "size": 16384
+  },
+  {
+   "test": "rr",
+   "conns": 1,
+   "streams": 1,
+   "size": 64
+  },
+  {
+   "test": "rr",
+   "conns": 10,
+   "streams": 10,
+   "size": 64
+  },
+  {
+   "test": "churn",
+   "conns": 10,
+   "streams": 10,
+   "size": 64
+  }
+ ]
+}

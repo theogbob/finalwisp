@@ -1,0 +1,6 @@
+GET / HTTP/1.1
+Upgrade: websocket
+Connection:Upgrade
+Upgrade:,'	񪘏
+Sec-WebSocket-Version:13
+

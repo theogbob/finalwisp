@@ -1,0 +1,7 @@
+
+dns-server ::%000010000279 
+#00b
+dns-server ::%000000000280 
+#   er-server ::%0000
+dns-server ::%000000000280 
+#   er 00b---d 00b---dns0

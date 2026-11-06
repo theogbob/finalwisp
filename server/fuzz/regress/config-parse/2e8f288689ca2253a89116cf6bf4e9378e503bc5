@@ -1,0 +1,4 @@
+ÿþallow-host t--block-host
+block-dest 10.0.0.0/8
+
+block-host t--block-block-hock-deoc

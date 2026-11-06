@@ -1,0 +1,16 @@
+GET / HTTP/1.1
+Upgrade: websocket
+C&ofne-de:
+Sec-WebSocket-Key:
+dec-WebSocket-brdec:
+Sec-WebSocket-Key:
+de:
+rarrdec:
+Sec-WebSocket-Key:
+de:
+Sec-WebSocket-Key:
+d~: keep-alive
+Connection: Upgrade
+Se-WebSocket-Ke-Key:1 dGhQ==
+Sec-WebSocket-Version: 13
+

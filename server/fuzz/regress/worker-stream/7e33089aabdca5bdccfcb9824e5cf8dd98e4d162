@@ -1,0 +1,16 @@
+ZGET / HTTP/1.1
+Host: x
+Upgrade: websocket
+Conlection: UpgradE
+Sen: 1Upgrade: websocket
+Connection: UpgradE
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub48jZQ==
+Sec-WebSocket-Version: 13
+
+‚“7ú!=6!û=7ûq=R‚@PG–,T•L‚’7ú!=6ù!=7ûq=)‚XO›LM[Ÿ‚7ú!=6"=7ûš=7ûq=R‚@PG–,T•L‚’7ú!=6 ZGETq=)‚XO›LM[Ÿ‚7ú!=6ÿ!ÌÈûš<_•RI$‚Š3Host: x
+Upgrade: websocket
+Connection: UpgradE
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub48jZQ==
+Sec-WebSocket-Version: 13
+
+‚“7ú!=6!û=7ûq=R‚@PG–,T•L‚’7ú!=6ù!=7ûq=)‚XO›LM[Ÿ‚7ú!=6"=7ûš=7ûq=R‚@PG–,T•L‚’7ú!=6 ZGETq=)‚XO›LM[Ÿ‚7ú!=6ÿ!ÌÈûš<_•RI$‚Š7ú!=û75!=½diÕ

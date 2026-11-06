@@ -1,0 +1,81 @@
+{
+ "wbench": "/root/finalwisp-test/wbench",
+ "duration": 5,
+ "warmup": 1,
+ "port": 6001,
+ "servers": [
+  {
+   "name": "finalwisp",
+   "cwd": "/root/finalwisp-test",
+   "cmd": "exec ./finalwisp --port {port} --allow-loopback --allow-private",
+   "extra": []
+  },
+  {
+   "name": "epoxy",
+   "cwd": "/root/finalwisp-test",
+   "cmd": "sed 's/127.0.0.1:6001/127.0.0.1:{port}/' epoxy-bench.toml > /tmp/wbench-epoxy-{port}.toml && exec ./epoxy-server /tmp/wbench-epoxy-{port}.toml",
+   "extra": [
+    "--stall-ping-ms",
+    "1"
+   ]
+  },
+  {
+   "name": "wispurr",
+   "cwd": "/root/finalwisp-test",
+   "cmd": "exec ./wispurr -config speed.config.json -port {port} --host 127.0.0.1",
+   "extra": [
+    "--stall-ping-ms",
+    "1"
+   ]
+  }
+ ],
+ "cases": [
+  {
+   "test": "upload",
+   "conns": 1,
+   "streams": 1,
+   "size": 16384
+  },
+  {
+   "test": "upload",
+   "conns": 10,
+   "streams": 10,
+   "size": 16384
+  },
+  {
+   "test": "download",
+   "conns": 10,
+   "streams": 10
+  },
+  {
+   "test": "echo",
+   "conns": 1,
+   "streams": 1,
+   "size": 16384
+  },
+  {
+   "test": "echo",
+   "conns": 10,
+   "streams": 10,
+   "size": 16384
+  },
+  {
+   "test": "rr",
+   "conns": 1,
+   "streams": 1,
+   "size": 64
+  },
+  {
+   "test": "rr",
+   "conns": 10,
+   "streams": 10,
+   "size": 64
+  },
+  {
+   "test": "churn",
+   "conns": 10,
+   "streams": 10,
+   "size": 64
+  }
+ ]
+}

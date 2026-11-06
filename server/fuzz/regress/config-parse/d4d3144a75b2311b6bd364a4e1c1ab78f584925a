@@ -1,0 +1,42 @@
+ÿþ#%all f126aQs-per-conn 64
+allow-host example.auth
+cert-auth-key /tmp/e hello world
+mem-budget 512G
+tcpmem-adapt
+metrics-interval 10
+max-conns 1
+cert-auth-key .tmp/ed.phello h
+cert-auth-key /tmp/e hello wooooooooooooooooooooole.auth
+cert-auth-key /tmp/e heal 0uth-key .tmp/ed.pub	
+motd  h
+cert-auth-key /tmp/e hello world
+mem-budget 512G
+tcpmem-adapt
+metrics-interval 10
+max-conns 1
+cert-auth-key .tmp/ed.phello h
+cert-auth-key /tmp/e ms-per-conn 64
+allow-host example.adapt
+metrics-interval 10
+max-conns 1
+cert-auth-key .tmp/ed.phello h
+cert-auth-key /tmp/e hello wooooooooooooooooooooole.auth
+cert-auth-key /tmp/e heal 0uth-key .tmp/ed.pub	
+motd  h
+cert-auth-key /tmp/e hello world
+mem-budget 512G
+tcpmem-adapt
+metrics-interval 10
+max-conns 1
+cert-auth-key .tmp/ed.phello h
+cert-auth-key /tmp/e ms-puth
+cert-auth-key /tmp/e hello world
+mem-budget 512G
+tcpmem-adapt
+metrics-interval 10
+max-conns 1
+cert-auth-key .tmp/ed.phello h
+cert-auth-key /tmp/e hello wooooooooooooooooooooole.auth
+cert-auth-key /tmp/e heal 0uth-key .tmp/ed.pub	
+motd  h
+cert-auth-key /tmp/e hello worlnns 100

@@ -1,0 +1,84 @@
+ÿþallow-host t--block-host
+block-dest 10.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls-cert /aey /doc.test8--allow-dest 10.0.0.0/8
+tls-cert /aey /dok-host
+block-dest 10.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls-cert /aey-dest /doc.test8--allow-dest 10.0.0.0/8
+tls-cert /aey /dock-host
+block-dest 10.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls-cert /aey /doc.test8--allow-destllow-host t--block-host
+block-dest 10.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls-cert /aey /doc.test8--allow-dest 10.0.0.0/8
+tls-cert /aey /dok-host
+block-dest 10.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls-cert /aey 10.0.0.0/8
+tls-cert /aey /dok-host
+block-dest 10.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls-cert /aey-dest /doc.test8--allow-dest 10.0.0.0/8
+tls-cert /aey /dok-host
+block-dest 10.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls-cert /a0allow-host t--block-host
+block-dest 10.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls-cert /aey /doc.test8--allow-dest 10.0.0.0/8
+tls-cert /aey /dok-host
+block-dest 10.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls-cert /aey-dest /doc.test8--allow-dest 10.0.0.0/8
+tls-cert /aey /dock-host
+block-dest 10.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls-cert /aey /doc.test8--allow-destllow-host t--block-host
+block-dest 10.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls-cert /aey /doc.test8--allow-dest 10.0.0.0/8
+tls-cert /aey /dok-host
+block-dest 10.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls-cert /a0allow-host t--block-host
+block-dest 10.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls-cert /aey /doc.test8--allow-dest 10.oc.test8--allow-dest 10.0.0.0/8
+tls-cert /aey /dok-host
+block-dest 10.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls-cert /aey 10.0.0.0/8
+tls-cert /aey /dok-host
+block-dest 10.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls-cert /aey-dest /doc.test8--allow-dest 10.0.0.0/8
+tls-cert /aey /dok-host
+block-dest 10.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls-cert /a0.kw-desk-host
+block-dest 10.0.0.0/8
+
+block-dest 1z0.0.0.0/8
+tls-cert /a0.kw-dest 10..kw-desk-host
+block-dest 10.0.0.0/8
+
+block-dest 1z0.0.0.0/8
+tls-cert /a0.kw-dest 10.0.0.0/

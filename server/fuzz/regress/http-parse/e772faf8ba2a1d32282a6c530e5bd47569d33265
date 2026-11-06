@@ -1,0 +1,63 @@
+GET / HTTP/1.1
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZocket-Version: 13
+Sec-WebSocket-Protocol:0wisEEEEEEEEDEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEGJTjEEEEEEEEEEEEEEEEEEEEEEEEE6666000000000000rrrrrrrrarded-For: 10.0.0.or7X-Forwarded-For: 09.0.0TP/1.1
+X-Forwarded-For: 
+X-Forwrrrrrrrrrrrrrrarded-For: 10.0.0.or7, ::1, Э┘128.0ееееееееееее6666666666666;ion: 13
+Sec-WebSocket-Protocol:0wisEEEEEEEEDEEEEЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE5.0TP/1.1
+X-Forwarded-For: 
+X-Forwrrrrrrrrrrrrrrarded-For: 10.0.0.or7, ::1, Э┘128.0еееееееееееT / HTTP/1.1
+X-Forwarded-For: 09.0.0TP/1.1
+X-Forwarded-For: 
+X-Forwrrrrrrrrrrrrrrarded-For: 10.0.0.or7, ::1, Э┘128.0ееееееееееееееееееееееее.0..or8, :] 2,1EEGJ╚ъ6666666666666666666666666666666666;ion: 13
+Sec-WebSocket-Protocol:0wisEEEEEEEEDEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE0.0TP/1.1
+X-Forwarded-For: 
+X-Forwrrrrrrrrrrrrrrarded-For: 10.0.0.or7, ::1, Э┘128.0еееееееееееT / HTTP/1.1
+X-Forwarded-For: 09.0.0TP/1.1
+X-Forwarded-For: 
+X-Forwrrrrrrrrrrrrrrarded-For: 10.0.0.or7, ::1, Э┘128.0еееееееееее000000000000XBsZSBub25jZQ==
+S:0wisEEEEEEEE
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Protocol:0wisEEEEEEEEDEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEGJTjEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEGJ╚ъ666666666666666666666ъ6666666666666666666666666666666666;ion: 13
+Sec-WebSocket-Protocol:0wisEEEEEEEEDEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE0.0TP/1.1
+X-Forwarded-For: 
+X-Forwrrrrrrrrrrrrrrarded-For: 10.0.0.or7, ::1, Э┘128.0еееееееееееT / HTTP/1.1
+X-Forwarded-For: 09.0.0TP/1.1
+X-Forwarded-For:s 
+X-ForFor: 
+X-Forwrrrrrrrrrrrrrrarded-For: 10.0.0.or7, ::1, Э┘128.0еееееееееееT / HTTP/1.1
+X-Forwarded-For: 09.0.0TP/1.1
+X-Forwarded-For: 
+X-Forwrrrrrrrrrrrrrrarded-For: 10.0.0.or7, ::1, Э┘128.0ееееееееееее6666666666666;ion: 13
+Sec-WebSocket-Protocol:0wisEEEEEEEEDEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE0.0TP/1.1
+X-Forwarded-For: 
+X-Forwrrrrrrrrrrrrrrarded-For: 10.0.0.or7, ::1, Э┘128.0еееееееееееT / HTTP/1.1
+X-Forwarded-For: 09.0.0TP/1.1
+X-Forwarded-For: 
+X-Forwrrrrrrrrrrrrrrarded-For: 10.0.0.or7, ::1, Э┘128.0ееееееееееееееееееееееее.0..or8, :] 2,1EEGJ╚ъ6666666666666666666666666666666666;ion: 13
+Sec-WebSocket-Protocol:0wisEEEEEEEEDEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE0.0TP/1.1
+X-Forwarded-For: 
+X-t-Version: 13
+Sec-WebSocket-Protocol:0wisEEEEEEEEDEEEEEEEEEEEEEEEEEEEEEEEEGJTjEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEGJ╚ъ6666666666666666666666666666666666;ion: 13
+Sec-WebSocket-Protocol:0wisEEEEEEEEDEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE0.0TP/1.1
+X-Forwarded-For: 
+X-Forwrrrrrrrrrrrrrrarded-For: 10.0.0.or7, ::1, Э┘128.0еееееееееееT / HTTP/1.1
+X-Forwarded-For: 09.0.0TP/1.1
+X-Forwarded-For: 
+X-Forwrrrrrrrrrrrrrrarded-For: 10.0.0.or7, ::1, Э┘128.0ееееееееееее6666666666666;ion: 13
+Sec-WebSocket-Protocol:0wisEEEEEEEEDEEEEЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪЪEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE5.0TP/1.1
+X-Forwarded-For: 
+X-Forwrrrrrrrrrrrrrrarded-For: 10.0.0.or7, ::1, Э┘128.0еееееееееееT / HTTP/1.1
+X-Forwarded-For: 09.0.0TP/1.1
+X-Forwarded-For: 
+X-Forwrrrrrrrrrrrrrrarded-For: 10.0.0.or7, ::1, Э┘128.0ееееееееееееееееееееееее.0..or8, :] 2,1EEGJ╚ъ6666666666666666666666666666666666;ion: 13
+Sec-WebSocket-Protocol:0wisEEEEEEEEDEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE0.0TP/1.1
+X-Forwarded-For: 
+X-Forwrrrrrrrrrrrrrrarded-For: 10.0.0.or7, ::1, Э┘128.0еееееееееееT / HTTP/1.1
+X-Forwarded-For: 09.0.0TP/1.1
+X-Forwarded-For: 
+X-Forwrrrrrrrrrrrrrrarded-For: 10.0.0.or7, ::1, Э┘128.0ееееееееееееееееееееееее.0..or8, :] 2,117.0.0.├1
+
+еееееееееееее.0..or8, :] 2,117.0.0.├1
+

@@ -1,0 +1,10 @@
+# epoxy-server config for wbench validation (pointer 30.01).
+# allow_loopback already defaults to true in epoxy; set explicitly for clarity.
+[server]
+bind = ["tlstcp", "127.0.0.1:7804"]
+runtime = "multithread"
+tls_keypair = ["bench/tlscmp/cert.pem", "bench/tlscmp/key.pem"]
+
+[stream]
+allow_loopback = true
+allow_non_global = true

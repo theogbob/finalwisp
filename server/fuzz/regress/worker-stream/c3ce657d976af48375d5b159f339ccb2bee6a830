@@ -1,0 +1,21 @@
+*ZGET /%s1%16%37.0.0.1:4444 HTTP/1.1
+Hgst: x
+Upgrade: w                                   ZžžžaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaÊaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa¼aaaaaaaaaaaaaaaaaaaaaaaaaaaaa:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`aaaaaaaaaaaaaaaaaÊaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Protocol: wisp-v2aaaaaaaaaaaaaa           ¡                                                   eb44 HTTP/1aaaaaaaaaaaaaaaaaanection: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Protocol: wisp-v2aaaaaaaaaaaaaa           ¡                                                   eb44 HTTPaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Protocol: wispaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:aaa 13
+Sec-WebSocket-Protocol: wisp-v2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaHNhbXÿBsZSB0>
+

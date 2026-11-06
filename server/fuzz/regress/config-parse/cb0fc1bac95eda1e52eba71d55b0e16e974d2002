@@ -1,0 +1,5 @@
+ÿþ# read 443,1000-2000
+block-ports 2500
+block-ports 25
+allow-deallow-dest 10.
+d 1.10.0.0/8s

@@ -1,0 +1,63 @@
+ZGET / HTTP/1.1
+Host: x
+Upgr001:::::::::::::::::::::::::::::::::::::::::::::::00000ÿÿ HTTP/1.1
+Host: x
+pUgrade: websokcet
+Connection:n: Upgrade
+00000000000000002de: websocket
+ConneSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebS0000000000de: websocket
+ConneSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebSocket--Version: 13
+00000de: websocket
+Cgnnection: UpgÿÿÿÿÿÿÿÿHost: x
+pUgrade: ocket
+Connection: Upgÿÿÿÿÿÿÿÿÿ HTTP/1.1
+Host: x
+pUgrade: websokcet
+Connection:n: Upgrade
+00000000000000000de: websocket
+ConneSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebS0000000dwe000e: bsocket
+ConneSec-WebSocket-Key: dGhlIHNhbXBsZSBÿÿÿÿÿÿÿ{ub25jZQ==
+Sec-WebSocket--Version: 13
+00000de: websocket
+Cgnnection: UpgÿÿÿÿÿÿÿÿHost: x
+pUgrade: websocket
+Connection: 0:::::::::::::::::::::::::::::::::::::::::::::::00000ÿÿ HTTP/1.1
+Host: x
+pUgrade: websokcet
+Connection:n: Upgrade
+00000000000000000de: websocket
+ConneSec-WebSocket-Key: dGhlIHNhbXBsZSBub38jZQ==
+Sec-WebS0000000000de: websockr000:::::::::::::::::::::::::::::::::::::::::::::::00000ÿÿ HTTP/1.1
+Host: x
+pUgrade: websokcet
+Connection:n: Upgrade
+00000000000000000de: websocket
+ConneSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebS0000000000de: websocket
+ConneSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebSocket--Version: 13
+00000de: websocket
+Cgnnection: UpgÿÿÿÿÿÿÿÿHost: x
+pUgrade: ocket
+Connection: Upgÿÿÿÿÿÿÿÿÿ HTTP/1.1
+Host: x
+pUgrade: websokcet
+Connection:n: Upgrade
+00000000000000000de: websocket
+ConneSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebS0000000000dewe: bsocket
+ConneSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebSocket--Version: 13
+00000de: websocket
+Cgnnection: UpgÿÿÿÿÿÿÿÿHo
+00000000000000000de: websocket
+ConneSec-WebSocket-Key: Upgrade
+00000000000000000de: websocket
+ConneSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Protocol: wisp-Av2
+
+‚Œ7ú!=2ú!=7Ô

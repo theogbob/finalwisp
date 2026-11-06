@@ -1,0 +1,42 @@
+ÿþ# all l.0.0.1:9100
+
+tls-rekey-records 1000000
+notsent-lowat 131072
+dns-threads 4
+dns-own
+dns-server 1.1.1.1:53
+no-prio
+auth-file /tmp/authacha,aes128,aes256
+tls-rekey-records 1000000
+notsent-lowat 1
+tls-rekey-records 1000000
+notsent-lowat 131072
+dns-threads 4
+dns-server 1.1.1.1:53
+no-prio
+auth-file /tmp/autevel debug
+log-conns
+metrics-listen 127.0.0.1:9100
+
+tls-rekey-records 1000000
+notsent-lowat 131072
+dns-threads 4
+dns-own
+dns-server 1.1.1.1:53
+no-prio
+auth-file /tmp/authacha,aes128,aes256
+tls-rekey-records 1000000
+notsent-lowat 1
+tls-rekey-records 1000000
+notsent-lowat 131072
+dns-threads 4
+dns-own
+dns-server 1.1.1.1:53
+no-prio
+auth-file /tmp/authacha,aes1231072
+dns-threads 4
+dns-own
+dns-server 1.1.1.1:53
+no-prio
+auth-file /tmp/auth
+cert-auth-key /tmps

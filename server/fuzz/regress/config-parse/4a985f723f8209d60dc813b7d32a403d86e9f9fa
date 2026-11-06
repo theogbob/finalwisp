@@ -1,0 +1,14 @@
+ÿþ# ten-unix /tmp/f.0.0.1:9100
+listen-unix /tmp/fw.sotream15 2K
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmprust-w.sotream15 2K
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmprust-dnsrreamotream15 2K
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmpruprust-d

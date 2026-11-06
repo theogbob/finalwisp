@@ -1,0 +1,34 @@
+ 
+#  ! 
+#$c  nr%ip 31
+stream-rate-per-ip 22431
+stream-rate-per-ip 22400/9 
+#  ! 
+#$
+#$c  nr%ip 31
+stream-rate-per-ip 22431
+stream-rate-per-ip 22400/9 
+#-am-rate-per-ip 22431
+stream-rate-per-ip 22400/9 
+#  ! 
+#$
+#$c  nr nr%ip 31
+stream-rate-per-ip 22431
+stream-rate-per-ip 22400/9 
+#  ! 
+#$
+#$c  nr%ip 31
+stream-rate-per-ip 22431
+stream-rate-per-ip 22400/9 
+#-am-rate-per-ip 22431
+stream-rate-per-ip 22400/9 
+#  ! 
+#$
+#$c  nr%ip 31
+stream-rate-per-ip 22431
+streaper-ip 22400/9 
+#ÿÿÿÿÿÿÿ#$c  nr%ip 31
+stream%ip 31
+stream-rate-per-ip 22431
+streaper-ip 2242431
+stream-rate-p  --listen-unixc%i 0/9#s

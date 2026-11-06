@@ -1,0 +1,8 @@
+GET / HTTP/1.1
+Ht:
+ot: x
+Upgrade: websocket
+Conndction: Ubsocket
+Connection: Upgrade
+Sec-WebSocket-Version: 13
+

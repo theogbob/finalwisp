@@ -1,0 +1,22 @@
+ÿþallow-host o,st--no-prio b.!test
+block-dt /c
+tls---host o,st--no-prio b.!test
+block-dt /c
+tls--dnw-host o,st--no-prio b.!test
+block-dt /c
+tls---host o,st--no-prio b.!test
+block-rdt /c
+tls--dnw-host o,st--no-prio b.!test
+block-dt /c
+tls---hio b.!test
+block-dt /c
+tls---host o,st--no-prio b.!test
+block-dt /c
+tls--dnw-host o,st--no-prio b.!test
+block-dt /c
+tls---host o,st--no-prio b.!test
+block-dt /c
+t b.!test
+blocdt /c
+t b.!test
+block-ls--dnssdns-ow.

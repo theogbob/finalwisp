@@ -1,0 +1,10 @@
+ÿþ# all f28,ak-host .breal-ip-header X-Forwarded-For
+max-conns-per-ip 16
+stream-rate-pe 0660
+upsp/c.pem
+tls-key /tmp/k.pem
+tls-cdns-servotdipher-order chacha,aes128,aes256
+tlsert aÿþ#ecords 1000000
+notseams-per-conn  
+64
+allo

@@ -1,0 +1,37 @@
+ÿþallow-host t--block-host
+block-dest 10.0.0.0/28
+
+block-dest 11.0.0.0/8
+tls-cert -t8tsa/e-allow-det--blo.0/28
+
+block-dest 10.0.0.0/8
+tls-cert -t8tsa/e-allow-det--block-host
+block-dest 10.0.0.0/28
+
+block-dest 10.0.0.0/8
+tls-cert -t8ts.k--l--host
+block-dest 10.0.0.0/28
+
+block-dest 10.0.0.0/8
+tls-cert -t8tsa/e-allow-dest sal-w-desck-host
+block-dest 10.0.0.0/28
+
+block-dest 10.0.0.0/8
+tls-cert -t8tsa/e-a.k--l--host
+block-dest 10.0.0.0/28
+
+block-dest 10.0.0.0/8
+tls-cert -t8tsa/e-allow-dest sal-w-desck-host
+block-dest 10.0.0.0/28
+
+block-dest 10.0.0.0/8
+tls-cert -t8tsa/e-allow-dest s-cert /a0.k--l--host
+block-dest 10.0.0.0/28
+
+block-dest 10.0.0.0/8
+tls-cert -t8tsa/e-allow-dest sal-w-destala 	a-&l 10.0.0.st s-cert /a0.k--l--host
+block-dest 10.0.0.0/28
+
+block-dest 10.0.0.0/8
+tls-cert -t8tsa 10.0.0.0/8
+tls-cert -t8tsa/e-allo10.0.0.0/

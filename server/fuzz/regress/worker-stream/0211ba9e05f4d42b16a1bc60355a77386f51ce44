@@ -1,0 +1,44 @@
+ZGET /p/127.0.0.1:4444 HTTP/1.1
+Host: x
+Upgrade: websocket
+Connectinn: Upgrade
+Sonnectinn: Upgrade
+Sec-WebSokt-cKeey: dGhlIHNhbXBsZSBub05jZQ==
+Sec-&W.0.1:4444 HTTP/1.ZGET /p/127.0.0.1:4444 HTTP/1.1
+Host: x
+Upgrade: websocket
+Connectinn: Upgrade
+Sonnectinn: Upgrade
+Sec-WebSokt-cKeey: dGhlIHNhbXBsZSBub05jZQ==
+Sec-&W.0.1:4444 HTTP/1.ZGET /p/127.0.0.1:4444 HTTP/1.1
+Host: x
+Upgrade: websocket
+Connectinn: Upgrade
+Sonnectinn: Upgrade
+Sec-WebSokt-cKeey: dGhlIHNhbXBsZSBub05jZQ==
+Sec-&W.0.1:4444 HTTP/1.1
+Host: x
+Upgrade:‡àöùåêúäet
+Connectinl: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub05jZQ==
+Sec-&W.0.1:4444 HTTP/1.1
+Host: x
+Upgrade: websocket
+Connectinn: Upgrade
+Sec-WebSocket-KeyKey: [[[[[[[[[e
+Sec-WebSocket-Key: [[[[[[[[[[[[[[[[[[TTP/2.P/1.1
+Host: x
+Upgrale: websocket
+Connection: .1:4444 HTTP/1.1
+Host: x
+UpgrXde: websocket
+Connection: Upg[[[[[[[[[[[[[[[[[[[[[[[TTP/1.P/1.1
+Host: x
+Upgrale: websocU31%32%37.0.0.1:%3Upgrad0e: websocketKey: dGhlIHNhbXBsZSBub05jZQ==
+Sec-&W.0.1:4444 HTTP/1.1
+Host: x
+Upgrade: websocket
+Connectinn: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebSocket-Version: 13
+

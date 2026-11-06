@@ -1,0 +1,12 @@
+GET / HTTP/1.1
+Hoion:
+Sec-WebSocket-Protocol: -v2, 
+Sec-WebSocket-Protocol: wis,
+Sec-WebSocket-Protocol: wisWp-%2,or cWec-
+Upgrade: websocket
+nneo: 
+Connection: Upgrade
+-Korey:2 d
+Sec-WebSocket-Version: 13
+
+o

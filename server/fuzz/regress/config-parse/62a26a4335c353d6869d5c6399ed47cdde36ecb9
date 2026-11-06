@@ -1,0 +1,11 @@
+ÿþ# l8al/f 
+block-dest 192.168.0.0/16
+block-smtp
+no-direct-ip
+# l8alauth
+cert-auth-key .cr5pttsm'''''''''''''''''''''f 
+block-dest 192.168.0.0/16
+block-smtp
+no-direct-ip
+# l8alauth
+cert-auth-key .cr5'''''''''''''

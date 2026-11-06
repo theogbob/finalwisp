@@ -1,0 +1,16 @@
+GET 5/ HTTP/1.1
+Upg:T / 
+Connection: Upgrade
+n: 12
+Sec-WebSocket-Protocol:
+Seion:13
+Sec-WebSocket-Protocol:
+t: 
+Upgrade: websocket
+Ccion: Ugr
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Protocol:
+-ee:u
+Sec-WebSocket-Protocol:
+
+SSe©

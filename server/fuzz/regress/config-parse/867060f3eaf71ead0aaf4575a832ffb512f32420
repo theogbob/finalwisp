@@ -1,0 +1,28 @@
+ÿþ#%all f127ver 1.1.1!.1:531:53
+no-prio
+auth-file /tmp/auth
+cert-auth-key .tmp/ed.pub
+motd hello world
+mem-budget 512M
+tcpmem-adapt
+metrics-interval 10
+max-conns 1000
+max-streams-per-conn 64
+allow-host example.auth
+cert-auth-key /tmp/ed.td hello world
+mem-budget 512M
+tcpmem-adapt
+metrics-interval 10
+max-conns 1000
+max-streams-per-conn 64
+allow-host example.auth
+cert-auth-key /tmp/ed.prio
+auth-file /tmp/auth
+cert-auth-key .tmp/ed.pub
+motd hello world
+mem-budget 512M
+tcpmem-adapt
+metrics-interval 10
+max-conns 1000
+max-strames-per-conn 64prio
+auth-ÿþallow-hos

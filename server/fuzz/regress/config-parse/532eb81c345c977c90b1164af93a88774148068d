@@ -1,0 +1,6 @@
+ÿÀÿÿÿÿÿþ
+
+block-dest 47.0.0.0/00,10.0.0.0/07     
+allow-ports 46     
+ports 47        
+allow-ps-pcert /l

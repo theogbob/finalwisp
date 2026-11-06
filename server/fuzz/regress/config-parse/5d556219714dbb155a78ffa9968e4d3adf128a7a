@@ -1,0 +1,6 @@
+ÿþallow-host t--block-host
+block-dest 10.0.0.0/8
+
+block-dest 10.0.0.0/18
+tls-cert /a0/8
+tls-cert /aey /do

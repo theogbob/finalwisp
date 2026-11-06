@@ -1,0 +1,20 @@
+ÿþ#%le /t
+no-prio
+auth-file /pd
+mem-budget 0000000000000000001k
+motd //e /#%le
+no-prio
+auth-file /pd
+mem-budget 0000000000050000001k
+motd //e %le /t
+no-prio
+auth-file /pd
+mem-budget 0000000000000000001k
+motd //e /#%le
+no-prio
+auth-file /pd
+mem-budget 000000000000000001k
+motd //e /#%lt//e /tZmo-prio
+auth-file /pd
+mem-budget 0000000000000000000k
+motd //e /tZmpd ///tZmpd ///

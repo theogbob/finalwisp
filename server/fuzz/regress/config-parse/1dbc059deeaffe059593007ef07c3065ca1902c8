@@ -1,0 +1,17 @@
+ÿþ# all 1!MJupload-rate-per-stream 512ream 512K
+log-level debug
+log-conns
+metrics-listen 11
+listen-unix /tmp/fw.etrics-listen 127.0.0.1:9100
+listen-unix /pmp/fw.sodebug
+log-conns
+metrics-listen 11
+listen-unix /tmp/fw.sotw-host a.tSn-SSancec--download,rl.---,ec--downloatK
+log-level debug
+log-conns
+metrics-listen 11
+listen-unix /tmp/fw.etrics-listen 127.0.0.1:9100
+listen-unix /pmp/fw.sodebug
+log-conns
+metrics-listen 11
+listen-unix /tmp/fw.sotw-host a.tSn-SSancec--download,rl.---,ec--downloat-ratemS--S---SSSSSSx /tmp/fwt-dns

@@ -1,0 +1,37 @@
+nÿ=û=ææææallow-hææææææææîæææææÿş# all 1M
+upload-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/timeout 10
+drain-timeout 5
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/l debug
+log-conns
+metrics-listen 254.0.0.1:9100
+listen-unix /tmp/timeout 10
+drain-timeout 5
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/ 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/timeout 10
+drain-timeout 5
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/timeout 10
+drain-timeout 5
+graceful-close
+nons
+metgraceful-clostimeout 10
+drain-time/timeout 10
+drain-timeout 5
+graceful-close
+no
+-clostimeout 10
+drain-time000000000000000cleful-close
+nons
+metric

@@ -1,0 +1,136 @@
+[package]
+name = "finalwisp-fuzz"
+version = "0.0.0"
+publish = false
+autobins = false
+edition = "2021"
+description = "70.01 cargo-fuzz targets for the finalwisp network parsers (the server sources are included with #[path])"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+# the server's dependencies, same versions (server/Cargo.toml)
+libc = "0.2"
+httparse = "1"
+sha1_smol = "1"
+ring = "0.17"
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+
+[features]
+# The targets run on finalwisp's own allocator like the server (70.25; the only path since 60.18 #11). pooltest: the
+# server's test-only feature (pool.rs / mem.rs compile here too)
+pooltest = []
+
+[workspace]
+members = ["."]
+
+# Built with `cargo fuzz build -O` (no global -Cdebug-assertions, which cargo-fuzz applies to every crate):
+# debug assertions + overflow checks come from this profile, for our code and the dependencies (rustls too:
+# its debug_assert!(!sent_fatal_alert) is how finding F1 showed up; fixed in base-1.2).
+[profile.release]
+debug = 1
+debug-assertions = true
+overflow-checks = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
+
+[[bin]]
+name = "ws-parse"
+path = "fuzz_targets/ws_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "http-parse"
+path = "fuzz_targets/http_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ext-records"
+path = "fuzz_targets/ext_records.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tls-framing"
+path = "fuzz_targets/tls_framing.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "worker-stream"
+path = "fuzz_targets/worker_stream.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "worker-wisp"
+path = "fuzz_targets/worker_wisp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "worker-tls"
+path = "fuzz_targets/worker_tls.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cli-parse"
+path = "fuzz_targets/cli_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "config-parse"
+path = "fuzz_targets/config_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "policy-host"
+path = "fuzz_targets/policy_host.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dns-parse"
+path = "fuzz_targets/dns_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pool-ops"
+path = "fuzz_targets/pool_ops.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "proxy-parse"
+path = "fuzz_targets/proxy_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "upstream-parse"
+path = "fuzz_targets/upstream_parse.rs"
+test = false
+doc = false
+bench = false

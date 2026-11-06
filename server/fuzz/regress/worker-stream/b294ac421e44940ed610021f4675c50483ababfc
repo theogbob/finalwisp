@@ -1,0 +1,10 @@
+ZGET /1p/127.0.0.1:4444 HTTP/1.1
+Host: x
+Upgrade: websocket
+Connectinn: U
+Sec-&W.0.1:4<44 HTTP/1.1
+Host: x
+Upgrade: websocket
+Connectinn: Upgrade
+Set-Version: 13
+

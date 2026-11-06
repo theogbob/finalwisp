@@ -1,0 +1,9 @@
+GET / HTTP/1.1
+Host: x\socket
+Connection: Upgrade
+Upgrade: websocket
+Cofection: Uz=gr=
+Sec-WebSocket-Version: 13
+jZon: 13
+Sec-WebSocket-Protocol:娩t
+

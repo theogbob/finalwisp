@@ -1,0 +1,68 @@
+ÿþ# all 1!MJupload-rate-per-stream 51/tmp/fw.sotream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /pmp/fw.sock flagser-sream 513K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/fw.sotr2K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/f/fw.sotr2K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/fw.sotream 793K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /pg
+log-conns
+metrics-listen 127.0.0.2:9100
+listen-unix /tmp/fw.sotream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /pmp/fw.sock flagw.cs-listen 127.0.0.1:9100
+listen-unix /pmp/fw.sock flagser-sream 513K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/fw.sotr2K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/f/fw.sotr2K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/fw.sot
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/fw.sotream 793K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /pg
+log-conns
+metrics-listen 127.0.0.2:9100
+listen-unix /tmp/fw.sotream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /pmp/fw.sock flagw.cs-lisetrics-listen 127.0.0.1:9100
+listen-unix /tmp/fw.sotr2K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/f/fw.sotr2K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/fw.sotream 793K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/fwt-dns

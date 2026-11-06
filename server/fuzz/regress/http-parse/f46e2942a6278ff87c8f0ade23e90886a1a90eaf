@@ -1,0 +1,7 @@
+GET / HTTP/1.1
+Upgrade: websocket
+Connect~on: -
+Connection: Upgrade
+Sec-WebSoc-Ky: 
+Sec-WebSocket-Version: 13
+

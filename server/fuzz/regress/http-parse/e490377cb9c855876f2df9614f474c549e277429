@@ -1,0 +1,14 @@
+GET / HTTP/1.1
+Host: ion,,,,,,,,,x
+Npg: Krade: x
+Upgrade: ,,	,,,	,,Ghl,,,,,,,,,,,,,,,01
+Upgrade: websocket
+Connection:Upgrade
+Ir:GT
+Upgrade: ebi娩
+bSr:�:GT
+Upgrade: webi娩
+Sec-WebSocket-Version: 13
+l:,
+Connection:
+

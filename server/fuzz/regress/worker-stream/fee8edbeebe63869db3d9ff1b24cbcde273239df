@@ -1,0 +1,65 @@
+ZGET /p/126.0.0.1:4444 HTTP/1.1
+Host: x
+Uptinn: Upgrade
+Sonnectinn: Up@rade
+Connectinn: Up x
+Uptinn: Upgrade
+Sonnectinn: Up@rade
+Connectinn: Upgrade
+Sonnectinn: ©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©© /p/126.0.0.1:4444 HTTP/1.1
+Host: x
+Uptinn: Upgrade
+Sonnectinn: Up@rade
+Connectinn: Upgrade
+Sonnectinn: ©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©
+Sonnectinn: Up@rade
+Connectinn: Upgrade
+Sonnectinn: ©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©é©©grade
+Sonnectinn: ©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©© /p/126.0.0.1:4444 HTTP/1.1
+Host:ade
+Sonnectinn: Up@rade
+Connectinn: Upgrade
+Sonnectinn: ©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©© /p/126.0.0.1:4444 HTTP/1.1
+Host: x
+Uptinn: Upgrade
+Sonnectinn: Up@rade
+Connectinn: Upgrade
+Sonnectinn: ©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©
+Sonnectinn: Up@rade
+Connectinn: Upgrade
+Sonnectinn: ©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©grade
+Sonnectinn: ©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©© /p/126.0.0.1:4444 HTTP/1.1
+Host: x
+Uptinn: Upgrade
+Sonnectinn: Up@rade
+Connectinn: Upgrade
+Sonnectinn: ©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©
+Sonnectinn: Up@rade
+Connectinn: Upgrade
+Sonnectinn: ©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©Up@r: dGhlIHNbBhSXsZBub10jZQ==
+Sec-&W.0.1:444ZusBS2bB5jZQ== x
+Uptinn: Upgrade
+Sonnectinn: Up@rade
+Connectinn: Upgrade
+Sonnectinn: ©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©
+Sonnectinn: Up@rade
+Connectinn: Upgrade
+Sonnectinn: ©©©©©©©©©©n: Up@rade
+Connectinn: Upgrade
+Sonnectinn: ©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©© /p/126.0.0.1:4444 HTTP/1.1
+Host: x
+Uptinn: Upgrade
+Sonnectinn: Up@rade
+Connectinn: Upgrade
+Sonnectinn: ©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©
+Sonnectinn: Up@rade
+Connectinn: Upgrade
+Sonnectinn: ©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©é©©grade
+Sonnectinn: ©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©© /p/126.0.0.1:4444 HTTP/1.1
+Host:ade
+Sonnectinn: Up@rade
+Connectinn: Upgrade
+Sonnectinn: ©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©©Up@r: dGhlIHNbBhSXsZBub10jZQ==
+Sec-&W.0.1:444ZusBS2bB5jZQ==
+Sec-WebSocket-Version: 13
+

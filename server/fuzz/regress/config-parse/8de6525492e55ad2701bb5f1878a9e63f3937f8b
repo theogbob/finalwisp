@@ -1,0 +1,39 @@
+ÿþ#%-budgr//tZmpd
+mem-budget 01m
+motd //motd m /tZmpd
+mem-budget 21m
+motd //mot--allow-sel m /tZmpd
+mem-budget 21m
+motd //mot--allow-motd //mot--allow-sel m /tZmpd
+mem-budget 21m
+motd //mot--allow-sm-budget
+motd //mot/am m /tZmpd
+mem-budget 00m
+motd //motd pr//tZmpd
+mem-budget 01m
+motd //motd m /tZmpd
+mem-budget 20m
+motd //mot--asm-budget
+motd //mot/am m /tZmpd
+mem-budget 00m
+motd //motd pr//tZmpd
+mem-budget 01m
+motd //motd m /tZmpd
+mem-budget 20m
+motd //mot--allow-sel m#%-budgr//tZmpd
+mem-budget 01m
+motd //motd m /tZmpd
+mem-budget 21m
+motd //mot--allow-sel m /tZmpd
+mem-budget 21m
+motd //mot--allow-sm-budget
+motd //mot/am m /tZmpd
+mem-budget 00m
+motd //motd prudget 01m
+motd //motd m /tZmpd
+mem-budget 21m
+motd //mo21m
+motd //mot /tZmpd
+mem-budget 21m
+motd //mot--allow-sm-budget
+motd //mntd pr/

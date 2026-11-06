@@ -1,0 +1,10 @@
+GET ' HTTP/1.1
+Upgrade: websocket
+Connection: Upgrade
+Seel:
+Sec-WebSocket-Protocol:ᛩ 4
+Sec-WebSocket-Protocol:ᛩ: 0
+Sec-WebSocket-Version: 13
+`etion:de-hh
+Sec-WebSocket-Protocol:ᛩ 
+

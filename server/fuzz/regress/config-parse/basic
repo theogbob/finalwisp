@@ -1,0 +1,8 @@
+ÿþ# c
+port 7000
+allow-loopback
+motd hello world
+dns-server 10.0.0.1
+dns-server 10.0.0.2
+tls-cert a
+tls-key b

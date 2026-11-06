@@ -1,0 +1,9 @@
+GET / HTTP/1.1
+Host: x
+Upgrade: websocket
+Connection: Upgrade
+S: 13
+Sec-WebSocket-Protocol: éhhhhhhh
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Protocol: é
+

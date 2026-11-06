@@ -1,0 +1,9 @@
+GET / HTTP/1.1
+ost:N
+grade: x
+Upgrade: websocket
+Connection: Upgrade
+Se: x
+Upgrale:
+Sec-WebSocket-Version: 13
+

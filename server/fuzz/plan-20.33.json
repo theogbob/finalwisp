@@ -1,0 +1,18 @@
+{
+ "lanes": [
+  [
+   {
+    "target": "worker-wisp",
+    "secs": 600,
+    "max_len": 140000
+   }
+  ],
+  [
+   {
+    "target": "worker-stream",
+    "secs": 600,
+    "max_len": 140000
+   }
+  ]
+ ]
+}

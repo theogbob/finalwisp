@@ -1,0 +1,13 @@
+ZGET / HTTP/1.1
+Host: x
+Upgrade: websocket
+Connection: Upgrzde
+Sec-WebSocket-Key: dGhlebSocket-Key: dGhlIe127.0.0.1:4444 HTTP/1.1
+Host: x
+Upgrade: websocket
+Coennctinn: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub05jZQ==
+Sec-&W.0.1:4444 HTTP/1.1
+HostbXBsZSBuonnection: Upgrade
+Sec-WebSocket-Key: dGhlIebsocket
+Connection

@@ -1,0 +1,15 @@
+ÿþ# 
+dns-own
+dns-server 0.1.1.1
+no-prio
+ 
+dns-own
+dns-server 0.1.1.1
+no-prio
+auth-file /tmow-loo-prio
+ 
+dns-own
+dns-server 0.1.1.1
+no-prio
+auth-file /tmow-loopback
+motd llo7,3jj,auth-file td llo3,3ile td llo3,3jj,2

@@ -1,0 +1,31 @@
+[package]
+name = "finalwisp"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+rust-version = "1.88" # 60.04 F10: slice::as_chunks_mut (1.88), is_multiple_of (1.87); the pinned toolchain is newer
+description = "20.01 finalwisp: fastest Wisp protocol server (thread-per-core, epoll, zero-copy download)"
+
+[dependencies]
+libc = "0.2"
+httparse = "1"
+sha1_smol = "1"
+ring = "0.17" # 20.18 key auth (ed25519) + SHA-256; already in the tree via rustls
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+
+[features]
+# The own big-buffer allocator (pool.rs, 70.25) is not a feature: it is the only allocator path since 60.18 #11 (the
+# old glibc + 70.11 block cache build, `own-alloc` off / NOFEAT=1, was removed after base-4).
+# 70.25 test-only (never in a release; release.sh refuses it): allocator call timing + FW_PT_MMAP_MAX (mem::pt), the
+# 70.24 trimtest method
+pooltest = []
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] } # 70.01 server/fuzz harness hooks
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort" # 60.04 F15: a panic ends the whole process; run under a supervisor (60.06 "Deployment")
+debug = "line-tables-only"

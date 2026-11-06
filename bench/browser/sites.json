@@ -1,0 +1,200 @@
+{
+ "compat": [
+  {
+   "case": "page",
+   "site": "wikipedia",
+   "url": "https://en.wikipedia.org/wiki/WebSocket",
+   "note": "static-ish, few big assets",
+   "expect_title": "WebSocket",
+   "allow_leaks": [
+    "^https://en\\.wikipedia\\.org/w/load\\.php\\?modules=skins\\.vector\\.icons"
+   ]
+  },
+  {
+   "case": "page",
+   "site": "bbc-news",
+   "url": "https://www.bbc.com/news",
+   "min_text": 2000,
+   "note": "news, ads/trackers (tracker 4xx/5xx are upstream noise)",
+   "expect_title": "BBC",
+   "allow_leaks": [
+    "^https?://(?![^/]*bbc\\.(com|co\\.uk))"
+   ]
+  },
+  {
+   "case": "page",
+   "site": "npr-text",
+   "url": "https://text.npr.org/",
+   "note": "text-only news",
+   "expect_title": "NPR"
+  },
+  {
+   "case": "page",
+   "site": "hn",
+   "url": "https://news.ycombinator.com/",
+   "expect_title": "Hacker News"
+  },
+  {
+   "case": "page",
+   "site": "google",
+   "url": "https://www.google.com/",
+   "min_text": 100,
+   "expect_title": "Google"
+  },
+  {
+   "case": "page",
+   "site": "react-dev",
+   "url": "https://react.dev/",
+   "note": "JS-heavy SPA",
+   "expect_title": "React"
+  },
+  {
+   "case": "page",
+   "site": "youtube",
+   "url": "https://www.youtube.com/",
+   "min_text": 0,
+   "note": "JS-heavy; renders blank under Scramjet b14b709a on every server (text check off)",
+   "expect_title": "YouTube"
+  },
+  {
+   "case": "page",
+   "site": "mdn",
+   "url": "https://developer.mozilla.org/en-US/docs/Web/API/WebSocket",
+   "note": "many small assets",
+   "expect_title": "WebSocket"
+  },
+  {
+   "case": "page",
+   "site": "github",
+   "url": "https://github.com/MercuryWorkshop/scramjet",
+   "note": "~270 requests",
+   "expect_title": "scramjet"
+  },
+  {
+   "case": "page",
+   "site": "apple",
+   "url": "https://www.apple.com/",
+   "note": "big images",
+   "expect_title": "Apple"
+  },
+  {
+   "case": "session",
+   "site": "wikipedia-session",
+   "url": "https://en.wikipedia.org/wiki/WebSocket",
+   "link_selector": "#mw-content-text p > a[title]",
+   "note": "open, scroll, click a link, back",
+   "expect_title": "WebSocket",
+   "allow_leaks": [
+    "^https://en\\.wikipedia\\.org/w/load\\.php\\?modules=skins\\.vector\\.icons"
+   ]
+  },
+  {
+   "case": "websocket",
+   "site": "ws-echo",
+   "origin_url": "https://example.com/",
+   "url": "wss://echo.websocket.org/",
+   "messages": 20,
+   "note": "page WebSocket through Wisp | origin is an HTML page: a text/plain origin gets no Scramjet client, so the fetch/WebSocket went direct (leak, fixed 2026-10-24)"
+  },
+  {
+   "case": "download",
+   "site": "cloudflare-25MiB",
+   "origin_url": "https://example.com/",
+   "url": "https://speed.cloudflare.com/__down?bytes=26214400",
+   "expect_bytes": 26214400,
+   "note": "origin is an HTML page: a text/plain origin gets no Scramjet client, so the fetch/WebSocket went direct (leak, fixed 2026-10-24)"
+  },
+  {
+   "case": "download",
+   "site": "kernel-50MiB-range",
+   "origin_url": "https://cdn.kernel.org/pub/linux/kernel/v6.x/",
+   "url": "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.6.tar.xz",
+   "range": "bytes=0-52428799",
+   "expect_bytes": 52428800,
+   "note": "Range request on a CDN file"
+  },
+  {
+   "case": "busy",
+   "site": "busy-user",
+   "origin_url": "https://example.com/",
+   "big_url": "https://speed.cloudflare.com/__down?bytes=52428800",
+   "cancel_url": "https://speed.cloudflare.com/__down?bytes=104857600",
+   "small_url": "https://speed.cloudflare.com/cdn-cgi/trace",
+   "expect_bytes": 52428800,
+   "url": "https://en.wikipedia.org/wiki/WebSocket",
+   "note": "50 MiB download in frame 2 + cancelled download + 5 small fetches + a page load, one Wisp connection | origin is an HTML page: a text/plain origin gets no Scramjet client, so the fetch/WebSocket went direct (leak, fixed 2026-10-24)",
+   "expect_title": "WebSocket",
+   "allow_leaks": [
+    "^https://en\\.wikipedia\\.org/w/load\\.php\\?modules=skins\\.vector\\.icons"
+   ]
+  }
+ ],
+ "timing": [
+  {
+   "case": "page",
+   "site": "m-wikipedia",
+   "url": "/wikipedia/wiki/WebSocket.html",
+   "note": "saved article, scripts stripped",
+   "expect_title": "WebSocket"
+  },
+  {
+   "case": "page",
+   "site": "m-hn",
+   "url": "/hn/index.html",
+   "min_text": 500,
+   "expect_title": "Hacker News"
+  },
+  {
+   "case": "page",
+   "site": "m-mdn",
+   "url": "/mdn/en-US/docs/Web/API/WebSocket.html",
+   "expect_title": "WebSocket"
+  },
+  {
+   "case": "page",
+   "site": "m-assets200",
+   "url": "/assets200/index.html",
+   "note": "221 requests: 200 small files + 10 CSS + 10 JS",
+   "expect_title": "assets200"
+  },
+  {
+   "case": "session",
+   "site": "m-wikipedia-session",
+   "url": "/wikipedia/wiki/WebSocket.html",
+   "link_selector": "#mw-content-text p > a[title]",
+   "note": "link targets are mostly not mirrored: click -> 404 page, still a navigation",
+   "expect_title": "WebSocket"
+  },
+  {
+   "case": "download",
+   "site": "m-big100",
+   "origin_url": "/hn/index.html",
+   "url": "/big100.bin",
+   "expect_bytes": 104857600
+  },
+  {
+   "case": "busy",
+   "site": "m-busy",
+   "origin_url": "/hn/index.html",
+   "big_url": "/__gen/1073741824",
+   "cancel_url": "/big100.bin?c",
+   "small_url": "/hn/index.html",
+   "url": "/wikipedia/wiki/WebSocket.html",
+   "note": "page load while an 'endless' (1 GiB, stopped after the page load) download runs on the same Wisp connection; + cancelled download + 5 small fetches",
+   "expect_title": "WebSocket",
+   "bg_stop_after_load": true
+  },
+  {
+   "case": "busy",
+   "site": "m-busy100",
+   "origin_url": "/hn/index.html",
+   "big_url": "/big100.bin",
+   "cancel_url": "/big100.bin?c",
+   "small_url": "/hn/index.html",
+   "expect_bytes": 104857600,
+   "url": "/wikipedia/wiki/WebSocket.html",
+   "expect_title": "WebSocket",
+   "note": "the first busy definition (timing run 1): 100 MiB file in frame 2, can end before the page load"
+  }
+ ]
+}

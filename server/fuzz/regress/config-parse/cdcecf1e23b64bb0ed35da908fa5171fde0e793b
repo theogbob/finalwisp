@@ -1,0 +1,82 @@
+ÿþallow-host t--block-host
+block-dest 22.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls-cert /eay /doc.test8--allowt t--block-host
+block-dest 22.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls-cert /eay /doc.test8--allow-dest 10.0..0/8
+tls-cert 8
+tls-cert /aey 10.0.0.0/
+allow-dest 10.0.0.0/8
+tls-cert /aey /dtest8--all-dest 22.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls-cert /aey /doc.test8--allow-dest 10.0..0/8
+tls-cert /aeytls-cert /aey 00oc.test8--allow-de.0.0/8
+tls-cert /aey 10.0.0.0/
+allow-dest 10.0.0.0/8
+tls-cert /aey /dok-hls-dest 10-cert!/aey /d/8
+tls-cert /aey 10.0.0.0/
+allow-dest 10.0.0.0/8
+tls-cert /aey /dtest8--all-dest 22.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls-cert /aey /doc.test8--allow-dest 10.0..0/8
+tls-cert //aeytls-cert /aey 00oc.test8--alaey 10.0.0.0/
+allow-dest 10.0.0.0/8
+tls-cert /aey /dok-hls-cert!/aey /d/8
+tls-cert /aey 10.0.0.0/
+allow-dest 10.0.0.0/8
+tls-cert /aow-destw-.0/
+allow-dest 10.0.0.0/8
+tls-cert /aey /dok-hls-cert!/aey /d/8
+tls-cert /ae~y 10.0.0.0/
+allow-dest 10.0.0.0/8
+tls-cert /aey /dtest8--all-dest 22.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls-cert /aey /doc.test8--allow-dest 10.0..0/8
+tls-cert /aeytls-cert /aey 00oc.test8--allow-de.0.0/8
+tls-cert /aey 10.0.0.0/
+allow-dest 10.0.0.0/8
+tls-cert /aey /dok-hls-dest 10-cert!/aey /d/8
+tls-cert /aey 10.0low-dntrol chare.0.0/8
+tls-cert /aey 10.0.0.0/
+allow-dest 10.0.0.0/8
+tls-cert /aey /dok-hls-cert!/aey /d/8
+tls-cert /aey 10.0.0.0/
+allow-dest 10.0.0.0/8
+tls-cert /aey /dtest8--all-dest 22.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls-cert /aey /doc.test8--allow-dest 10.0..0/8
+tls-cert /eaytls-cert /aey 00oc.test8--allow-de.0.0/8
+tls-cert /aey 10.0.0.0/
+allow-dest 10.0.0.0/8
+tls-cert /aey /dok-hls-cert!/aey /d/8
+tls-cert /aey 10.0.0.0/
+allow-dest 10.0.0.0/8
+tls-cert /aow-destw-dntrol chare.0.0/8
+tls-cert /aey 10.0.0.0/
+allow-dest 10.0.0.0/8
+tls-cert /aey /dok-hls-cert!/aey /d/8
+tls-cert /aey 10.0.0.0/
+allow-dest 10.0.0.0/8
+tls-cert /aey /dtest8--all-dest 22.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls-cert /aey /doc.test8--allow-dest 10.0..0/8
+tls-cert /aeytls-cert /aey 00oc.test8--allow-de.0.0/8
+tls-cert /aey 10.0.0.0/
+allow-dest 10.0.0.0/8
+tls-cert /aey /dok-hls-dest 10-cert!/aey /d/8
+tls-cert /aey 10.0.0.0/
+allow-dest 10.0.0.0/8
+tls-cert /aey /dtest8--all-dest 22.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls-cert /aey /doc.test8--allow-dest 10.0..0/8
+tls-cert /aeytls-cert /aey 00oc.test8--allow-de.0.0/8
+tls-cert /aey 10.0.0.0/rt /aey ,ll/dok-o

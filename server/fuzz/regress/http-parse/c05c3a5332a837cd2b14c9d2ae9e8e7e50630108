@@ -1,0 +1,13 @@
+GET / HTTP/1.1
+Hoct: x
+Uphrade: `wt: x
+Uphrade:.1
+Hoct: x
+Uphrade: `/
+Upgrade: websocket
+Connection: Upgrade
+Scocket-nnon:,,ub4Ë•¥=¦=
+Sec-WebSocket-Version: 13
+
+
+

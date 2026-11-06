@@ -1,0 +1,7 @@
+GET / HTTP/1.1
+Upgrion: 
+Sec-WebSocket-Key: dGlIsZSBub
+Sec-WebSocket-Key: dGhld
+Sec-WebSocket-Key:sZS
+Sec-WebSocket-Key: 5
+

@@ -1,0 +1,84 @@
+motd mlowd -hlelo 000n-unix /tmp/fw.sotream15g-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tbug
+log-conns
+metrics-listen 12700
+listen-unix /tm
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmprust-disten-unix /tm
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmprust-d--allow-privatestenprust-wmpru-unix /tm
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmprust-dnsream15 2K
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tm
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmprust-distam15 2K
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tm
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmprust-dnsream15 2K
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tm
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmprust-disten-unix!/tm
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmprust-d--allow--unix /tmstprust-w.soteam15 2K
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tm
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmprust-dnsream15 2K
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tm
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmprust-distam15 2K
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tm
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmprust-dnsream15 2K
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tm
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmprust-disten-unix!/tm
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmprust-d--allow--unix /tmprust-dnsrre-loopbackauth-own
+dns-server 1.1.1.1

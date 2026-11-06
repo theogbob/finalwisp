@@ -1,0 +1,14 @@
+ZGET /p/127.0.0.1:4444 HTTP/1.1
+Host: x
+U: dwebsocfail
+Connectio2: Upgrade
+0.1:4GhlIHNhbT / HTTP/1.1
+HostgHost: x
+Upgrade: ZQ==-
+Sec-Web+ocket-Versn: 	ú!=5û!XB™™™sZSBub26ÿÿÿÿl
+Connectio2: Upgrade
+0.1:4444 HTTP/1.1
+Host: x
+Upgrae: dwebsocfail
+Connectio2: Ucket-Key dGèlIHNhbXB™™ÿÿÿÿÿÿÿÿÿÿÿ13
+

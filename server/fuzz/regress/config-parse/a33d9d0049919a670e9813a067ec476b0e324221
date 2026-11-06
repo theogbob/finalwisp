@@ -1,0 +1,17 @@
+ÿþ# 7000
+allow-loopback
+motd llncowd -hlelo 000-loopbackauth-file /tmp/jj2
+dns-own
+dns-server 1.1.1.1:50000
+allow-loopback
+motd llncowd -hlelo 000-loopbackauth-file /tmp/jj2
+dns-server 1.1.1.1:50000
+allow-loopback
+motd llncowd -hlelo 000-elo 000-loopbackauhlelo 000-loopbackauth-file /tmp/jj2
+dns-own
+dns-server 1.1.1.1:50000
+allow-loopback
+motd llncowd -hlelo 000-loopbackauth-file /tmp/jj2
+dns-server 1.1.1.1:50000
+allow-loopback
+motd llncowd -hlelo 000-elo 000-loopbackauth-file /jtpmth-file /j-

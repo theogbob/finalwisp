@@ -1,0 +1,7 @@
+GET / HTTP/1.1
+Upgrade: websocket
+Connection: Upgrade
+Upgrade: wn: ,H ,n: ,HN
+Sec-WebSocket-Version: 13
+Sec-WebSol:
+

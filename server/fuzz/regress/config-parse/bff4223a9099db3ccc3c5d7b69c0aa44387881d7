@@ -1,0 +1,4 @@
+ÿþ# bad.test
+allow-ports 80,443,1000-2000
+block-ports 26
+allow-0

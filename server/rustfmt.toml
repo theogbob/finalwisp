@@ -1,0 +1,3 @@
+# 60.04 F11: the smaller diff of the two candidates (max_width 140 alone: +636/-163; with "Max": +263/-118)
+max_width = 140
+use_small_heuristics = "Max"

@@ -1,0 +1,12 @@
+zZGET / HTTP/1.1
+Host: x
+Upgrade: websocket
+Connection: UpgradE
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub48jZQ==
+Sec+WebSocket-Veion: UpgradE
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub48jZQ==
+Sec-WebSocket-Version: 13
+
+‚“7ú!=6!û=7ûq=R‚@PG–,T•L‚’7ú!=6ù!=7ûq=)‚XO›LM[Ÿ‚4ú!=3ÿ!=7ûš<_•RI$‚Š7ú!=5û!=7½
+
+‚“7ú!=6!û=7ûq=R‚@PG–,T•L‚’ˆ!=2ù!=7ûq=)‚XO›LM[Ÿ‚7ú!=5ÿ!=7ûš<_•RI$‚Š7ú!-Web=7½diÕ

@@ -1,0 +1,50 @@
+ÿþ# c
+port 7000
+allow-loopback
+motd heoc.test6`--llow-d-lHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHallow-loopback
+motd heoc.test6`--llow-d-lHHHHHHHHHack
+motd heoc.test8--`llowHHHHHHHHHHHHHHHHHHLHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHlow-host t--allow-self--!em-budget--block-host
+block-dest 10.0.0.0/8
+
+block-dest 10.0.0.0/00000
+allow-loopback
+motd heoc.test8--`llow-HHHHHHHHHHHHHHHHlow-host t--mem-budget--block-host
+block-dest 10.0.0.0/8
+
+block-dest 10.0.0.0/00000
+allow-loopback
+motd heoc.tesHHHHHHHHHHHHHHHHHHHHHHHlock-host
+block-dest 10.0.0.0/8
+
+block-dest 10.0.0.0/00000
+allow-loopback
+motd heoc.test8--`llowHHHHHHHHLHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHst8--`llow-HHHHHHHHHHHHHHHHlow-host t--mem-budget--block-host
+block-dest 10.0.0.0/8
+
+block-dest 10.0.0.0/00000
+allow-loopback
+motd heoc.test8--`llow-d-llow-hoslock-dest 10.0.0.0/8
+
+block-dest 10.0.0.0/00000
+allow-loopback
+motd heoc.test8--`llowHHHHHHHHHHHHHHHHHHLHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHlow-host t--allow-self--!em-budget--block-host
+block-dest 10.0.0.0/8
+
+block-dest 10.0.0.0/00000
+allow-loopback
+motd heoc.test8--`llow-HHHHHHHHHHHHHHHHlow-host t--mem-budget--block-host
+block-dest 10.0.0.0/8
+
+block-dest 10.0.0.0/00000
+allow-loopback
+motd heoc.tesHHHHHHHHHHHHHHHHHHHHHHHlock-host
+block-dest 10.0.0.0/8
+
+block-dest 10.0.0.0/00000
+allow-loopback
+motd heoc.test8--`llowHHHHHHHHLHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHst8--`llow-HHHHHHHHHHHHHHHHlow-host t--mem-budget--block-host
+block-dest 10.0.0.0/8
+
+block-dest 10.0.0.0/00000
+allow-loopback
+motd heoc.test8--`llow-d-llow-host t--mem-b

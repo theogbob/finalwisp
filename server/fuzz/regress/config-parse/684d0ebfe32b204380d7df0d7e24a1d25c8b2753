@@ -1,0 +1,17 @@
+ÿþ#%153tcpmem-adapt
+metrics-interval 10
+max-conns 1000
+max-streams-per-conn 64
+allow-host example.auth
+cert-auth-key /tmp/e hello world
+mem-budget 512G
+tcpmem-adapt
+metrics-interval 10
+max-conns 1
+cert-auth-key .em-adapt
+metrics-interval 20
+max-conns 1
+cert-auth-key .tml f126auth26mem-met
+auth-file /tZmpd
+mem-budget 01k
+motd ///

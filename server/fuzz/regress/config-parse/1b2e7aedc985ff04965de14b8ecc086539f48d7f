@@ -1,0 +1,11 @@
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ÿþ#%153
+no-prio
+auth-file /tZmpd
+mem-budget 01k
+no-prio
+auth-file /tZmp~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~file /tZmpd
+mem-budget 01k
+no-prio
+auth-file /tZmpd
+mem-budget 02k
+motd //mot$  ///

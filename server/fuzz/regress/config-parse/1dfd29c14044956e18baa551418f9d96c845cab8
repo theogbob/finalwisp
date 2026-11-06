@@ -1,0 +1,80 @@
+ÿþ# ten-unix /tmp/f.0.0.1:9100
+listen-unix /tmp/fw.sotream1-unix /tmp/f.0.0.1:9100
+listen-unix /tmp/fw.sotream15 2K
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmw.sotream1-unix /tmp/f.0.0.1:9100
+listen-unix /tmp/fw.sotream15 2K
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmprustprust-w.soteam15 2K
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tm
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmprust-dnsream15 2K
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tm
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmprust-dnsrreamvel5 2K
+log-level debug
+log-conns
+metrics-listen 12700
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmpru-conns
+metrics-listen 12700
+listen-unix /tm
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmprust-dnsream15 2K
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tm
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmprust-dnsrreamvel5 st-dsten 12700
+listen-unix /tmprust-dnsream15 2K
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tm
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmprust-dnsrreamvel5 2K
+log-level debug
+log-conns
+metrics-listen 12700
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmpru-conns
+metrics-listen 12700
+listen-unix /tm
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmprust-dnsream15 2K
+log-level debug
+log-conns
+metrics-listen 12700
+listen-unix /tmten-unix /tmprust-dnsrreamvel5 st-dnsrreamvel debug
+log-conns
+metric'-nsrreamvel debug
+log-conns
+metric'-listen 127.0.0.1:9100
+listen-2nix /tmprust-d

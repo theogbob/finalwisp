@@ -1,0 +1,25 @@
+ÿþ# all 1M
+upload-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 12K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/fw.sock flagser-stream 512K
+log-level debug
+logmp/fw.sock flagser-stream 512K
+log-level debug
+l27.0.0.1:9m 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/fw.sock flagser-stream 512K
+log-level debug
+logmp/fw.sock flagser-stream 730K
+log-level debug
+log-cisten-uconns
+metrics-lilose
+no-splice
+ballisten-uni.1:1080
+upstream-trust-dns

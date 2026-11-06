@@ -1,0 +1,12 @@
+*ZGET /%s1%32%37.0.0.1:4444 HTTP/1.1
+Host: x
+Upgrade: w                                               ¡                                                   eb4c-WebSocket-Proto4 HTTP/1.1
+Hosion: 13
+Sec-WebSocket-Protocol: wisp-v2aaaaaaaaaaaaaaaaaaaaaaa™aaaaaaaaaaaŸ˜aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-----BEGIN aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaïaaaaaaaaaaaaaaaaaaaaaaaaaÙaaaaaaaaaaast: x
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Key: dGhlKHNhbXBsZSBub25jZQ==
+Sec-WebSocket-Version: 13
+
+‚‘6ú!=6û!=7û}‚‚€‚‚‚¥‚‚ã‚†‚‚‚‚‚‚‚‚‚‚‚‚‚‚‚‚‚‚‚†‚‚‚‚‚‚‚‚‚‚‚‚‚©©cket-Ëey: dGhlIHNhbX÷BsZSB5>
+

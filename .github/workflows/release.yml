@@ -1,0 +1,70 @@
+name: release
+# On a tag v*: the reproducible release build, the tarball + SHA256SUMS, a DRAFT GitHub release with those assets
+# (notes from CHANGELOG.md), and the container image on ghcr.io. Publish the draft by hand after checking it.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:26.04
+    steps:
+      - name: tools
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential git file curl ca-certificates nodejs >/dev/null
+          dpkg-query -W -f='${Package} ${Version}\n' libc6-dev gcc-15 binutils
+      - uses: actions/checkout@v5
+      - name: rust (pinned by rust-toolchain.toml)
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"  # the workspace is not owned by the container user
+          curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: release build
+        run: |
+          bench/release.sh
+          grep -E '^(git|md5):' server/target/x86_64-unknown-linux-gnu/release/BUILDINFO >> "$GITHUB_STEP_SUMMARY"
+      - name: package
+        run: |
+          case "$GITHUB_REF" in refs/tags/*) ver=$GITHUB_REF_NAME ;; *) ver=g$(git rev-parse --short=10 HEAD) ;; esac
+          bench/package.sh "$ver" pkg
+          cp server/target/x86_64-unknown-linux-gnu/release/BUILDINFO pkg/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: pkg/
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: pkg
+      - name: draft release
+        run: |
+          # the CHANGELOG.md section of this tag (from "## <tag>" to the next "## ")
+          awk -v t="## $TAG" '$0 == t {on=1; next} on && /^## / {exit} on' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "finalwisp $TAG" > notes.md
+          gh release create "$TAG" --draft --verify-tag --title "finalwisp $TAG" --notes-file notes.md \
+            pkg/*.tar.gz pkg/SHA256SUMS pkg/BUILDINFO
+      - name: container image (ghcr.io)
+        run: |
+          image=ghcr.io/$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')
+          mkdir ctx && tar -xzf pkg/finalwisp-$TAG-x86_64-linux.tar.gz -C ctx --strip-components=1
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker build -f contrib/docker/Dockerfile --build-arg REVISION="$GITHUB_SHA" -t "$image:$TAG" ctx
+          docker push "$image:$TAG"

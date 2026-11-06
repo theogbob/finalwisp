@@ -1,0 +1,11 @@
+GET / HTTP/1.1
+Host: x
+Upgrade: websocket
+Connection:Upgrade
+Sec-WebSocket-Version: 13
+Sec-WebSocketProtocol:?1wisEEEEEEEEEEE1.1
+Hode:onn
+Upgrade: n,,,,,-,,,,- 
+Xo:HE
+
+v6[/1.1E
