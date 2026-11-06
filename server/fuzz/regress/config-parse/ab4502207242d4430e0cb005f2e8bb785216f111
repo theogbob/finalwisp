@@ -1,0 +1,43 @@
+ÿþ#%153
+no-prio
+auth-file /t
+no-prio
+auth-file io
+auth-file /t
+no-prio
+auth-file /tZmpd
+mem-budget 0000000000000k
+motd //md
+mem-budget 0000000000000000000002k
+motd ///tZmpd
+mem-budget 0000000000001k
+motd //md
+mem-budget 0200000000000001k
+motd //mtZmpd
+mem-budget 0000000000001k
+motd //md
+mem-budget 0200000000000001k
+motd //mde /ttd //mot02k
+motd //mot$io
+auth-file /ttd /get 0000000000002k
+motd ///ile /t
+no-prio
+auth-file io
+auth-file /t
+no-prio
+auth-file /tZmpd
+mem-budget 0000000000001k
+motd //md
+mem-budget 000000001k
+motd //mtZmpd
+mem-budget 0000000000001k
+motd /0000000000002k
+motd ///tZmpd
+mem-budget 0000000000001k
+motd //md
+mem-budget 0200000000000001k
+motd //mtZmpd
+mem-budget 0000000000001k
+motd //md
+mem-budget 0200000000000001k
+motd //mde /ttd //mot$  ///

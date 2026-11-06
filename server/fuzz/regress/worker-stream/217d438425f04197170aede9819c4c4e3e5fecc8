@@ -1,0 +1,57 @@
+ZGET / HTTP/1.1
+Host: x
+Upgr000:::::::::::::::::::::::::::::::::::::::::::::::00000ocket
+Connection: Upgÿÿÿÿÿÿÿÿÿ HTTP/1.1
+Host: x
+pUgrade: websokcet
+Connection:n: Upgrade
+00000000000000000de: websocket
+ConneSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebSocket-Version: 13
+00000de: websocket
+Connection: Upgÿÿÿÿÿÿÿÿÿ HTTP/1.1
+Host: x
+pUgrade: websocket
+Connection: Upgrade
+0::::::::::::::::::::::::::::::::::::::::::::00000ocket
+Connection: Upgÿÿÿÿÿÿÿÿÿ HTTP/1.1
+Host: x
+pUgrade: websokcet
+Connection:n: Upgrade
+00000000000000000de: websocket
+ConneSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebSocket-Version: 13
+00000de: websocket
+Connection: Upgÿÿÿÿÿÿÿÿÿ HTTP/1.1
+Host: x
+pUgrade: websocket
+Connection: Upgrade
+00000000000000000de: websocket
+ConneSec-WebSocket-Key: dGhlI Upgrade
+00000000000000000de: websocket
+ConneSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebSocket-Version: 13
+00000de: websocket
+Connection: Upgÿÿÿÿÿÿÿÿÿ HTTP/1.1
+Host: x
+pUgrade: websocket
+Connection: Upgrade
+00000000000000000de: websocket
+ConneSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Protocol: wisp-0000000000000000de: websocket
+ConneSec-WebSocket-Key: dGhlI Upgrade
+00000000000000000de: websocket
+ConneSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebSocket-Version: 13
+00000de: websocket
+Connection: Upgÿÿÿÿÿÿÿÿÿ HTTP/1.1
+Host: x
+pUgrade: websocket
+Connection: Upgrade
+00000000000000000de: websocket
+ConneSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Protocol: wisp-v2
+
+‚Œ7ú!=2ú!=7Ô

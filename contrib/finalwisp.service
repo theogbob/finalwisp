@@ -1,0 +1,57 @@
+# 40.01 finalwisp as a systemd service. Copy to /etc/systemd/system/finalwisp.service, adjust ExecStart, then
+#   systemctl daemon-reload && systemctl enable --now finalwisp
+# Reload certificates: systemctl reload finalwisp (SIGHUP). Stop: SIGTERM = graceful drain (60.12).
+[Unit]
+Description=finalwisp Wisp server
+Documentation=file:///usr/local/share/doc/finalwisp/40.01-deployment.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+# Plain ws:// behind a TLS proxy on this host. For built-in TLS (kTLS) add:
+#   --tls-cert /etc/finalwisp/fullchain.pem --tls-key /etc/finalwisp/privkey.pem
+# and load the kernel module once: echo tls > /etc/modules-load.d/tls.conf && modprobe tls
+ExecStart=/usr/local/bin/finalwisp --host 127.0.0.1 --port 6001 --drain-timeout 30
+ExecReload=/bin/kill -HUP $MAINPID
+KillSignal=SIGTERM
+# > --drain-timeout + 2 s: after it systemd sends SIGKILL
+TimeoutStopSec=40
+Restart=on-failure
+RestartSec=2
+
+# No root: a dynamic user. With --tls-key (or --auth-file, --cert-auth-key) the file must be readable by the service user: replace DynamicUser=yes with
+#   User=finalwisp   (useradd --system finalwisp)
+# and keep root-owned copies readable by it (chown root:finalwisp, chmod 640) in /etc/finalwisp; a certbot deploy
+# hook can copy renewed files there and run `systemctl reload finalwisp`.
+DynamicUser=yes
+# Ports < 1024 (e.g. --port 443): uncomment
+#AmbientCapabilities=CAP_NET_BIND_SERVICE
+# One fd per connection and per stream (+2 pipe fds per connection using splice): keep this high.
+LimitNOFILE=1048576
+# Memory: finalwisp reads this cgroup limit and keeps its usage under it (memory budget, 20.26: smaller queues,
+# then no new streams, then shedding) instead of meeting the OOM killer. Set it to what the server may use.
+#MemoryMax=1G
+
+# Hardening. Old systemd ignores unknown keys with a warning (RHEL 8's 239: Type=exec needs 240 and falls back to simple,
+# ProtectHostname 242, ProtectClock 245). None of it gets in the way: finalwisp only reads /proc, /sys/fs/cgroup, /etc/resolv.conf, /etc/hosts and its certificate files.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+# hides /usr/lib/modules: a missing kTLS module is reported only as "modprobe tls" (load it at boot, see above)
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

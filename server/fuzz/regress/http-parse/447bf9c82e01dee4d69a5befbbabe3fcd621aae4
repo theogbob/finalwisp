@@ -1,0 +1,8 @@
+GET / HTTP/1.1
+Upgion: U
+Sec-WebSocket-Key:GhlI Nb
+Sec-WebSocket-Key:SBub
+Sec-WebSocket-Key: dGb
+Sec-WebSocket-Key:G
+Sec-WebSocket-Key:Hsp-v4
+

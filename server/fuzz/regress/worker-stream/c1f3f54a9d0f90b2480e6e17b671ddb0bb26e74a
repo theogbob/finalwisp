@@ -1,0 +1,12 @@
+Z$GET /%:4444 HTTP/1.1
+Ho: UpgradE
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub48jZQ==
+Sec-WebSocket-Version: 13Host: x
+Upgrade: websocket
+Connection: UpgradE
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub60jZQ==
+Sec-WebSocket-Version: 13
+
+‚“7ú!=6!û=7ûq=R‚@PG–,T•L‚’7ú!=6ù!=7ûq=)‚XO›LM[Ÿ‚7ú!=3ÿ!=7ûš<_•RI$‚Š7ú!=5û!=7½
+9onn¦é^¶Y&w*mUú!=6û!}7ÍÍÍÍ¸çZGET / ®«T:/1.1
+

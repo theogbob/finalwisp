@@ -1,0 +1,7 @@
+ÿþ#!all f127ver 1.1.1.1:53
+no-prio
+auth-file /tmp/ar 1.1.1.1file /tmp/auth
+cert-auth-key /tmp/ed.pub
+motd hello world
+mem-budget 512--F:r-ip 32
+streas-

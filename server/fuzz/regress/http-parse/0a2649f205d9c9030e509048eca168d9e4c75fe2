@@ -1,0 +1,4 @@
+GET / HTTP/1.1
+X-Fovwarde-For: 10.0.0TP: 10.0.0TP/1.1
+X-Forwarded-For:񪘏,,,,'	񪘏,r-WebSocke..or7, ::11
+

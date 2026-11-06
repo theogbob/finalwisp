@@ -1,0 +1,29 @@
+ref/
+target/
+*.log
+__pycache__/
+.venv/
+node_modules/
+baselines/*/node_modules/
+baselines/python/.venv/
+bench/target/
+server/target/
+tests/compat/node_modules/
+# a worktree's node_modules may be a symlink; the slash form above does not match a symlink (dcae5d2 committed one)
+node_modules
+an internal note (not published)
+bench/results/wispmark-cfg/
+baselines/wispurr/wispurr
+tests/certs/
+bench/tlscmp/*.pem
+bench/results/b1/fw-*
+bench/results/b1/wbench
+bench/results/b1/certs/
+bench/results/b1/perf-*
+bench/results/b1/strace-*
+bench/results/browser-*/traces/
+bench/results/browser-*/**/traces/
+bench/results/compat-*/
+# 40.02 release packaging output (bench/package.sh) and docker build context
+/pkg/
+/scramjet/

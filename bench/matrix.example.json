@@ -1,0 +1,58 @@
+{
+ "_doc": "30.10 example matrix: `bench/wst matrix bench/matrix.example.json`. servers: registry names (bench/servers.json), 'fw:PATH args', or full entries like the second one. Full entry: {\"name\": \"x\", \"cmd\": \"exec {root}/path/server --port {port}\", \"cwd\": \"{root}\", \"env\": {}, \"extra\": [\"--stall-ping-ms\", \"1\"], \"ready_timeout\": 20}",
+ "duration": 3,
+ "warmup": 1,
+ "port": 6001,
+ "servers": [
+  "epoxy"
+ ],
+ "cases": [
+  {
+   "test": "upload",
+   "conns": 1,
+   "streams": 1,
+   "size": 16384
+  },
+  {
+   "test": "upload",
+   "conns": 10,
+   "streams": 10,
+   "size": 16384
+  },
+  {
+   "test": "download",
+   "conns": 10,
+   "streams": 10
+  },
+  {
+   "test": "echo",
+   "conns": 1,
+   "streams": 1,
+   "size": 16384
+  },
+  {
+   "test": "echo",
+   "conns": 10,
+   "streams": 10,
+   "size": 16384
+  },
+  {
+   "test": "rr",
+   "conns": 1,
+   "streams": 1,
+   "size": 64
+  },
+  {
+   "test": "rr",
+   "conns": 10,
+   "streams": 10,
+   "size": 64
+  },
+  {
+   "test": "churn",
+   "conns": 10,
+   "streams": 10,
+   "size": 64
+  }
+ ]
+}

@@ -1,0 +1,5 @@
+ÿþ# all f28,aes256
+tls-rekey-records 10 UT00000
+notse
+allow-host example.com
+block-host .breal--header ello

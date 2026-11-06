@@ -1,0 +1,53 @@
+
+dns-server ::%0048  　   
+#s-server ::%0048  　   
+#$  　 b
+dns-server ::%000000000280 
+# rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr$  　    335 
+#00b
+dns-server ::%000000000285 
+# rr279 
+#00b
+dns-server ::%000000000280 
+# rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr   335 
+#00b
+dns-server ::%000000000285 
+# rr279 
+#00b
+dns-server ::%000000000280 
+# rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr$  　    335 
+#00b
+dns-server ::%000000000285 
+# rr27000000285 
+# rr279 
+#00b
+dns-server ::%000000000280 
+# rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr   335 
+#00b
+dns-server ::%000000000285 
+# rr279 
+#00b
+dns-server ::%000000000280 
+# rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr$  　    335 
+#00b
+dns-server ::%000000000285 
+# rr279 
+#00b
+dns-server ::%000000000280 
+# rrrrrrrrrs-server ::%0048  　 00b
+dns-server ::%000000000285 
+# rr279 
+#00b
+dns-server ::%000000000280 
+# rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr$  　    335 
+#00b
+dns-server ::%000000000285 
+# rr279 
+#00b
+dns-server ::%09 
+#00b
+dns-server ::%000000000280 
+# rrrr279 
+#00b
+dns-server ::%000000000280 
+# rrrrr$rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr er 0

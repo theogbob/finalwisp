@@ -1,0 +1,8 @@
+# 60.05 H4: pin the compiler that built base-1 (rustc 1.100.0-nightly f248f4038 2026-09-05).
+# The rustup channel name is one day after the commit date: nightly-2026-09-05 is 0ed41eb41 (2026-09-04).
+[toolchain]
+channel = "nightly-2026-09-06"
+# 40.02 rust-src: with it installed, rustc rewrites std paths (/rustc/<hash>/ in panic locations and debug info) to the
+# local sysroot; without it they stay virtual. Every build host must agree or the release md5 differs.
+components = ["clippy", "rustfmt", "rust-src"]
+profile = "minimal"

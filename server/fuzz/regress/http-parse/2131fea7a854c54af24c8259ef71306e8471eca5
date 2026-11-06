@@ -1,0 +1,6 @@
+GET / HTTP/1.1
+t: b25*=h
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Version:13
+Sec-sion: 
+

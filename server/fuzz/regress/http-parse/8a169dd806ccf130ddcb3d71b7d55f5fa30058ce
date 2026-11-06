@@ -1,0 +1,12 @@
+GET / HTTP/1.1
+2s: x
+Upgqade: websn
+Upgqade: webso/de: x
+Upgqade: weon: 
+Connection: Upgrade
+Secc2k: x
+Upgrade: websocket
+Ct+on: *ÿÿÿÿÿÿ==
+Sec-WebSocket-Version: 13
+
+e H 

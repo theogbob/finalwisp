@@ -1,0 +1,20 @@
+ÿþ#%153
+no-prio
+auth-file /tZmpd
+mem-budget 01k
+no-prio
+auth-file /tZmfile /tZmpdd
+no-prio
+auth-file /tZmpd
+mem-budget 0k
+motd //mot$  -prio
+auth-file /tZmpd
+mem-budget 01k
+no-prio
+auth-file /tZmfile /tZmpdd
+mem-budget 0
+mem-budget 01k
+no-prio
+auth-file /tZmpd
+mem-budget 0k
+motd //mot$///

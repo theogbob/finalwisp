@@ -1,0 +1,11 @@
+ÿþ#%all f126auth
+cert-auth-key .tmp/ed.pub
+motd hello world
+mem-budget 512M
+tcpmem-adapt
+metrics-interval 10
+max-conns 1000
+max-streams-per-conn 64
+allow-host example.auth
+cert-auth-key /tmics-interval 10
+max-conns 100

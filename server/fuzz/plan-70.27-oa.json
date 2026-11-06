@@ -1,0 +1,86 @@
+{
+ "lanes": [
+  [
+   {
+    "target": "worker-stream",
+    "secs": 36000,
+    "max_len": 140000
+   }
+  ],
+  [
+   {
+    "target": "worker-wisp",
+    "secs": 36000,
+    "max_len": 16384
+   }
+  ],
+  [
+   {
+    "target": "worker-tls",
+    "secs": 36000,
+    "max_len": 16384
+   }
+  ],
+  [
+   {
+    "target": "pool-ops",
+    "secs": 18000,
+    "max_len": 8192
+   },
+   {
+    "target": "worker-stream",
+    "secs": 18000,
+    "max_len": 140000
+   }
+  ],
+  [
+   {
+    "target": "http-parse",
+    "secs": 6000,
+    "max_len": 20000
+   },
+   {
+    "target": "ws-parse",
+    "secs": 3600,
+    "max_len": 64
+   },
+   {
+    "target": "tls-framing",
+    "secs": 3600,
+    "max_len": 1024
+   },
+   {
+    "target": "ext-records",
+    "secs": 7200,
+    "max_len": 2048
+   },
+   {
+    "target": "dns-parse",
+    "secs": 7200,
+    "max_len": 2048
+   },
+   {
+    "target": "cli-parse",
+    "secs": 3600,
+    "max_len": 1024
+   },
+   {
+    "target": "worker-wisp",
+    "secs": 4800,
+    "max_len": 16384
+   }
+  ],
+  [
+   {
+    "target": "worker-tls",
+    "secs": 18000,
+    "max_len": 16384
+   },
+   {
+    "target": "pool-ops",
+    "secs": 18000,
+    "max_len": 8192
+   }
+  ]
+ ]
+}

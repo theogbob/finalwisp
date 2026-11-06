@@ -1,0 +1,5 @@
+ÿþ# 1M
+upload-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 0

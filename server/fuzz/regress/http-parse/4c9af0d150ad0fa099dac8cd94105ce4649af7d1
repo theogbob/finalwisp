@@ -1,0 +1,5 @@
+GET / HTTP/1.1
+Host: x
+-FoX-For: 6d-1:ro Fost: x
+X-Forwarded-For:
+

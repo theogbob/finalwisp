@@ -1,0 +1,25 @@
+ÿþ#%153
+no-prio
+auth-file /tZme/ tZmZmpd-budgbudget 02k
+no-prio
+auth-file /tZmfile /tZmpdd
+mem-budget 0
+mem-budget 01m
+no-prio
+auth-file /tZmpd
+
+motd //mot$//udget 01k
+no-prio
+auth-file /tZ,file 0
+mem-budget 01m
+mem-budget 01m
+no-prio
+auth-file /tZmpd
+
+motd //mot$///file /tZmpd-budgbudget 01k
+no-prio
+auth-file /tZmfile /tZmpdd
+mem-budget 0
+mem-budget 01m
+no-prio
+auth-fil/

@@ -1,0 +1,9 @@
+# epoxy-server config for wbench validation (pointer 30.01).
+# allow_loopback already defaults to true in epoxy; set explicitly for clarity.
+[server]
+bind = ["tcp", "127.0.0.1:6001"]
+runtime = "multithread"
+
+[stream]
+allow_loopback = true
+allow_non_global = true

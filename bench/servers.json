@@ -1,0 +1,132 @@
+{
+ "_doc": "30.10 server registry for bench/wst (paths relative to the repo root via {root}; see bench/wispsuite/servers.py). 'extra' = wbench run args for that server.",
+ "servers": {
+  "finalwisp": {
+   "cmd": "{fw} --port {port} --allow-loopback --allow-private",
+   "note": "this repo's release build ($FINALWISP_BIN overrides)"
+  },
+  "epoxy": {
+   "cmd": "{root}/ref/epoxy-tls/target/release/epoxy-server {dir}/epoxy-{port}.toml",
+   "files": {
+    "epoxy-{port}.toml": "[server]\nbind = [\"tcp\", \"127.0.0.1:{port}\"]\nruntime = \"multithread\"\n\n[stream]\nallow_loopback = true\nallow_non_global = true\n"
+   },
+   "extra": [
+    "--stall-ping-ms",
+    "1"
+   ],
+   "note": "epoxy-server multithread, loopback + non-global targets allowed (matrix.main.json)"
+  },
+  "epoxy-single": {
+   "cmd": "{root}/ref/epoxy-tls/target/release/epoxy-server {dir}/epoxy-single-{port}.toml",
+   "files": {
+    "epoxy-single-{port}.toml": "[server]\nbind = [\"tcp\", \"127.0.0.1:{port}\"]\nruntime = \"singlethread\"\n"
+   },
+   "extra": [
+    "--stall-ping-ms",
+    "1"
+   ],
+   "note": "WispMark's epoxy-server (singlethread) config"
+  },
+  "epoxy-multi": {
+   "cmd": "{root}/ref/epoxy-tls/target/release/epoxy-server {dir}/epoxy-multi-{port}.toml",
+   "files": {
+    "epoxy-multi-{port}.toml": "[server]\nbind = [\"tcp\", \"127.0.0.1:{port}\"]\nruntime = \"multithread\"\n"
+   },
+   "extra": [
+    "--stall-ping-ms",
+    "1"
+   ],
+   "note": "WispMark's epoxy-server (multithread) config"
+  },
+  "wisp-js": {
+   "cmd": "node server.mjs {port}",
+   "cwd": "{root}/baselines/js-server",
+   "extra": [
+    "--stall-ping-ms",
+    "1"
+   ],
+   "note": "wisp-js 0.5.0 server, default log level (INFO)"
+  },
+  "wisp-js-0.4.1": {
+   "cmd": "node server.mjs {port}",
+   "cwd": "{root}/baselines/legacy/js-server-0.4.1",
+   "extra": [
+    "--stall-ping-ms",
+    "1"
+   ],
+   "note": "legacy: wisp-js 0.4.1 + DEBUG logging, as pinned by WispMark"
+  },
+  "python": {
+   "cmd": "{root}/baselines/python/.venv/bin/python -m wisp.server --port={port} --allow-loopback --allow-private --log-level error",
+   "cwd": "{root}/ref/wisp-server-python",
+   "extra": [
+    "--stall-ping-ms",
+    "1"
+   ],
+   "note": "wisp-server-python"
+  },
+  "python-wispmark": {
+   "cmd": "{root}/baselines/python/.venv/bin/python -m wisp.server --port={port} --allow-loopback",
+   "cwd": "{root}/ref/wisp-server-python",
+   "extra": [
+    "--stall-ping-ms",
+    "1"
+   ],
+   "note": "wisp-server-python as WispMark runs it"
+  },
+  "wispurr": {
+   "cmd": "./wispurr -config speed.config.json -port {port} --host 127.0.0.1",
+   "cwd": "{root}/baselines/wispurr",
+   "extra": [
+    "--stall-ping-ms",
+    "1"
+   ],
+   "note": "author's speed.config.json (32768 credits); baselines/wispurr/SOURCE.md"
+  },
+  "wispurr-wispmark": {
+   "cmd": "./wispurr -config {dir}/wispurr-wispmark.json -port {port} --host 127.0.0.1",
+   "cwd": "{root}/baselines/wispurr",
+   "files": {
+    "wispurr-wispmark.json": {
+     "json_base": "{root}/baselines/wispurr/speed.config.json",
+     "set": {
+      "port": "{port}",
+      "tcpBufferSize": 131072,
+      "bufferRemainingLength": 256,
+      "tcpNoDelay": true,
+      "enableV2": true,
+      "websocketPermessageDeflate": false,
+      "allowUDP": false
+     }
+    }
+   },
+   "extra": [
+    "--stall-ping-ms",
+    "1"
+   ],
+   "note": "WispMark's mrrowisp settings (256 credits). Known data-loss + credit-stall bugs: baselines/wispurr/SOURCE.md"
+  },
+  "wispx": {
+   "cmd": "{root}/ref/wispx-rust/epoxy-server {dir}/wispx-{port}.toml",
+   "files": {
+    "wispx-{port}.toml": "[server]\nbind = [\"tcp\", \"127.0.0.1:{port}\"]\nruntime = \"multithread\"\n\n[stream]\nallow_loopback = true\nallow_non_global = true\n"
+   },
+   "extra": [
+    "--stall-ping-ms",
+    "1"
+   ],
+   "note": "UNOFFICIAL, for fun: WispX-Rust (github.com/Redgale/WispX-Rust @17c9855, an epoxy-server fork), serving v1/v2 to wbench; same config as 'epoxy'. Binary built in an the build host container (ref/wispx-rust/epoxy-server, md5 fb860a75)"
+  },
+  "wispx-nodelay": {
+   "cmd": "{root}/ref/wispx-rust/epoxy-server {dir}/wispx-nodelay-{port}.toml",
+   "files": {
+    "wispx-nodelay-{port}.toml": "[server]\nbind = [\"tcp\", \"127.0.0.1:{port}\"]\nruntime = \"multithread\"\n\n[wisp]\nv2_close_delay_ms = 0\n\n[stream]\nallow_loopback = true\nallow_non_global = true\n"
+   },
+   "extra": [
+    "--stall-ping-ms",
+    "1"
+   ],
+   "note": "UNOFFICIAL: 'wispx' with v2_close_delay_ms = 0 (its 2 ms CLOSE hold for old native wisp-mux clients off)"
+  }
+ }
+}

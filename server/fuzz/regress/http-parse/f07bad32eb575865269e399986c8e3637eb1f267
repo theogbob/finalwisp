@@ -1,0 +1,10 @@
+GET / HTTP/1.1
+Host:25jZQ=h
+Sec-WebSocket-Version:2jZQ=h
+Sec-WebSocket-Version: Hot: x
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Version:Key:Ih 
+Sec-WebSocket-Version: 13
+Sec-WebS: wi other
+

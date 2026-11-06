@@ -1,0 +1,24 @@
+ÿþallow-host t--block-host
+block-dest 22.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls-cert /ck-host
+block-dest 22.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls-cert /aey /doc.test8--allow-dest 10.0..0/8
+tls-cert /aeytls-cert /aey /doc.test8--allow-de.0.0/8
+tls-cert /aey 10.0.0.0/
+allow-dest 10.0.0.0/8
+tls-cert /aey /dok-hls-cert!/aey /doc.dest 22.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls-cert /aey /doc.test8--allow-dest 10.0..0/8
+tls-cert /aeytlaey /doc.test8--allow-dest 10.0..ert /aeytls-cert /aey /doc.test8--allow-de.0.0/8
+tls-cert /aey 10.0.0.0/
+allow-dest 10.0.0.0/8
+tls-cert /aey /dok-hls-crt /aeytls-cert /aey /doc.test8--allow-de.0.0/8
+tls-cert /aey 10.0.0.0/
+allow-dest 10.0.0.0/8
+tls-cert /aey /dtest8--allow-dest 10.0.0.0/8
+tls-cert /aey all/dok-o

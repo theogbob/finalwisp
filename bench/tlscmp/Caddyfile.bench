@@ -1,0 +1,11 @@
+{
+	admin off
+	auto_https off
+	log {
+		output discard
+	}
+}
+https://127.0.0.1:7802 {
+	tls bench/tlscmp/cert.pem bench/tlscmp/key.pem
+	reverse_proxy 127.0.0.1:7803
+}

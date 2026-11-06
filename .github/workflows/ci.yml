@@ -1,0 +1,47 @@
+name: ci
+# Format, lint, unit tests and the reproducible release build on every push and pull request.
+# The build runs in ubuntu:26.04 (glibc 2.43), the image the official release is built in, so the md5 printed in the
+# job summary is the one bench/release.sh gives for this commit on any matching host.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:26.04
+    steps:
+      - name: tools
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential git file curl ca-certificates nodejs >/dev/null
+          dpkg-query -W -f='${Package} ${Version}\n' libc6-dev gcc-15 binutils
+      - uses: actions/checkout@v5
+      - name: rust (pinned by rust-toolchain.toml)
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"  # the workspace is not owned by the container user
+          curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: fmt
+        run: cd server && cargo fmt --check
+      - name: clippy
+        run: cd server && cargo clippy --release --all-targets --locked -- -D warnings
+      - name: clippy (test-only pooltest feature)
+        run: cd server && cargo clippy --release --all-targets --locked --features pooltest -- -D warnings
+      - name: unit tests
+        run: cd server && cargo test --release --locked
+      - name: bench tool (wbench) clippy and tests
+        run: |
+          cd bench
+          cargo clippy --release --all-targets --locked -- -D warnings
+          cargo test --release --locked
+      - name: release build
+        run: |
+          bench/release.sh
+          grep -E '^(git|md5):' server/target/x86_64-unknown-linux-gnu/release/BUILDINFO >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,10 @@
+(â?ºâÿþ# 7000
+allow-loopback
+motd l.1.1:500
+allow-loopback
+motd llowd -hlelo 00000-loopbaAckauth-fil: /tmp/jj2
+dns-own
+dns-server 1.1.1.1:500
+allow-loopback
+motd llowd -hlelo 000-n
+dns-server 1.1.1.1

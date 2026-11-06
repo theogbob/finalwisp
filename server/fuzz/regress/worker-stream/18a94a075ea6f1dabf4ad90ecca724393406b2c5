@@ -1,0 +1,11 @@
+BGET / HTTP/1.1
+Hos1t: x
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub52jZQ==
+Sec-WebSocket-Veec-WebSocket-Key: dGhlIHNhbXBsZSBub04jZQ==
+Sec-WebSocket-Version: 13
+
+‚“7ú!<6û!='ûq=R‚@PG–DT•L‚’7ú!7!=ù6û=q=Y†XOÛLM[Ÿ‚7ú!=rsion: 13
+
+‚“7ú<!6û!='ûq=R‚@PG–DT•L‚’7ú!=6ù7!=ûq=Y†XOÛLM[Ÿ‚7ú!=6ÿ!=7ûš<_•RI‚Š«úÿÿÿÿÿÿÿÿdiÕ

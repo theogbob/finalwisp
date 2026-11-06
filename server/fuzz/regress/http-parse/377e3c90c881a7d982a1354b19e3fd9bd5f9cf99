@@ -1,0 +1,16 @@
+GET / HTTP/1.1
+Upgrade:Y,,	±ET / HTTP/1.1
+Upgrade:Y,,	GET / HTTP/1
+Upgrade:Y,,	 	 	=2
+Upgrade:Y
+Upgrade: websocket
+Connection: Upgrade
+Sec-Wock:e d=`
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Protocol:Ë,,	GET / HTTP/1
+Upgrade:Y,,	 	 	=,:Y,,	 	 	=, 	 	=, HTTP/1
+Upgrade:Y,,	 	 	=, 	 .1
+Upgrade:Y,,	 	 	=, 	 ,:Y',,	 	 	=, 	 	=, Hormr2
+Upgrade:Y,,	 	 	=, 	 .1
+Upgrade:Y,,	 	 	=, 	 	=,
+

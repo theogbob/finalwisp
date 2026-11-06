@@ -1,0 +1,126 @@
+ÿþ# der chacha,aes128,aes256
+tls-rekey-records 1000000
+notsent-lowat 131072
+dns-threads 4
+dns-own
+dns-server 1.1.1.1:53
+no-prio
+auth-file /tmp/authacha,aes128wn
+dns-server 1.1.1.1:53
+no-prio
+auth-file /tmp/authacha,aes128,aes25nt-lorver 1.1.1.1:53
+no-prio
+auth-file /tmp/authacha,aes128,aes256
+tls-rekey-records 1000000
+notsent-lowat 131072
+dns-threads 4
+dns-own
+dns-server 1.1.1.1:53
+no-prio
+auth-file /tmp/auth
+cert-auth-key /t00
+notsent-lowat 131072
+dns-threads 4
+dns-own
+dns-server 1.1.1.1:53
+no-prio
+auth-file /tmp/authacha,aes128,aes25nt-lowat 131072
+dns-threads 4
+dns-own
+dns-server 1.1.1.1:53
+no-prio
+auth-file /tmpkey-records 1000000
+notsent-lowat 131072
+dns-threads 4
+dns-own
+dns-server 1.1.1.1:53
+no-prio
+auth-file /tmp/auth
+cert-auth-key /t00
+notsent-lowat 131072
+dns-threads 4
+dns-own
+dns-server 1.1.1.1:53
+no-prio
+auth-file /tmp/authacha,aes128,wat 131072
+dns-threads 4
+dns-own
+dns-server 1.1.1.1:53
+no-prio
+auth-file /tmpkey-reco,aes256
+tls-rekey-records 1000000
+notsent-lowat 131072
+dns-threads 4
+dns-own
+dns-server 1.1.1.1:53
+no-prio
+auth-file /tmp/auth
+cert-auth-key /t00
+notsent-lowat 131072
+dns-threads 4
+dns-own
+dns-server 1.1.1.1:53
+no-prio
+auth-file /tmp/authacha,aes128,aes25nt-lorver 1.1.1.1:53
+no-prio
+auth-file /tmp/authacha,aes128,aes256
+tls-rekey-records 1000000
+notsent-lowat 131072
+dns-threads 4
+dns-own
+dns-server 1.1.1.1:53
+no-prio
+auth-file /tmp/auth
+cert-auth-key /t00
+notsent-lowat 131072
+dns-threads 4
+dns-own
+dns-server 1.1.1.1:53
+no-prio
+auth-file /tmp/authacha,aes128,aes25nt-lowat 131072
+dns-threads 4
+dns-own
+dns-server 1.1.1.1:53
+no-prio
+auth-file /tmpkey-records 1000000
+notsent-lowat 131072
+dns-threads 4
+dns-own
+dns-server 1.1.1.1:53
+no-prio
+auth-file /tmp/auth
+cert-auth-key /t00
+notsent-lowat 131072
+dns-threads 4
+dns-own
+dns-server 1.1.1.1:53
+no-prio
+auth-file /tmp/authacha,aes128,wat 131072
+dns-threads 4
+dns-own
+dns-server 1.1.1.1:53
+no-prio
+auth-file /tmpkey-records 1000000
+notsent-lowat 131072
+dns-threads 4
+dns-own
+dns-server 1.1.1.1:53
+no-prio
+auth-file /tmp/auth
+cert-auth-key /t00
+notsent-lowat 131072
+dns-threads 4
+dns-own
+dns-server 1.1.1.1:53
+no-prio
+auth-file /tmp/authacha,aes128,aes25nt-lowat 131072
+dns-threads 4
+dns-own
+dns-server 1.1.1.1:53
+no-prio
+auth-file /tmp/authacha0000
+notsent-lowat 131072
+dns-threads 4
+dnal 10
+max-conns 1000
+mix-str192.168.0.0m-trust-dns

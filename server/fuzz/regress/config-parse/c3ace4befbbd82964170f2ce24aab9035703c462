@@ -1,0 +1,7 @@
+ÿþ#  boww-ports     
+allow-ports 02-49,4
+#or0,47 80,447boww-ports     
+allow-ports 02-49,4
+#or0,47 80,447     
+allow-ports 02-49,4
+#or0,47 

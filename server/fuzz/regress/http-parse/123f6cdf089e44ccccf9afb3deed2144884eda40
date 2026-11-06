@@ -1,0 +1,9 @@
+GET / HTTP/1.1
+Upgrade: websocket
+ion: keepade
+Sec-WebSocket-Key:2 dGh
+Sec-WebSocket-Version:-
+Connection: Upgrade
+Sec-WebSocket-Key:2 dGh
+Sec-WebSocket-Version: 13
+

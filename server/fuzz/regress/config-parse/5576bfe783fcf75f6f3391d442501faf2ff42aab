@@ -1,0 +1,4 @@
+ÿþallow-host t
+block-dest 0.0.0.0/+
+
+block-dest 10.0.0,0,3,6-8po/810ÿ

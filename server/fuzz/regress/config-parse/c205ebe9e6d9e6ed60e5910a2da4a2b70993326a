@@ -1,0 +1,68 @@
+ÿþ# c
+port 7000
+alÿ# þc
+port low-loopback
+motd hello wo7000
+allootd hållo world
+dns-server 09.0.ã0.1
+dns-se´rver 10.rld
+dns-s}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}erver 10.0.0.1
+£ns-server 10.0.0.2
+tls-cert a
+tls-kec
+port 7000
+allow-loopback
+motd hello w0.0.2
+tls-cert |a
+tls-kec
+port 7000
+aorld
+dns-server 09.0.ã0.1
+a
+tls-kec
+port 7000
+allow-loopback
+motd hello w0.0.2
+tls-cert |a
+tls-kec
+port 7000
+aorld
+dns-server 09.0.ã0.1
+dns-se´rver 10.rld
+dnsorld
+dns-server llow-loopb10.0.0.1
+dns-server a b10.0.0.2
+tl3-cert
+y b a
+tls-key b
+a
+tls-key b
+ÿ# þc
+port 7000
+allo
+w-loopback
+motd hållo world
+dns-server 09.0.ã0.1
+dns-se´rver 10.0.0.2
+tldns-se´rver 10.rld
+dnsorld
+dns-server llow-loopb10.0.0.1
+dns-server a b10.0.0.2
+tl3-cert
+y b a
+tls-key b
+a
+tls-key b
+ÿ# þc
+port 7000
+allo
+w-loopback
+motd hållo world
+dns-server 09.0.ã0.1
+dns-se´rver 10.0.0.2
+tls-cert |a
+tls-kec
+port 7000
+allow-loopby a b
+y bb
+

@@ -1,0 +1,4 @@
+ÿþ# bow-ports 80,4790     
+allow-ports 80,479,443,10               ,443,1         
+allow-ports 80,79,443,10                       0(-200--dr
+P.0

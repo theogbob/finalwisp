@@ -1,0 +1,52 @@
+GET / HTTP/1.1
+Host: x
+Sec-WebSocket-Protocol: wisp-v2, otersion:
+Sec-WebSocket-Protocol: wisWp-v1, c-Wec-W-Version:
+Sec-WebSocket-Protocol: wisWp-v2, othNhbbSocketbbSocket-Version:
+Sec-WebSocket-Protocol: wisWp-vÿÿÿjÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ÷ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ wisWp-v3, c-Wec-WebSNhbbSocket-Version:
+Sec-WebSocket-Protocol:                                                              
+Upgrade:,$ñª˜rñª˜rÃº,,ñª˜Q˜reect,ñª˜}r1,,ñª˜rÃº,,ñª˜,ñª˜Q/	@10>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>ÿ>>>>>>>> / HTTP/1.1
+X-Forwarded-For: 10>>,G.a	,TPK/,'	,d	,,,,,HNh,,,,,ñª˜rñª˜rÃº,,ñª˜Q˜reect,ñª˜}r1,,ñª˜rÃº,,ñSocket-Protocol: wisWp-vÿÿÿjÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ2, othNhbbSocket-Version:
+Sec-WebSocket-Protocol: wisWp-v2, c-Wec-WebSNhbbSocket-Version:
+Sec-WebSocket-Protocol:                         !                                    
+Upgrade:,$ñª˜rñª˜rÃº,,ñª˜Q˜reect,ñª˜}r1,,ñª˜rÃº,,ñª˜,ñª˜Q/Q˜reect,ñª˜}r1,,ñª˜rÃº,,ñSocket-Protocol: wisWp-vÿÿÿjÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ2, otbSNhbbSocket-Version:
+Sec-WebSocket-Protocol:                                                              
+Upgrade:,$ñª˜rñª˜rÃº,,ñª˜Q˜reect,ñª˜}r1,,ñª˜rÃº,,ñª˜,ñª˜Q/	@10>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>ÿ>>>>>>>> / HTTP/1.1
+X-Forwarded-For:àÎÏÁÁÓ¸Ña	,TPK/,'	,d	,,,,,HNh,,,,,ñª˜rñª˜rÃº,,ñª˜Q˜reect,ñª˜}r1,,ñª˜rÃº,,ñSocket-Protocol: wisWp-vÿÿÿjÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ2, othNhbbSocket-Version:
+Sec-WebSocket-Protocol: wisWp-v2, c-Wec-WebSNhbbSocket-Version:
+Sec-WebSocket-Protocol:                                                              
+Upgrade:,$ñª˜rñª˜rÃº,,ñª˜Q˜reect,ñª˜}r1,,ñª˜rÃº,,ñª˜,ñª˜Q/Q˜reect,ñª˜}r1,,ñª˜rÃº,,ñSocket-Protocol: wisWp-vÿÿÿjÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ                                                
+Upgrade:,$ñª˜rñª˜rÃº,,ñª˜Q˜reect,ñª˜}r1,,ñª˜rÃº,,ñª˜,ñª˜Q/	@10>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>ÿ>>>>>>>> / HTTP/1.1
+X-Forwarded-For: 10>>,G.a	,TPK/,'	,d	,,,,,HNh,,,,,ñª˜rñª˜rÃº,,ñª˜Q˜reect,ñª˜}r1,,ñª˜rÃº,,ñSocket-Protocol: wisWp-vÿÿÿjÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ2, othNhbbSocket-Version:
+Sec-WebSocket-Protocol: wisWp-v2, c-Wec-WebSNhbbSocket-Version:
+Sec-WebSocket-Protocol:                                                              
+Upgrade:,$ñª˜rñª˜rÃº,,ñª˜Q˜reect,ñª˜}r1,,ñª˜rÃº,,ñª˜,ñª˜Q/Q˜reect,ñª˜}r1,,ñª˜rÃº,,ñSocket-Protocol: wisWp-vÿÿÿjÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ2, otbSNhbbSocket-Version:
+Sec-WebSocket-Protocol:                                                              
+Upgrade:,$ñª˜rñª˜rÃº,,ñª˜Q˜reect,ñª˜}r1,,ñª˜rÃº,,ñª˜,ñª˜Q/	@10>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>ÿ>>>>>>>> / HTTP/1.1
+X-Forwarded-For: 10>>,G.a	,TPK/,'	,d	,,,,,HNh,,,,,ñª˜rñª˜rÃº,,ñª˜Q˜reect,ñª˜}r1,,ñª˜rÃº,,ñSocket-Protocol: wisWp-vÿÿÿjÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ2, othNhbbSocket-Version:
+Sec-WebSocket-Protocol: wisWp-v2, c-Wec-WebSNhbbSocket-Version:
+Sec-WebSocket-Protocol:                                                              
+Upgrade:,$ñª˜rñª˜rÃº,,ñª˜Q˜reect,ñª˜}r1,,ñª˜rÃº,,ñª˜,ñª˜Q/Q˜reect,ñª˜}r1,,ñª˜rÃº,,ñSocket-Protocol: wisWp-vÿÿÿjÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ2, othNhbbSocket-Version:
+Sec-WebSocket-Protocol: wisWp-v2, c-Wec-WebSNhbbSocket-Version:
+Sec-WebSocket-Protocol:                                                              
+Upgrade:,$ñª˜rñª>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>ÿ>>>>>>>> / HTTP/1.1
+X-Forwarded-For: 10>hNhbbSocket-Version:
+Sec-WebSocket-Protocol: wisWp-v2, c-Wec-WebSNhbbSocket-Version:
+Sec-WebSocket-Protocol:                                                              
+Upgrade:,$ñª˜rñª>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>ÿ>>>>>>>> / HTTÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ2, othNhbbSocket-Version:
+Sec-WebSocket-Protocol: wisWp-v2, c-Wec-WebSNhbbSocket-Version:
+Sec-WebSocket-Protocol:                                                              
+Upgrade:,$ñª˜rñª>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>ÿ>>>>>>>> / HTTP/1.1
+X-Forwarded-For: 10>hNhbbSocket-Version:
+Sec-WebSocket-Protocol: wisWp-v2, c-Wec-WebSNhbbSocket-Version:
+Sec-WebSocket-Protocol:                                                              
+Upgrade:,$ñª˜rñª>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>ÿ>>>>>>>> / HTTP/1.1
+X-Forwarded-For: 10>>,G.a	,TPK/,'	,d>1,G.a	,TPK/,'	,d	,,1
+X-Forwarded-For-WebSocket-Protocol: wisWp-v2, othNhbbSocketbbSocket-Version:
+Sec-WebSocket-Protocol: wisWp-vÿÿÿjÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ÷ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ wisWp-v3, c-Wec-WebSNhbbSocket-Version:
+Sec-WebSocket-Protocol:             othSocketcol: wisWp-v2, othNhbbSocket-Version:
+Sec-WebSocket-Prctoool: wisWp-v2, c-Wec-WebS>>>>>>>>>>>>ÿ>>>>>>>> / HTTP/1.1
+X-Forwarded-For: 10>>,G.a	`,ewe,.ad,, :THN,,c-WebSocket-Protocol: wisWp-v2, othNhbSec-WebSocketó-Protocol: wWec-WebSNhbbSocket-Version:
+Sec-WebSocket-Protocol: wisWp-v2, othNisp-v2, othe
+Sec-WebSocket-Protocol: wisWp-v2, othSocol: wis›p-v2,et-Proto2col: wisWp-v2, other
+

@@ -1,0 +1,8 @@
+GET / HTTP/1.1
+Host:x
+Upgrade: websocket
+Connection: Upgrade
+Upgrade:w58, otSe-o, o7777, oZSBub2ZQ==
+SEc-WebSocket-Version:13
+l:Æ##GE+
+

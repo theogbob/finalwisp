@@ -1,0 +1,12 @@
+GET / HTTP/1.1
+Host: x
+Npgrade: x
+Upgrade: websocket
+Connection: Upwebst
+Connection: Upgrade
+radg: x
+Upgride:
+Upgrqde: w
+Upgrqde: webs-websZS=
+Sec-WebSocket-Version: 13
+

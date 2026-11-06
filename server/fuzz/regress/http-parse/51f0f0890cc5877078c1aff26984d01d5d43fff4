@@ -1,0 +1,8 @@
+GET / HTTP/1.1
+Upgrade: websocket
+Connection:Upgrade
+Upgrade: b娩
+Upgrade:webi娩
+Sec-WebSocket-Version: 13
+Connection:l:娫
+

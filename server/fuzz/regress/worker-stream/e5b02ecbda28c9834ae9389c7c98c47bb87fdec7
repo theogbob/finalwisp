@@ -1,0 +1,16 @@
+ZGET /p/127.0.0.1:4444 HTTP/1.1
+Host: x
+Upgrade: websocket
+Connectinn: Upgrade
+Sonnectinn: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub05jZQ==
+Sec-&W.0.1:4444 HTTP/1.1
+Host: xe: websocket
+Connectinn: UpgrBsZSBub25jZQec-WeBub05jZQ==
+Sec-&W.0.1:4444 HTTP/1.1
+Host: x
+Upgrade: websocket
+Connectinn: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebSocket-Version: 13
+

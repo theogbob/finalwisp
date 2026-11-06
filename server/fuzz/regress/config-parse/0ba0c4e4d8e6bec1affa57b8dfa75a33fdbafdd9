@@ -1,0 +1,26 @@
+ÿþ# all 1!MJupload-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp.sotream 512K
+log-level debug
+log-conns
+metrics-listen 238.0.0.1:9100
+listen-unix /pmp/fw.socog-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/fw.sotream 512K
+log-level debug
+log-conns
+metrics-listen 214
+listen-unix /pmp/fw.sock fla-ser-stre0.0.1:9100
+listen-unix /tre0.0.1:910k flagser-sream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/fw.sotream 512K
+log-level debug
+log-conns
+metrics-listen 214
+listen-unix /pmp/fw.sock fla-ser-stre0.0.1:9100
+listen-unix /tre0.0.1:9100
+listen-unix /tmp/fwt-dns

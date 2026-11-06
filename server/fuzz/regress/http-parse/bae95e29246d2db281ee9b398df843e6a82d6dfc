@@ -1,0 +1,11 @@
+GET / HTTP/1.1
+HostA:grasocket
+Conndction: et
+Connctoien:oket
+Conndction: bsUUket
+Connection: Upgrade
+Sead: x
+Upgrade: websocket
+y: dGhlIHNhb=
+Sec-WebSocket-Version: 13
+

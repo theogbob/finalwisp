@@ -1,0 +1,9 @@
+æææææææææææææææææææýææÿ0000000000]0000000000ÿþallow-host ajjjjjjjjjrio
+auth-file /tmp/jj2
+dns-own
+dns-server 1.1.1.15:3
+no-prio
+auth-file /tmp/auth
+cert-auth-key /t
+no-prio
+auth-file /tffff

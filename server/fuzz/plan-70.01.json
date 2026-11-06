@@ -1,0 +1,61 @@
+{
+ "lanes": [
+  [
+   {
+    "target": "worker-stream",
+    "secs": 15840,
+    "max_len": 140000
+   }
+  ],
+  [
+   {
+    "target": "worker-stream",
+    "secs": 15840,
+    "max_len": 140000
+   }
+  ],
+  [
+   {
+    "target": "worker-wisp",
+    "secs": 15840,
+    "max_len": 16384
+   }
+  ],
+  [
+   {
+    "target": "worker-wisp",
+    "secs": 15840,
+    "max_len": 16384
+   }
+  ],
+  [
+   {
+    "target": "http-parse",
+    "secs": 7200,
+    "max_len": 20000
+   },
+   {
+    "target": "ws-parse",
+    "secs": 4320,
+    "max_len": 64
+   },
+   {
+    "target": "tls-framing",
+    "secs": 4320,
+    "max_len": 1024
+   }
+  ],
+  [
+   {
+    "target": "ext-records",
+    "secs": 8640,
+    "max_len": 2048
+   },
+   {
+    "target": "worker-wisp",
+    "secs": 7200,
+    "max_len": 16384
+   }
+  ]
+ ]
+}

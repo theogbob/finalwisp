@@ -1,0 +1,57 @@
+ÿþ# 7000
+allow-loopback
+motd llowd -hlelo 0loopbackauth-file /tmpackauth-file /tmp/jj2
+dns-own
+dns-server 1.1.1.1:500
+allow-loopback
+motd llowd -hlelo 00000-loopbackauth-file /tmp/jj2
+dns-own
+dns-server 1.1.1.1:500
+allow-loopback
+
+dns-own
+dns-server 1.1.1.1:500
+allow-loopback
+motd llowd -hlelo 000-loopbaow-loopback
+motd llle /tmp/jj2
+dns-own
+dns-server 1.1.1.1:500
+allow-loopback
+motd lljj2
+dns-own
+dns-server 1.1.1.1:500
+allow-loopback
+motd llowd -hlelo 000-loopbaow-loopback
+motd llowd -hlelo 000-loopbackauth-file /tmp/jj2
+dns-own
+dns-server 1.1.1.1:500
+allow-loopback
+motd llowd -hlelo 00000-loopbackauth-file /tmp/jj2
+dns-own
+dns-server 1.1.1.1:500
+allow-loopback
+motd llowd -hlelo 000-loopbao 1.1.1.1:500
+allow-loopback
+motd llowd -hlelo 00000-loopbackauth-file /tmp/jj2
+dns-own
+dns-server 1.1.1.1:500
+allow-loopback
+
+dns-own
+dns-server 1.1.1.1:500
+allow-loopback
+motd llowd -hlelo 000-loopbaow-loopback
+motd llowd -hlelo 000-loopbackalowd -hlelo 000-loopbackauth-file /tmp/jj2
+dns-own
+dns-server 1.1.1.1:500
+allow-loopback
+motd lljj2
+dns-own
+dns-server 1.1.1.1:500
+allow-loopback
+motd llowd -hlelo 000-loopbaow-loopback
+motd llowd w-lo llowd -hlelo 000-loopbacka-hlelo 00000-loopbackauth-file /tmp/jj2
+dns-own
+dns-server 1.1.1.1:500
+allow-loopback
+motd llowd -hlelo 000-loopbaow-lo llowd -hlelo 000-loopbackauth-file 

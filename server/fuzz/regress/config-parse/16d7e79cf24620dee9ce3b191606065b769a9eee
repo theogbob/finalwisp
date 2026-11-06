@@ -1,0 +1,63 @@
+ÿþ#conns
+metrics-listen 127.0.0.1:9
+upload-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmw./fspo
+upload-rate-per-stream 512K
+log-level debug
+listen-unix /tm 1unix all 1M
+upload-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9
+upload-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/fw.so
+upload-rate-per-stream 512K
+log-level debug
+listen-unix /tm 1ud-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/fw.soF:1: not val-per-stream 512K
+log-level debug
+listen-unix /tm 1unix all 1M
+upload-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9
+upload-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tm512K
+log-level debug
+listen-unix /tad-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/fw.so
+upload-rate-per-stream 512K
+log-level debug
+listen-unix /tm 1ud-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/fw.soF:1: not val-per-stream 512K
+log-level debug
+listen-unix /tm 1unix all 1M
+upload-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9
+upload-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tm512K
+log-level debug
+listen-unix /tm 1unix all 1listen-unix /tmprust-dm 1unix all 1listen-unix /tmprust-dns

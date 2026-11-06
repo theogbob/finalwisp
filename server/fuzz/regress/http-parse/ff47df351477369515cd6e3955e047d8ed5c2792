@@ -1,0 +1,7 @@
+GET /%5B%3A%3A1%5D:443?x=1 HTTP/1.1
+Host:
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ1=
+Sec-WebSocket-Version: 13
+

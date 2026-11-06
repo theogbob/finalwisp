@@ -1,0 +1,12 @@
+ÿþ# all flagse
+no-splice
+balance
+no-tfo
+no-keepalive
+no-udp
+no-crÿÿÿ0
+listen-unix /tmp/fwÏsosp/c.pem
+tls-key /tmp/k.
+allow-host example.com
+blocrwarded-Fptream socks5://user:pw@127.0.0.1:1080
+upstream-trust-=ns

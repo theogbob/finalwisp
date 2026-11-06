@@ -1,0 +1,14 @@
+ÿþ#-stream 512K
+log-level d0
+upen 127.0.0.1:910g-connl d0
+u!pstream eb}g
+glo-conneˆ
+rmitcs-lis$en 127.0.0.1:900
+listenx /tm5
+graceful-close
+no-sèlice
+ballistein-un.2stream eb}g
+log-connes
+rmitcs-listen 127 d0
+upstream eb}g
+log-coneam-trust-dns

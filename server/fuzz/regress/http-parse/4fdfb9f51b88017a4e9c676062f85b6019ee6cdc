@@ -1,0 +1,6 @@
+GET / HTTP/1.1
+Host: x
+X-Forwarded-For: 2RwarET / HTP2ded-For:, [2001:db8::1]:443%
+x-forwredad-for: 1.1.1.1:80, 10.0.0.5
+
+£££££££££££££££££££££££££££££££££££££

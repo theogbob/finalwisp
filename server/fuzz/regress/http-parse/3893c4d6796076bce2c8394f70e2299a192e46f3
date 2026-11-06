@@ -1,0 +1,52 @@
+GET / HTTP/1.1
+Host: x
+Upgrade: wsocket
+Con:HTTP/1.1
+Host: x
+Upgrade: websocket
+ConnecTion: Upgrade
+SdoSbec-WebSocket-Kgy: nnectix
+Upgrade: %)),.,	T,/1980ectiode: x
+Upgrade: .	,,,IT,/Honnectiode: x
+Upgrade:  dG.	,,,I,IHNhadewe,,ade: ,.	,: ,,.	,,,,,,,,,,GET / HTTP/2.1
+Host: x
+Upgrade: websocket
+Connection: Upgrade
+Sec-WekSocket-Key: dGh)rade: x
+Upgrade: wN@,,,,,&,,ET / HTTP/2.1
+Host: igr‰a]we,ockeonnectiode: x
+Upgrade: pgradewebsy: dTH,,.	,,ET / HTTP/0.1
+Host: ion: Upgrd:rx
+Upgrade: wonneGhl,GET o HTTP/1.1
+Host: i:: x
+Upgrade:,,,.	,;,,,'	,,Ò™èòr,,,,,,,,,,,,,.	,,ewe,.ad,, ion: Ust; x
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Key:$dGhlae: x
+Upgrade: ,ewe,.ad,,.	,: ,,	,,ATP/ HTTP/1.1
+Host: ion: Upgrdaeweioô,,,,xZNpõ: Krade: x
+Upgrade: woencn,.	,: ,,ebpgrbsy
+Upgrade: websoc,,,,,,,,,,)),.	,,,IHNh,,,.	,ectiode: x
+Upgrade: : Upgr,,ET / HTTP/0.1
+Ho3t: ion: Upgrdaewe,ockeonnectioô,,,,xZNpõ: Krade: x
+Upgrade: wwnnection: IHNhad#ewe,,aT / HEEEEEE
+Sec-WebSocket-Version: 13
+Sec-Webradewebry: dGhl,,,,,,,de: ,
+Host: x
+Upgrade: websocket
+Connection: Upgrade
+Sec-WekSocket-Key: dGh)rade: x
+Upgrade: wN@,,,,,$,,ET / HTTP/2.1
+Host: igr‰a]we,ockeonnectiode: x
+Upgrade: pgradN,,.	,,ET / HTTP/0.1
+Host: i
+Upgrade: wonnec,,,,,,,,: dGhl,GET o HTTP/1.1
+Host: i:: x
+Upgrade:,,.	,,ewe,.ad,, :THN,,.	,,ET / HTTP/0.1
+Host:ion: Us.1
+
+e
+
+r
+ebe©
+`

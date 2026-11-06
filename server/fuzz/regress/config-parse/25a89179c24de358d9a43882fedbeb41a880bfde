@@ -1,0 +1,48 @@
+ÿþ#block-smtp
+no-direct-ip
+# l7alauth
+cert-auth-key .cr5pttsm'' l8al/f 
+block-dest 192.168.0.0/16
+block-smtp
+no-direct-ip
+# l8# l8alauth
+cert-auth-key .cr5pttsm#block-smtp
+no-direct-ip
+# l7alauth
+cert-auth-key .cr5pttsm'' l8al/f 
+block-dest 192.168.0.0/16
+block-smtp
+no-direct-ip
+# l8# l8alauth
+cert-auth-key .cr5pttsm'' l8al/f 
+block-dest 192.168.0.0/16
+block-smtp
+no-direct-ip
+# l8alauth
+cert-auth-key .cr5pttsm'''''''''''''''''''''f 
+block-dest 192.168.0.0/16
+block-smtp
+no-direct-ip
+# l8ala.cr5pttsm'' l8al/f 
+block-dest 192.168.0.0/16
+block-smtp
+no-direct-ip
+# l8# l8alauth
+cert-auth-key .cr5pttsm'' l8al/f 
+block-dest 192.168.0.0/16
+block-smtp
+no-direct-ip
+# l8af 
+block-dest 192.168.0.0/16
+block-smtp
+no-direct-ip
+# l8alauth
+cert-auth-key .cr5pttsm'''''''''''''''''''''f 
+block-dest 192.168.0.0/16
+block-smtp
+no-direct-ip
+# l8ala.cr5pttsm'' l8al/f 
+block-dest 192.168.0.0/16
+block-smtp
+uth
+cert-auth-key 

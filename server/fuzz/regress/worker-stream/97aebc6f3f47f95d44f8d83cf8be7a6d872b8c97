@@ -1,0 +1,48 @@
+6PET / HTTP/1.1
+Host: x
+UpgHost: x
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBu¥23jZQ==: Upgrate
+Sec-WebSocket-Key: dGh																																																																																								lIHNhbXBsZSBu¥25XBs;ZSBu¥24jZQ==
+Sec-WebSocket-Version: 13HTTP/1.1
+Host: x
+UpgHost: x
+Upgrade: wectionV: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBu¥24jZQ==: Upgrade
+Se#-WebSocket-Key: dIlGhHNhbXBsZSBu¥24jZQ==
+Sec-WebSoc13_AES_256_: 13HTTP/1.1
+Host: x
+UpgHost: x
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Key: dGh						SBu¥25XBsZSBu¥24jZQ==
+Sec-WebSocket-Version: 13HTTP/1.1
+Host: x
+UpgHost: x
+Upgrade: wection: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBu¥24jZQ==: Upgrade
+Sec-WebSocket-Key: dIlGhHNhbXBsZSBu¥24jZQ==
+Sec-WebSoc13_AES_256_: 13HTTP/1.1
+Host: x
+UpgHost: x
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Key: dGh																																																																																																lIHNhbXBsZSBu¥25XBsZSBu¥24jZQ==
+Sec-WebSocket-Version: 13HTTP/1.1
+Host: x
+UpgHgst: x
+Upgrade: webs
+Sec-WebSocket-Version: 13HTTP/1.1
+Host: x
+UpgHost: x
+Upgrade: websocAES_128_GCMket
+Connection:															ebsocket
+Connection: Upgrade
+Sec-WebSocket-Key: dGh												jZQ==
+Sec-WebSocket-Version: 06
+
+ƒ7ú!=5û!‚†7ú[•‚†7ú!												jZQ==
+Sec-WebSocket-Version: 13
+
+ƒ7ú!=5û!‚†7ú[•‚†7ú!=3û!=7øÓ

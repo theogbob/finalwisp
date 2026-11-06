@@ -1,0 +1,4 @@
+GET / HTTP/1.1
+X-Forwarded-For: 1.1.1.1, ÿÿÿÿuo,wn, 11.0.0.5
+X-Forwarded-For: ::ffcf:127.0.0.1
+

@@ -1,0 +1,5 @@
+GET / HTTP/1.1
+sion:
+Sec-WebSocket-Protocol:wp-v2, othercebS
+Sec-WebSocket-Protocol: wisWp-v1, o
+

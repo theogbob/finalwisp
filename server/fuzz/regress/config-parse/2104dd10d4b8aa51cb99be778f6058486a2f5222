@@ -1,0 +1,21 @@
+ÿþ# der chacha,aes128,aes256
+tls-rekey-records 1000000
+notsent-lowat 131072
+dns-threads 4
+dns-own
+dns-server 1.1.1.1:53
+no-prio
+auth-file /tmp/auth
+cert-auth-key /tmp/ed.pub
+motd hello world
+mem-budget 512M
+tcpmem-adapt
+metrics-interval 10
+max-conns 1000
+max-streams-per-conn 64
+allow-host example.com
+block-host .bad.test
+allow-ports 80,443,1000-2000
+block-ports 25
+allow-dest 10.0.0.0/8
+block-dest 192.168.0.0m-trust-dns

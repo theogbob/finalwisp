@@ -1,0 +1,56 @@
+
+dns-server ::%10
+buffer 0002240 
+#0002240 
+# 00000r 10$-server ::%10
+buffer 0002240 
+# 000dns-server ::%10
+buffer 0002240 
+#0002240 
+# 00000r 10$-server ::%10
+buffer 0002240 
+# 00000r 10$ *#
+ dns-server :: 
+#   #08000000000r 10$ *#
+ dns-server ::  
+#    
+#$--dns-___ *#
+ dns-server :: 
+#   #08000000000r 10$ *#
+ dns-server ::  
+#    
+#$--dns- 00000r 10$-server ::%10
+buffer 0002240 
+# 00000r 10$ *#
+ dns-server :: 
+#   #08000000000r 10$ *#
+ dns-server ::  
+#    
+#$--dns-___ *#
+ dns-server :: 
+#   #08000000000r 10$ *#
+ dns-server ::  
+#    
+#$--dns-_00r 10$ *#
+ dns-server :: 
+#   #08000000000r 10$ *#
+ dns-server ::  
+#    
+#$--dns-___ *#
+ dns-server :: 
+#   #08000000000r 10$ *#
+ dns-server ::  
+#    
+#$--dns- 00000r 10$-server ::%10
+buffer 0002240 
+# 00000r 10$ *#
+ dns-server :: 
+#   #08000000000r 10$ *#
+ dns-server ::  
+#    
+#$--dns-___ *#
+ dns-server :: 
+#   #08000000000r 10$ *#
+ dns-server ::  
+#    
+#$--dns-___0

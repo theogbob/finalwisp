@@ -1,0 +1,5 @@
+GET / HTTP/1.1
+Hoe: 
+Sec-WebSocket-Version: 12ctrt
+Sec-WebSocket-Version:en: 12
+

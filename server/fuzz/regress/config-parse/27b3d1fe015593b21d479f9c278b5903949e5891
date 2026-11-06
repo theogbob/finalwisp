@@ -1,0 +1,7 @@
+ÿþallow-host c.test
+allow-host b3.tewst
+block-dest 10.0.0.0/8
+tls-cert /a
+tls-key /b
+tls-cert /c
+tls-key /do

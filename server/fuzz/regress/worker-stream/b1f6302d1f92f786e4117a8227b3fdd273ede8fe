@@ -1,0 +1,44 @@
+6GKT / HTTP/1.1
+Host: x
+UpgHost: x
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSockep-Key: dGhlIHNhbXBsZSBu╔23jZQ==: Upgrade
+Sec-WebSocket-Key: dGh																																																																																								lIHNhbXBsZSBu╔25XBsZSBu╔24jZQ==
+Sec-WebSocket-Versio~: 13HTTP/1.1
+Host: x
+UpgHost: x
+Upgrade: wection: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBu╔24jZQ==: Upgrade
+Sec-WebSocket-Key: dIlGhHNhbXBsZSBuллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллл╔24jZQ==
+Sec-WebSoc13_AES_256_: 13H2TP/1.1
+Host: x
+UpgHost: x
+Upgrade: websocket
+ConnectUpgrade: webs
+Sec-WebSocket-Version: 13HTTP/1.1
+Host: x
+UrgHost: x
+Upgrade: websocket
+Connection:							Socket-Key: dIlGhHNUpgrade
+Sec-WebSocket-Key: dIlGhHNhbXBsZSBuллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллл╔24jZQ==
+Sec-WebSoc13_AES_256_: 13H2TP/1.1
+Host: x
+UpgHost: x
+Upgrade: websocket
+ConnectUpgrade: webs
+Sec-WebSocket-Version: 13HTTP/1.1
+Host: x
+UrgHost: x
+Upgrade: websocket
+Connection:							Socket-Key: dIlGhHNhbXBsZSBu╔24jZQ==
+Sec-WebSoc13_AES_256_: 13HTTP/1.1
+Host: x
+UConnection: Upgrade
+Sec-WebSocket-Key: dGh												jZQ==
+Sec-WebSocket-Version: 13
+
+┐7З!=5Ш!┌├7З[∙┌├7З!												jZQ==
+Sec-WebSocket-Version: 13
+
+┐7З!=5Ш!┌├7З[∙┌├7З!=3Ш!=4Ьс

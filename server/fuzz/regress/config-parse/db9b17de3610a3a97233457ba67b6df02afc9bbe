@@ -1,0 +1,24 @@
+buffer 15 
+#  $ 
+    
+#
+dns-server ::%04180
+# 
+    
+#
+dns-server ::%04180
+#$ 
+#buff  
+#
+dns-server ::%04180
+#$ r 15 
+#  $ 
+    
+#
+dns-server ::%04180
+#$ 
+#01:%04180
+#$ 
+#01t -S- 01t erver ::%04180
+#$ 
+#01t -S- 

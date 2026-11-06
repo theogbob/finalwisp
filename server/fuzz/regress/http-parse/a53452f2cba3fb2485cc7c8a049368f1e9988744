@@ -1,0 +1,12 @@
+GET / HTTP/1.1
+Hoe0.0.1:6621
+x--dFor: :21
+X-FoRwarded-For:127.0.0.1:6
+X-FoR:21
+X.1:66211:6621
+X-FoR:21
+X-FoRwarded-For:127.0.0.1:6
+.0.aon:rt
+Seket-Von:24ctrt
+Sec-WebSocket-Version:en: 12
+

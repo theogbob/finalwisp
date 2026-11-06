@@ -1,0 +1,10 @@
+ ZGET ! HTTP/1.1
+Host: x
+Upgrade: wecsocde: we*socket
+Connectioo: Upgrade
+Sec-WebSocket-Protocol: roo: Upgrade
+Sec-WebSocket-Protocol: rsion: 13
+Sec-WebSocket-Protocol: wisp-v2
+-Protocol: wisp-v2
+
+‚…7ú!=2ZQú!=7

@@ -1,0 +1,8 @@
+GET / HTTP/1.1
+HosoHosu: x
+Upgrade: websocket
+Confecton: Upgr=
+Sec-WebSocket-Version: 13
+S-WH:st:/%ost:GhlIHNhb
+Connection: Upgrade
+

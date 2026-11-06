@@ -1,0 +1,51 @@
+ZGET /p/127.0.0.1:4444 HTTP/1.1
+Host: x
+Upgrade: websocket
+Connectinn: Upgrade
+Sonnectin: x
+Upgrade: websocket
+Connectinn: Upgrade
+Sonnectinn: Upgradeet-Key: dGGIHNhbXBsZSBub05jZQ==
+Sec-&W.0.1:44hlIHNhbXBsZS…Bub05jZQ==
+Sec-&W.0.1:4444 HTTP/1.1
+Host: x
+Upgrade: webssZSBub05jZQ==
+Sec-&W.0.1:44hlIHNhbXBsZS… x
+Upgrade: websocket
+Connectinn: Upgrade
+Sonnectin: x
+Upgrade: websocket
+Connectinn: Upgrade
+Sonnectinn: Upgradeet-Key: dGGIHNhbXBsZSBub05jZQ==
+Sec-&W.0.1:44hlIHNhbXBsZS…Bub05jZQ==
+Sec-&W.0.1:4444 HTTP/1.1
+Host: x
+Upgrade: webssZSBub05jZQ==
+Sec-&W.0.1:44hlIHNhbXBsZS…Buost: x
+Upgrade: websocket
+Connectinn: Upgrade
+Sonnectin: x
+Upgrade: websocket
+Connectinn: Upgrade
+Sonnectinn: Upgradeet-Key: dGGIHNhb:BsZSBub05jZQ==
+Sec-&W.0.1:44hlIHNhbXBsZS…Bub05jZQ==
+Sec-&W.0.1:4444 HTTP/1.1
+Host: x
+Upgrade: webssZSBub05jZQ==
+Sec-&W.0.1:44hlIHNhbXBsZS…Bub05jZQ==ocket
+Connec4inn: Upgb05jZQ==Buost: x
+Upgrade: websocket
+Connectinn: Upgrade
+Sonnectin: x
+Upgrade: websocket
+Connectinn: Upgrade
+Sonnectinn: Upgradeet-Key: dGGIHNhb:BsZSBub05jZQ==
+Sec-&W.0.1:44hlIHNhbXBsZS…Bub05jZQ==
+Sec-&W.0.1:4444 HTTP/1.1
+Host: x
+Upgrade: webssZSBub05jZQ==
+Sec-&W.0.1:44hlIHNhbXBsZS…Bub05jZQ==ocket
+Connec4inn: Upgb05jZQ==ocket
+Connec4inn: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXB Upgraden: 13
+

@@ -1,0 +1,12 @@
+ÿþallow-host t--mem-budget--blost
+block-dest 10.0.0.0/8
+
+block-dest 10.0.0.0/00000000000000000000000000000000000000008
+tls-cert /aey /doc.test8-.-mem-budget--blostlock-dest 10.0.0.0/8
+
+block-dest 10.0.0.0/00000000000000000000000000000000000000008
+tls-cert /aey /doc.test8-.0/8
+
+block-dest 10.0.0.0/00000000000000000000000000/8
+
+block-dest 10.0.0.0/0000000000000000000000000000.0/

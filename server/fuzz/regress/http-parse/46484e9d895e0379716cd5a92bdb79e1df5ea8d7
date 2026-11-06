@@ -1,0 +1,7 @@
+GET / HTTP/1.1
+Howocket-Version:
+Sec-WebSocket-Protocol: wisp-v2,: wocon:
+Sec-WebSocket-Protocol: wisp-v2, otheket-Version:
+Sec-WebSocket-Protocol: wisWp-v2, hNhSon:
+Sec-WebSocket-Protocol: wisWp-v2, other
+

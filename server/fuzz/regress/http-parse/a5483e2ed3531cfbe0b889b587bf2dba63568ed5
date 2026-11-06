@@ -1,0 +1,14 @@
+GET / HTTP/1.1
+Host: x
+Upgrade: weh,,,,,*,,,,,,,,'	,,',	,,,,,IHNh,,,,,,,,,,,,,,'	,dewe,.ad,,.ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ	,: ,bsy: ,,.	,,ewe,.ad,,.	,: ,Ï,.,IHN,ade,XXXXXXXXXXXXXXX Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXrade: x
+Upgrade: wonne
+Connection: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXrade: x
+Upgrade: wonne,,,,,,,,,,dGh,,,.d,,T	,: G.,'	,.	,.	,,.	,: ,w,.	,GTHK/,'	,.	,: ,,.	,.	,,.	,: ,,.	,,w>	,,/	,: ,w,.	,GTH.	,,: ,,,,ewad,;;Nh,,,.	,,ewe,.ad,,.	,: ,,.,/	,G*TH.	,,: ,,.	,G.ad	,G*TH,	.,,.,	G.a	,TPK,(,,,,,,,,rst: x
+Upgrade: websocket
+C: Upgr=
+Sec-WebSocket-Version: 13
+S-WH:p:rW
+Upgrade:
+

@@ -1,0 +1,7 @@
+GET / HTTP/1.1
+Upgrade:2, ot
+Connection: Upgrade
+Upgrade: websocket
+y:sZ³
+Sec-WebSocket-Version: 13
+

@@ -1,0 +1,11 @@
+GET / HTTP/1.1
+Host: x
+Sec-WebSocket-Protocol: wisp-v2, otherst: x
+Sec-WebSocket-Protocol: wisp-v2,ersion:
+Sec-WebSocket-Protocol: wisWp-v1, othNhbbSocket-Version:
+Sec-WebSocket-Protocol: wisWp-v2, c-Wec-WebSNhbbSocket-Version:
+Sec-WebSocket-Protocol: wis-v2, othNhion:
+Sec-WebSocket-Protocol: wisWp-v2, othNhbbSocket-Version:
+Sec-WebSocket-Protocol: wisWp-v2, c-Wec-WebSNhbbSocket-Version:
+Sec-WebSocket-Protocol: ocol: wisWv2, other
+

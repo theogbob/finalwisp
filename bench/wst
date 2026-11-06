@@ -1,0 +1,6 @@
+#!/usr/bin/env python3
+"""wst: the wisp test suite (pointer 30.10). See bench/README.md or `bench/wst --help`."""
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from wispsuite.__main__ import main
+main()
