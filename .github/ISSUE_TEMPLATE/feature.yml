@@ -1,0 +1,11 @@
+name: Feature request
+description: Something finalwisp should do.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What do you need, and why?
+      description: The problem first; a proposed flag or design is welcome but optional.
+    validations:
+      required: true

@@ -1,6 +1,6 @@
 name: release
 # On a tag v*: the reproducible release build, the tarball + SHA256SUMS, a DRAFT GitHub release with those assets
-# (notes from CHANGELOG.md), and the container image on ghcr.io. Publish the draft by hand after checking it.
+# (notes from CHANGELOG.md), and the container image on ghcr.io (:vX.Y.Z, and :latest for a plain vX.Y.Z). Publish the draft by hand after checking it.
 on:
   push:
     tags: ["v*"]
@@ -21,7 +21,7 @@ jobs:
           apt-get update -qq
           DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential git file curl ca-certificates nodejs >/dev/null
           dpkg-query -W -f='${Package} ${Version}\n' libc6-dev gcc-15 binutils
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: rust (pinned by rust-toolchain.toml)
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"  # the workspace is not owned by the container user
@@ -36,7 +36,7 @@ jobs:
           case "$GITHUB_REF" in refs/tags/*) ver=$GITHUB_REF_NAME ;; *) ver=g$(git rev-parse --short=10 HEAD) ;; esac
           bench/package.sh "$ver" pkg
           cp server/target/x86_64-unknown-linux-gnu/release/BUILDINFO pkg/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release
           path: pkg/
@@ -49,8 +49,8 @@ jobs:
       TAG: ${{ github.ref_name }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: release
           path: pkg
@@ -68,3 +68,5 @@ jobs:
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           docker build -f contrib/docker/Dockerfile --build-arg REVISION="$GITHUB_SHA" -t "$image:$TAG" ctx
           docker push "$image:$TAG"
+          # a plain vX.Y.Z (no "-rc1" style suffix) also becomes :latest
+          case "$TAG" in *-*) ;; *) docker tag "$image:$TAG" "$image:latest" && docker push "$image:latest" ;; esac

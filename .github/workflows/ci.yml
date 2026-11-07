@@ -22,7 +22,7 @@ jobs:
           apt-get update -qq
           DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential git file curl ca-certificates nodejs >/dev/null
           dpkg-query -W -f='${Package} ${Version}\n' libc6-dev gcc-15 binutils
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: rust (pinned by rust-toolchain.toml)
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"  # the workspace is not owned by the container user
