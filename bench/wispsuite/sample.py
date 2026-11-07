@@ -84,6 +84,52 @@ def tcp_pressure(ns=None):
         return None
 
 
+def tcp_pressure_both(nss=()):
+    """60.42 verify: {ns or "": (TCPMemoryPressures, TCPMemoryPressuresChrono ms)} for the host and the netns `nss` (the
+    kernel counts an entry / exit in the netns of the socket that crossed tcp_mem[1]); None if the host is unreadable.
+    Subtract with pressure_delta (only namespaces read at both ends)."""
+    out = {}
+    for ns in (None, *nss):
+        try:
+            cmd = (["ip", "netns", "exec", ns] if ns else []) + ["cat", "/proc/net/netstat"]
+            lines = [l.split() for l in subprocess.run(cmd, capture_output=True, text=True).stdout.splitlines()
+                     if l.startswith("TcpExt:")]
+            d = dict(zip(lines[0][1:], lines[1][1:]))
+            v = (int(d["TCPMemoryPressures"]), int(d["TCPMemoryPressuresChrono"]))
+        except Exception:
+            if ns is None:
+                return None
+            continue
+        out[ns or ""] = v
+    return out
+
+
+def pressure_delta(a, b):
+    """(entries, ms) from two tcp_pressure_both readings, over the namespaces present in both; None if either is None."""
+    if a is None or b is None:
+        return None
+    ks = a.keys() & b.keys()
+    return sum(b[k][0] - a[k][0] for k in ks), sum(b[k][1] - a[k][1] for k in ks)
+
+
+def tcp_press_flag():
+    """60.42 verify: the kernel's global TCP memory pressure flag now (/proc/net/protocols, TCP row, "press" column:
+    yes / no; the flag is host-wide, visible from any netns); None if unreadable. Unlike the TcpExt counters it also
+    shows pressure that started before the window (the entry counter only counts 0 -> 1 transitions) and pressure still
+    on at the end (TCPMemoryPressuresChrono is credited only when pressure ends)."""
+    try:
+        with open("/proc/net/protocols") as f:
+            head = f.readline().split()
+            col = head.index("press")
+            for l in f:
+                x = l.split()
+                if x and x[0] == "TCP":
+                    return {"yes": 1, "no": 0}.get(x[col])
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
 def tcp_mem_pages():
     """Host TCP memory in pages (/proc/net/sockstat "TCP: ... mem N"); None if unreadable."""
     try:
@@ -112,6 +158,7 @@ class TcpMemPeak:
 
     def __init__(self, every=0.05):
         self.every, self.max_seen, self._stop = every, None, threading.Event()
+        self.press_samples = self.samples = 0  # 60.42 verify: samples with the global TCP pressure flag set
         self._t = threading.Thread(target=self._run, daemon=True)
 
     def _run(self):
@@ -119,6 +166,10 @@ class TcpMemPeak:
             v = tcp_mem_pages()
             if v is not None and (self.max_seen is None or v > self.max_seen):
                 self.max_seen = v
+            pf = tcp_press_flag()
+            if pf is not None:
+                self.samples += 1
+                self.press_samples += pf
             if self._stop.wait(self.every):
                 return
 

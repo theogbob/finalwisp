@@ -46,6 +46,7 @@ impl Worker {
         }
         if t.dns_more {
             t.err = err; // 70.10 every early address failed: the final answer (other family) retries via start_connect
+                         // (60.39: start_connect reads `udp && err != 0` as "already charged per destination")
             return;
         }
         if !self.streamlog.is_empty() {

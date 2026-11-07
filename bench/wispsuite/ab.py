@@ -51,6 +51,8 @@ def run_ab(variants, reps, wb_args, *, wb, port="6901", tport="6902", tmode=None
     names = list(variants)
     timeout = float(dur) + float(warmup) + 60
     tcp_max = sample.tcp_mem_max()  # 50.02 D
+    pre = [*srv_prefix, *cli_prefix]
+    nss = sorted({pre[i + 2] for i in range(len(pre) - 2) if pre[i] == "netns" and pre[i + 1] == "exec"})
     try:
         for rep in range(reps):
             k = rep % len(names) if rotate else 0
@@ -65,6 +67,7 @@ def run_ab(variants, reps, wb_args, *, wb, port="6901", tport="6902", tmode=None
                     time.sleep(max(0.0, 0.5 - (time.time() - t_start)))  # >= 0.5 s as before: every worker has bound
                     if p.poll() is not None:
                         ready = False
+                    pr0 = sample.tcp_pressure_both(nss)  # 60.42 verify: before the CPU window (review: subprocesses)
                     cpu0, _, _ = sample.group_usage(p.pid)
                     cg0 = cgroup_usage_s()
                     t0 = time.time()
@@ -80,6 +83,8 @@ def run_ab(variants, reps, wb_args, *, wb, port="6901", tport="6902", tmode=None
                             j = wbench.run(wb, args, timeout, prefix=cli_prefix, ssh=client_ssh)
                         else:
                             j = {"error": f"server did not start on :{port}"}
+                    if mempk.samples:  # share of 0.05 s samples with the global pressure flag set (the robust metric)
+                        j["tcp_press_frac"] = round(mempk.press_samples / mempk.samples, 3)
                     if mempk.max_seen is not None:
                         j["tcp_mem_peak"] = mempk.max_seen
                         j["at_tcp_mem_max"] = sample.at_tcp_mem_max(mempk.max_seen, tcp_max)
@@ -88,6 +93,13 @@ def run_ab(variants, reps, wb_args, *, wb, port="6901", tport="6902", tmode=None
                     cpu1, rss, hwm = sample.group_usage(p.pid)
                 finally:
                     proc.stop(p, 0)
+                # 60.42 verify: entries / ms (TcpExt) read after the server is gone: the kernel credits
+                # TCPMemoryPressuresChrono when pressure ends, usually at this rep's teardown (review P2);
+                # a lower bound for pressure that outlives the rep (tcp_press_frac does not have that gap)
+                time.sleep(0.2)
+                pd = sample.pressure_delta(pr0, sample.tcp_pressure_both(nss))
+                if pd is not None and isinstance(j, dict):
+                    j["tcp_press"], j["tcp_press_ms"] = pd
                 if not netns and not proc.wait_free(int(port), 30):
                     # 60.12 scale: the reaped server's sockets close asynchronously (gold t36 echo 100x10: 36 listeners +
                     # CLOSE_WAITs for > 0.3 s), and the next server's bind then failed with EADDRINUSE in every other rep

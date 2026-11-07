@@ -2,7 +2,8 @@
 //! - C2: the client IP is the TCP peer, or, for a peer in --trusted-proxy, the configured header (exactly one; XFF by a
 //!   right-to-left walk that skips trusted hops). It is used for the per-IP keys (and C4 logs later), never for routing.
 //! - C3b: one process-wide table of per-IP keys (64 SipHash shards, 1024 keys each): concurrent connections
-//!   (--max-conns-per-ip) and a stream token bucket (--stream-rate-per-ip). A key is released only if it was charged.
+//!   (--max-conns-per-ip), a stream token bucket (--stream-rate-per-ip) and (60.40) a new-connection token bucket
+//!   (--conn-rate-per-ip). A key is released only if it was charged.
 use crate::policy::Cidr;
 use std::collections::HashMap;
 use std::hash::{BuildHasher, RandomState};
@@ -135,6 +136,9 @@ struct Entry {
     conns: u32,
     tokens: f32,
     at: u32, // ms (now_ms), wrapping
+    // 60.40 --conn-rate-per-ip: its own bucket and time (refill() and the upload paths that call it stay as they were)
+    ct: f32,
+    cat: u32,
     ub: f64, // 60.25 C10b upload bytes left in the key's --upload-rate-per-ip bucket (leased out by take_bytes / top_up_bytes)
     q: Upq,  // 60.25 C10b waiters for that bucket
 }
@@ -241,13 +245,17 @@ pub struct IpTable {
     hash: RandomState,
     keys: AtomicUsize,
     rate: Option<(f32, f32)>,
-    up: Option<(f64, f64)>, // 60.25 C10b --upload-rate-per-ip (bytes per ms, burst bytes)
+    up: Option<(f64, f64)>,        // 60.25 C10b --upload-rate-per-ip (bytes per ms, burst bytes)
+    conn_rate: Option<(f32, f32)>, // 60.40 --conn-rate-per-ip (connections per ms, burst)
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Charge {
     Charged,
+    /// over --max-conns-per-ip
     Refused,
+    /// 60.40 over --conn-rate-per-ip (its bucket is empty; no token was taken, the connection count is unchanged)
+    Rate,
     /// the key's shard is full: not tracked, not limited (Q11)
     Untracked,
 }
@@ -266,9 +274,16 @@ impl IpTable {
     }
 
     /// 60.25 C10b: `up` = (bytes per ms, burst bytes) of --upload-rate-per-ip
+    #[cfg(test)]
     pub fn with_upload(rate: Option<(f32, f32)>, up: Option<(f64, f64)>) -> IpTable {
+        Self::with_rates(rate, up, None)
+    }
+
+    /// `rate`: --stream-rate-per-ip (tokens per ms, burst); `up`: 60.25 C10b --upload-rate-per-ip (bytes per ms, burst
+    /// bytes); `conn_rate`: 60.40 --conn-rate-per-ip (connections per ms, burst)
+    pub fn with_rates(rate: Option<(f32, f32)>, up: Option<(f64, f64)>, conn_rate: Option<(f32, f32)>) -> IpTable {
         let shards = (0..SHARDS).map(|_| Mutex::new(HashMap::with_hasher(RandomState::new()))).collect();
-        IpTable { shards, hash: RandomState::new(), keys: AtomicUsize::new(0), rate, up }
+        IpTable { shards, hash: RandomState::new(), keys: AtomicUsize::new(0), rate, up, conn_rate }
     }
 
     fn shard(&self, k: IpKey) -> &Mutex<HashMap<IpKey, Entry, RandomState>> {
@@ -293,16 +308,38 @@ impl IpTable {
         e.at = now;
     }
 
-    fn idle(&self, e: &Entry) -> bool {
-        e.conns == 0 && self.rate.is_none_or(|(_, burst)| e.tokens >= burst) && self.up.is_none_or(|(_, burst)| e.ub >= burst)
+    /// 60.40 refill the --conn-rate-per-ip bucket to `now` (the same wrap and reordering rules as refill, own time)
+    fn refill_conn(&self, e: &mut Entry, now: u32) {
+        let Some((per_ms, burst)) = self.conn_rate else { return };
+        let dt = now.wrapping_sub(e.cat);
+        if dt > u32::MAX - STALE_MS {
+            return;
+        }
+        e.ct = (e.ct + dt as f32 * per_ms).min(burst);
+        e.cat = now;
     }
 
-    /// One connection more for `k`; `max` 0 = no connection limit (the key is still tracked for the stream rate).
+    fn idle(&self, e: &Entry) -> bool {
+        e.conns == 0
+            && self.rate.is_none_or(|(_, burst)| e.tokens >= burst)
+            && self.up.is_none_or(|(_, burst)| e.ub >= burst)
+            && self.conn_rate.is_none_or(|(_, burst)| e.ct >= burst)
+    }
+
+    /// One connection more for `k`; `max` 0 = no connection limit (the key is still tracked for the rates). Checked in
+    /// order: --max-conns-per-ip (Refused), then 60.40 --conn-rate-per-ip (Rate); a refused connection takes no token.
     pub fn charge(&self, k: IpKey, max: u32, now: u32) -> Charge {
         let mut m = self.shard(k).lock().unwrap();
         if let Some(e) = m.get_mut(&k) {
             if max > 0 && e.conns >= max {
                 return Charge::Refused;
+            }
+            if self.conn_rate.is_some() {
+                self.refill_conn(e, now);
+                if e.ct < 1.0 {
+                    return Charge::Rate;
+                }
+                e.ct -= 1.0;
             }
             self.refill(e, now);
             e.conns += 1;
@@ -313,7 +350,8 @@ impl IpTable {
         }
         let tokens = self.rate.map_or(0.0, |(_, b)| b);
         let ub = self.up.map_or(0.0, |(_, b)| b);
-        m.insert(k, Entry { conns: 1, tokens, at: now, ub, q: Upq::default() });
+        let ct = self.conn_rate.map_or(0.0, |(_, b)| b - 1.0); // (burst >= 1: cli)
+        m.insert(k, Entry { conns: 1, tokens, at: now, ct, cat: now, ub, q: Upq::default() });
         self.keys.fetch_add(1, Relaxed);
         Charge::Charged
     }
@@ -329,6 +367,7 @@ impl IpTable {
         debug_assert!(e.conns > 0, "per-IP release underflow");
         e.conns = e.conns.saturating_sub(1);
         self.refill(e, now);
+        self.refill_conn(e, now);
         if self.idle(e) {
             m.remove(&k);
             self.keys.fetch_sub(1, Relaxed);
@@ -354,6 +393,7 @@ impl IpTable {
         let before = m.len();
         m.retain(|_, e| {
             self.refill(e, now);
+            self.refill_conn(e, now);
             !self.idle(e)
         });
         self.keys.fetch_sub(before - m.len(), Relaxed);
@@ -490,6 +530,12 @@ impl IpTable {
     /// 60.25 C10b --upload-rate-per-ip is on
     pub fn has_upload(&self) -> bool {
         self.up.is_some()
+    }
+
+    /// 60.40 --conn-rate-per-ip is on
+    #[cfg(test)]
+    pub fn has_conn_rate(&self) -> bool {
+        self.conn_rate.is_some()
     }
 
     /// --stream-rate-per-ip is on (the only copy of the rate)
@@ -774,6 +820,77 @@ mod tests {
         assert!(t.keys() <= SHARDS * SHARD_CAP);
         let known = keys.iter().flatten().next().copied().unwrap();
         assert_eq!(t.charge(known, 0, 0), Charge::Charged);
+    }
+
+    /// 60.40 --conn-rate-per-ip: a token per new connection; over the limit nothing is taken and the count is
+    /// unchanged; --max-conns-per-ip is checked first; wispurr's 200 per 10 s window is 20/200 (a full burst of 200,
+    /// then 20 per second = 200 per 10 s)
+    #[test]
+    fn conn_rate_bucket() {
+        let t = IpTable::with_rates(None, None, Some((20.0 / 1000.0, 200.0)));
+        assert!(t.has_conn_rate() && !t.has_rate());
+        let k = key(ip("1.1.1.1"));
+        assert!((0..200).all(|_| t.charge(k, 0, 0) == Charge::Charged), "the burst: 200 at once");
+        assert_eq!(t.charge(k, 0, 0), Charge::Rate, "the 201st in the same instant");
+        assert_eq!(t.conns(k), 200, "a refused connection is not counted");
+        assert_eq!(t.charge(k, 0, 49), Charge::Rate, "0.98 of a token after 49 ms");
+        assert_eq!(t.charge(k, 0, 51), Charge::Charged, "one per 50 ms (20/s)");
+        assert_eq!(t.charge(k, 0, 51), Charge::Rate);
+        // a steady client gets 200 in each further 10 s (one every 50 ms), not more
+        let n = (1..=200u32).filter(|i| t.charge(k, 0, 51 + i * 50) == Charge::Charged).count();
+        assert_eq!(n, 200);
+        assert_eq!(t.charge(k, 0, 10_051), Charge::Rate);
+        assert_eq!(t.charge(k, 0, 10_040), Charge::Rate, "a reordered older now: no 49-day refill");
+        assert_eq!(t.conns(k), 401);
+        // the --max-conns-per-ip check comes first and takes no token
+        let m = IpTable::with_rates(None, None, Some((1.0 / 1000.0, 2.0)));
+        let a = key(ip("2.2.2.2"));
+        assert_eq!((m.charge(a, 1, 0), m.charge(a, 1, 0)), (Charge::Charged, Charge::Refused));
+        m.release(a, 0);
+        assert_eq!(m.charge(a, 1, 0), Charge::Charged, "the refusal took no token: the second of the burst is left");
+        m.release(a, 0);
+        assert_eq!(m.charge(a, 1, 0), Charge::Rate, "now the bucket is empty");
+        // an untracked key (full shard) is not limited (Q11 fail open): shown by the shard cap test; a separate key has
+        // its own bucket
+        assert_eq!(m.charge(key(ip("2.2.2.3")), 1, 0), Charge::Charged);
+    }
+
+    /// 60.40 a client cannot reset its --conn-rate-per-ip bucket by closing its connections: release keeps a drained
+    /// entry (no connection, bucket not full); the sweep refills it and drops it only when it is full again
+    #[test]
+    fn conn_rate_survives_reconnect() {
+        let t = IpTable::with_rates(None, None, Some((1.0 / 1000.0, 3.0))); // 1/s, burst 3
+        let k = key(ip("5.5.5.5"));
+        for _ in 0..3 {
+            assert_eq!(t.charge(k, 0, 0), Charge::Charged);
+            t.release(k, 0); // connect, close, connect again
+        }
+        assert_eq!(t.keys(), 1, "drained: kept after its last connection");
+        assert_eq!(t.charge(k, 0, 10), Charge::Rate, "reconnecting does not reset the bucket");
+        for s in 0..SHARDS {
+            t.sweep(s, 1000);
+        }
+        assert_eq!(t.keys(), 1, "one token back after 1 s: not full, kept");
+        assert_eq!(t.charge(k, 0, 1000), Charge::Charged);
+        t.release(k, 1000);
+        for s in 0..SHARDS {
+            t.sweep(s, 4000);
+        }
+        assert_eq!(t.keys(), 0, "full after 3 s more: dropped");
+        // a fresh entry starts with burst - 1 (the connection that created it took a token)
+        assert!((0..3).all(|_| t.charge(k, 0, 4000) == Charge::Charged) && t.charge(k, 0, 4000) == Charge::Rate);
+        // with the rate off, an entry with no connection goes at release as before
+        let off = IpTable::new(None);
+        assert_eq!(off.charge(k, 0, 0), Charge::Charged);
+        off.release(k, 0);
+        assert_eq!(off.keys(), 0);
+    }
+
+    /// 60.40 the per-entry size the conn bucket costs (the table exists only with a per-IP limit on: main build_clientip)
+    #[test]
+    fn entry_size() {
+        assert_eq!(std::mem::size_of::<Entry>(), 96);
+        assert_eq!(std::mem::size_of::<(IpKey, Entry)>(), 112);
     }
 
     #[test]

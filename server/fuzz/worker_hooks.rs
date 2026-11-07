@@ -145,7 +145,8 @@ fn config(v: u8) -> Option<Config> {
         keepalive: false,
         prio: v != 2,
         ext,
-        credit_v2: v != 2, // 20.30 credit v2 is the default (60.13); variant 2 (the off-switches) runs the base-2 rule
+        credit_v2: v != 2,   // 20.30 credit v2 is the default (60.13); variant 2 (the off-switches) runs the base-2 rule
+        credit_pace: v != 2, // 60.42 default on; variant 2 (the off-switches) runs without it
         conn_gate: None,
         max_streams_per_conn: 0,
         policy: None,
@@ -163,6 +164,9 @@ fn config(v: u8) -> Option<Config> {
         proxy_tcp: false,
         proxy_unix: false,
         proxy_from: Box::new([]),
+        // 60.39 variant 1: a per-destination table at the top rates: every stream takes its token, none is refused (the
+        // harness lives across inputs: a binding limit would make refusals depend on earlier inputs and the clock)
+        dest_rate: (v == 1).then(|| Box::new(crate::destrate::DestTable::new(Some((1_000_000, 2_000_000)), Some(60_000_000)))),
     })
 }
 

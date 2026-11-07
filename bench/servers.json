@@ -127,6 +127,14 @@
     "1"
    ],
    "note": "UNOFFICIAL: 'wispx' with v2_close_delay_ms = 0 (its 2 ms CLOSE hold for old native wisp-mux clients off)"
+  },
+  "holywisp": {
+   "cmd": "{root}/ref/holywisp/build/release/holywisp --host 127.0.0.1 --port {port} --allow-loopback on --allow-private on --allow-direct-ip on --flood-protection off --connections-limit-per-ip 0 --connection-window-s 0 --reputation off --log-level error",
+   "extra": [
+    "--stall-ping-ms",
+    "1"
+   ],
+   "note": "UNOFFICIAL: holyWisp (github.com/Fracital/holyWisp, C) built with `make release` in ref/holywisp; its flood limits, per-IP connection rate and reputation are on by default and would throttle a loopback benchmark (all streams to one target from one IP), so they are off here, like the other servers' (they have none on)"
   }
  }
 }

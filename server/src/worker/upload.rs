@@ -443,7 +443,12 @@ impl Worker {
         let n = if v2 {
             match t.cv.as_ref().unwrap().grant(backlog as u64, t.since, t.credit, (PEND_HARD - PEND_HARD / 16) as u64) {
                 credit::Grant::Continue(n) => {
-                    if t.since >= t.credit {
+                    let pc = if self.cfg.credit_pace { self.pace_hold(ti) } else { pace::PACE_GO };
+                    if pc == pace::PACE_HOLD {
+                        return; // 60.42 the target is parked on the client's output: no new upload yet
+                    }
+                    let t = self.targets.at(ti);
+                    if t.since >= t.credit && pc != pace::PACE_RELEASED {
                         t.cv.as_mut().unwrap().starved();
                     }
                     n
@@ -461,6 +466,9 @@ impl Worker {
                 credit::Grant::No => return,
             }
         } else if refill_due(self.capl, t.since, t.allow, t.credit, n, half) && backlog < plow {
+            if self.cfg.credit_pace && !t.udp && self.pace_hold(ti) == pace::PACE_HOLD {
+                return; // 60.42 (as above)
+            }
             n
         } else {
             return;

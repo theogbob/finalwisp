@@ -13,7 +13,8 @@ use std::time::{Duration, Instant};
 
 /// Named counters that are gauges, listed explicitly (test: every `_max` name, the line's max rule, is here). Every
 /// other named counter is a counter (`_total`).
-const GAUGES: &[&str] = &["pool_chunks", "pool_dirty_kib", "streams", "ktls_starve_ms_max", "ktls_starve_conn_max", "ip_keys_max"];
+const GAUGES: &[&str] =
+    &["pool_chunks", "pool_dirty_kib", "streams", "ktls_starve_ms_max", "ktls_starve_conn_max", "ip_keys_max", "dest_keys_max"];
 
 #[derive(Clone, Copy)]
 enum Unit {

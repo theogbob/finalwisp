@@ -8,6 +8,8 @@ pub mod cli;
 pub mod clientip;
 #[path = "../../src/credit.rs"]
 pub mod credit;
+#[path = "../../src/destrate.rs"]
+pub mod destrate; // 60.39
 #[path = "../../src/dns.rs"]
 pub mod dns;
 #[path = "../../src/ext.rs"]

@@ -17,7 +17,8 @@ usage: wst compat --bin FINALWISP [--base-port 8300] [--out DIR] [--matrix] [--s
                 + default SSRF guard on a server without --allow-loopback                         base+20, +21
   credit-v2     tests/compat/credit_v2.py (20.30 credit v2: pong / no-pong / eager / foreign-pong clients)  base+66
   wispjs-v2c    wispjs.mjs + adversarial.py (adv-v2c) with credit v2 (wisp-js sends inside its CONTINUE handler)  base+67
-  limits        tests/compat/limits.py (60.20 C3a: --max-conns with/without --balance, --max-streams-per-conn)  base+24..+27
+  limits        tests/compat/limits.py (60.20 C3a: --max-conns with/without --balance, --max-streams-per-conn;
+                60.39 --stream-rate-per-dest / -minute)                                           base+24..+27
   policy        tests/compat/policy.py (60.20 C1: port/host/dest rules, --no-direct-ip, --no-ipv6-targets, recursion)  base+28, +29
   realip        tests/compat/realip.py (60.20 C2/C3b: per-IP limits direct and behind a trusted proxy, XFF, rates)  base+8, +9
   logs          tests/compat/logs.py (60.24 --log-level, --log-conns lines, refusal flood, stalled stderr)  base+22, +23

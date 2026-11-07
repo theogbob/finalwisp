@@ -205,7 +205,7 @@ stats! {
     /// 60.25 C10b of those, pauses because the client key's --upload-rate-per-ip bucket or queue had nothing for it
     upl_ip_waits,
     /// 60.34 PROXY protocol headers accepted (the connection went on to TLS / HTTP; a per-IP refusal after the header
-    /// counts in refuse_ip_conns instead)
+    /// counts in refuse_ip_conns or refuse_ip_connrate instead)
     pp_ok,
     /// 60.34 of those, headers without a client address (LOCAL health checks, UNSPEC, UNKNOWN, AF_UNIX): the real peer
     pp_local,
@@ -215,6 +215,16 @@ stats! {
     pp_timeout,
     /// 60.34 connections reset at accept: a TCP peer of a PROXY listener not in --proxy-protocol-from
     pp_refused,
+    /// 60.40 connections refused by --conn-rate-per-ip (direct peers: RST at accept; behind a trusted proxy: 429)
+    refuse_ip_connrate,
+    /// 60.39 streams refused (0x49) by --stream-rate-per-dest or --stream-rate-per-dest-minute
+    refuse_dest_rate,
+    /// 60.39 streams not limited per destination: their key's table shard was full of live entries (fail open)
+    dest_untracked,
+    /// 60.39 gauge (max, not summed): keys in the per-destination table, at the last idle sweep
+    dest_keys_max,
+    /// 60.42 --credit-pace: upload CONTINUEs held because the stream's target was parked on its client's output
+    cpace_holds,
 }
 
 impl Stats {

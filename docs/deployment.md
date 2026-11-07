@@ -170,7 +170,8 @@ Cloudflare and finalwisp, list that proxy too.
   entry the client wrote itself further left does not count.
 - With `--real-ip-header x-real-ip` (nginx: `proxy_set_header X-Real-IP $remote_addr;`), the header holds one address.
 - A trusted request without the header is not limited per IP. An unreadable header makes the proxy the client.
-- Over `--max-conns-per-ip`, a client behind a proxy gets `429 Too Many Requests`; a direct client is reset at accept.
+- Over `--max-conns-per-ip` or `--conn-rate-per-ip`, a client behind a proxy gets `429 Too Many Requests`; a direct
+  client is reset at accept.
 
 ### Unix socket between the proxy and finalwisp
 
@@ -219,7 +220,8 @@ Balancer side: AWS NLB target group attribute `proxy_protocol_v2.enabled`, HAPro
   connects from the client's own address; then the list must be `0.0.0.0/0,::/0` (finalwisp warns), and your
   firewall or security group must let nothing but the balancer reach the port.
 - TLS still ends in finalwisp if you use `--tls-cert`: the header comes before the TLS handshake.
-- Health checks work: a LOCAL header, or a plain TCP connect and close.
+- Health checks work: a LOCAL header, or a plain TCP connect and close. A LOCAL check counts as a new connection
+  from the balancer's own address, so with `--conn-rate-per-ip` keep R above the check rate of each balancer node.
 - With an HTTP proxy or CDN in front of the balancer, also list that hop in `--trusted-proxy`, so its
   `X-Forwarded-For` names the client.
 
@@ -386,9 +388,13 @@ finalwisp --host 127.0.0.1 --port 6001 --trusted-proxy 127.0.0.1 \
 - **`--block-smtp`** closes the mail ports. An open Wisp server is otherwise a spam relay, and hosting providers
   react quickly to that.
 - **Connection limits.** `--max-conns` caps the whole process (think of your file descriptor limit). `--max-conns-per-ip`
-  stops one address from taking all of them.
+  stops one address from taking all of them. `--conn-rate-per-ip R/B` limits how fast one address opens new
+  connections (a client that connects, closes and reconnects in a loop): `20/200` allows a burst of 200, then 20 per
+  second, the same as "200 connections per 10 seconds". A closed connection does not give its token back.
 - **Stream limits.** `--max-streams-per-conn` stops one WebSocket from opening thousands of streams (a port scan, for
   example); 64-256 is generous for browsers. `--stream-rate-per-ip` limits how fast one address opens streams.
+- **Per destination.** `--stream-rate-per-dest` caps how fast all clients together open streams to one target, so
+  your server cannot be used to flood one site (see [per-destination limits](#per-destination-limits)).
 - **Bandwidth.** `--download-rate` and `--upload-rate` cap one connection; `--upload-rate-per-ip` caps one address.
   There is no per-IP download cap (see [known limits](#known-limits)).
 - **Destinations.** `--allow-ports tcp:80,tcp:443 --no-udp` keeps clients on the web (an allow list for TCP alone leaves UDP
@@ -408,6 +414,33 @@ Points to know about the destination policy:
 
 Per-IP limits use IPv4 addresses and IPv6 /64 networks. The table holds up to 65,536 addresses; when it is full, new
 addresses are not limited per IP (`--max-conns` still applies).
+
+### Per-destination limits
+
+Per-IP limits stop one client. They do not stop many clients that all open streams to the same site, and to that site
+the flood comes from your server's address: abuse reports and IP bans then hit every user. Two options cap new
+streams to one destination from all clients together:
+
+```sh
+finalwisp ... --stream-rate-per-dest 250/250 --stream-rate-per-dest-minute 6000
+```
+
+- `--stream-rate-per-dest R[/B]`: R new streams per second, burst B (default 2R).
+- `--stream-rate-per-dest-minute N`: N new streams per minute (refilled evenly, N/60 per second).
+- A stream needs room under both. Over either, the stream gets CLOSE `0x49` (throttled); the connection stays open.
+  A refused stream uses up no per-destination budget. Open streams are not counted, only new ones.
+- The destination is the target IP address and port, after DNS: a name and its address share one limit, and a site
+  with several addresses gets the limit per address. With `--upstream socks5h://...` (the proxy resolves names) it is
+  the host name and port instead (case-insensitive); a client can then spread its streams over other names of the site.
+- The limit counts every client on the whole server (all threads share one table). The table holds 65,536
+  destinations; a full table section first drops the entries that have refilled, and if none has, new destinations are
+  not limited (counted in `dest_untracked`).
+- Refusals are counted in `refuse_dest_rate`; with `--log-streams` they have `rule=dest_rate` (per second) or
+  `rule=dest_rate_minute`.
+
+Coming from wispurr: `maxConnectsPerDestPerSecond: 250` and `maxConnectsPerDestPerMinute: 6000` are
+`--stream-rate-per-dest 250/250 --stream-rate-per-dest-minute 6000`. wispurr counts in fixed windows; finalwisp
+uses token buckets, so the per-minute budget refills gradually instead of all at once at the window's end.
 
 ## Upstream proxy and Tor
 
@@ -483,7 +516,7 @@ finalwisp: ev=conn_close ts=2026-11-01T12:00:00.123Z w=3 cid=3:1842 ip=203.0.113
 `protocol_error`, `hs_timeout` (no complete handshake in time), `auth_failed`, `tls_error`, `pressure_shed` (memory
 pressure), `dead_peer` (the client vanished), `limit` (a per-IP limit or a policy refusal).
 
-A connection refused right at accept (`--max-conns`, `--max-conns-per-ip`) gives `ev=conn_refused ... why=limit`, at
+A connection refused right at accept (`--max-conns`, `--max-conns-per-ip`, `--conn-rate-per-ip`) gives `ev=conn_refused ... why=limit`, at
 most 20 lines per second per thread, then one `ev=refused_suppressed n=` line per second.
 
 ### Stream log
@@ -501,7 +534,8 @@ finalwisp: ev=stream_refused ts=... w=0 cid=0:1 ip=203.0.113.9 sid=5 t=tcp host=
 - `reason` is the Wisp close code sent (table below), or `none` if the client closed the stream.
 - `why` is one of `target_close`, `client_close`, `conn_close`, `dns_fail`, `connect_fail`, `upstream_fail`,
   `policy`, `limit`, `pressure`, `invalid`; `rule` names the rule that refused it (`ports`, `private`, `block_dest`,
-  `max_streams_per_conn`, `stream_rate`, ...).
+  `max_streams_per_conn`, `stream_rate`, `dest_rate`, `dest_rate_minute`, ...). A per-destination refusal comes after
+  DNS, so it is an `ev=stream_close` line with `reason=0x49 why=limit`, not a `stream_refused` line.
 - Expect one line per stream: size your log storage for the stream rate, not the connection rate.
 
 ### Privacy and safety of the logs
@@ -573,7 +607,7 @@ What you get:
 No metric carries a client address, a destination or a secret.
 
 Useful ones to watch: `finalwisp_memory_level` above 0 (memory pressure), `finalwisp_refuse_conns_total` and
-`finalwisp_refuse_ip_conns_total` (connection limits hit), `finalwisp_refuse_policy_total` (policy refusals),
+`finalwisp_refuse_ip_conns_total` and `finalwisp_refuse_ip_connrate_total` (per-IP connection limits hit), `finalwisp_refuse_policy_total` (policy refusals),
 `finalwisp_dead_peers_total`, `finalwisp_log_dropped_total` and `finalwisp_upstream_fail_total`.
 
 ## Memory budget
@@ -617,7 +651,10 @@ may use.
 Notes:
 
 - The host's own TCP memory limit (`net.ipv4.tcp_mem`) is shared by every socket on the host and is not part of the
-  budget. On a small VPS, `--tcpmem-adapt` can help there.
+  budget. Credit pacing (on by default, `--no-credit-pace` turns it off) reduces how much of it full-duplex bulk traffic
+  (echo-like streams) builds up. It does not always keep a small host out of TCP memory pressure: on a VPS with small
+  socket buffer limits, echo with 100 streams still reaches it; `--buffer 32` (a smaller first upload window per stream)
+  kept it out in most runs there (60.42). `--tcpmem-adapt` shrinks this server's socket buffers when the host gets close to it.
 - finalwisp's virtual size (VSZ) is larger than its resident memory, because it reserves memory in 4 MiB chunks. Only
   resident memory counts. If you set `ulimit -v`, size it from VSZ.
 - After a big burst, resident memory can stay higher for about 10 seconds while freed buffers are returned in small

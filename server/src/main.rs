@@ -4,6 +4,7 @@
 mod cli;
 mod clientip;
 mod credit;
+mod destrate; // 60.39
 mod dns;
 mod ext;
 mod http;
@@ -425,14 +426,18 @@ fn check_pacing(pace: net::Pacing, splice_asked: bool) -> String {
 /// --listen-unix forces it (its clients' header is read: the unix sentinel is trusted), and the TCP accept path still
 /// asks for the peer only when a C2/C3b flag or --log-conns is on (Config::want_peer).
 fn build_clientip(o: &cli::Opts) -> Option<Box<clientip::ClientIp>> {
-    let per_ip = o.max_conns_per_ip > 0 || o.stream_rate.is_some() || o.upload_rate_ip.is_some(); // 60.25
+    let per_ip = o.per_ip();
     (per_ip || !o.trusted_proxies.is_empty() || o.listen_unix.is_some()).then(|| {
         let rate = o.stream_rate.map(|(r, b)| (r as f32 / 1000.0, b as f32));
         let sentinel = o.listen_unix.as_ref().map(|_| policy::Cidr::parse(&format!("{}/128", clientip::UNIX_PEER)).unwrap());
         Box::new(clientip::ClientIp {
             trusted: o.trusted_proxies.iter().copied().chain(sentinel).collect(),
             header: o.real_ip_header.clone().into(),
-            table: per_ip.then(|| clientip::IpTable::with_upload(rate, o.upload_rate_ip.map(|(r, b)| (r as f64 / 1000.0, b as f64)))),
+            table: per_ip.then(|| {
+                let up = o.upload_rate_ip.map(|(r, b)| (r as f64 / 1000.0, b as f64));
+                clientip::IpTable::with_rates(rate, up, o.conn_rate.map(|(r, b)| (r as f32 / 1000.0, b as f32)))
+                // 60.40
+            }),
             max_conns: o.max_conns_per_ip,
         })
     })
@@ -555,6 +560,7 @@ private, own-address and --block-dest checks apply to IP literals only"
         Box::new(up)
     });
     let udp_on = o.udp && upstream.is_none();
+    let per_ip = o.per_ip(); // (before o.motd moves out)
     let ext = load_ext(udp_on, o.auth_file.as_deref(), &o.cert_keys, o.motd);
     let scheme = if tls.is_some() { "wss" } else { "ws" };
     let tls_note = match tls.as_deref() {
@@ -584,7 +590,6 @@ private, own-address and --block-dest checks apply to IP literals only"
         }
         format!(", policy: {}", p.join(", "))
     };
-    let per_ip = o.max_conns_per_ip > 0 || o.stream_rate.is_some() || o.upload_rate_ip.is_some(); // 60.25
     let clientip_note = match &clientip {
         None => String::new(),
         Some(c) => {
@@ -599,6 +604,9 @@ private, own-address and --block-dest checks apply to IP literals only"
                 }
                 if let Some((r, b)) = o.stream_rate {
                     s += &format!(" streams {r}/s burst {b}");
+                }
+                if let Some((r, b)) = o.conn_rate {
+                    s += &format!(" new conns {r}/s burst {b}"); // 60.40
                 }
                 if let Some((r, b)) = o.upload_rate_ip {
                     s += &format!(" upload {r} B/s burst {b}");
@@ -655,6 +663,7 @@ private, own-address and --block-dest checks apply to IP literals only"
         prio: o.prio,
         ext,
         credit_v2: o.credit_v2,
+        credit_pace: o.credit_pace,
         conn_gate: (o.max_conns > 0).then(|| Arc::new(net::ConnGate::new(o.max_conns))),
         max_streams_per_conn: o.max_streams_per_conn,
         policy: policy.map(Box::new),
@@ -670,6 +679,8 @@ private, own-address and --block-dest checks apply to IP literals only"
         proxy_tcp: o.proxy_tcp,     // 60.34
         proxy_unix: o.proxy_unix,
         proxy_from: o.proxy_from.clone().into(),
+        dest_rate: (o.dest_rate.is_some() || o.dest_rate_min.is_some())
+            .then(|| Box::new(destrate::DestTable::new(o.dest_rate, o.dest_rate_min))), // 60.39
     });
     if let Some(g) = &cfg.conn_gate {
         let _ = metrics::GATE.set(g.clone()); // 60.20 C3a conns_reserved in the metrics line
@@ -716,7 +727,14 @@ private, own-address and --block-dest checks apply to IP literals only"
             .unwrap();
     }
     let v2_note = if cfg.credit_v2 { ", upload credit v2" } else { "" }; // 20.30
-    say!(Info, "finalwisp listening on {scheme}://{}/ ({} threads, buffer {}{v2_note}{auth_note})", cfg.addr, cfg.threads, cfg.buffer);
+    let pace_note = if cfg.credit_pace { ", credit pace" } else { "" }; // 60.42
+    say!(
+        Info,
+        "finalwisp listening on {scheme}://{}/ ({} threads, buffer {}{v2_note}{pace_note}{auth_note})",
+        cfg.addr,
+        cfg.threads,
+        cfg.buffer
+    );
     if let Some(u) = &cfg.unix {
         // 60.31 C7 plain ws:// whatever the TCP listener speaks; who may connect = the file's mode and directory
         say!(
@@ -850,6 +868,16 @@ private, own-address and --block-dest checks apply to IP literals only"
     // 60.25 C10b (the per-IP form is in the per-ip part)
     let limits_note =
         limits_note + &o.upload_rate.map_or(String::new(), |(r, b)| format!(", upload cap: {r} B/s burst {b} per connection"));
+    // 60.39 per destination
+    let limits_note = limits_note
+        + &match (o.dest_rate, o.dest_rate_min) {
+            (None, None) => String::new(),
+            (s, m) => format!(
+                ", per-dest:{}{}",
+                s.map_or(String::new(), |(r, b)| format!(" streams {r}/s burst {b}")),
+                m.map_or(String::new(), |n| format!(" streams {n}/min"))
+            ),
+        };
     // 80.01 F7: kernel, cgroup layout and SO_BUF_LOCK (F2), so a support report shows them without guessing
     let cgroup = mem::cgroup_mode(&std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default());
     let buflock = match net::buf_lock_supported() {

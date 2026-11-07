@@ -112,7 +112,7 @@ impl Worker {
             if let Some(p) = self.pending.get_mut(&fd) {
                 p.peer = h.peer; // the line names the client over its limit, not the load balancer (review)
             }
-            self.pending_drop(fd, true, Why::Limit); // over --max-conns-per-ip for the header's source
+            self.pending_drop(fd, true, Why::Limit); // over --max-conns-per-ip / --conn-rate-per-ip for the header's source
             return;
         }
         if src.is_none() {

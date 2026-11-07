@@ -18,6 +18,9 @@ impl Worker {
         let behind = (now - self.next_sweep).as_millis() / p.as_millis();
         self.next_sweep += p * (behind as u32 + 1);
         self.sweep();
+        if self.dns_cache.capacity() != 0 {
+            self.dns_expire(now); // 60.41 (capacity: a table emptied by lookups still has slots to give back)
+        }
         if self.meter {
             self.meter_sweep(); // 60.25 C10b (after count_stalls in sweep: a new stall interval starts)
         }
@@ -25,18 +28,37 @@ impl Worker {
         if !self.pending.is_empty() {
             self.pending_sweep(); // 60.34 PROXY headers that did not come
         }
-        if let Some(t) = self.cfg.clientip.as_ref().and_then(|c| c.table.as_ref()) {
-            // 60.20 C3b SWEEP_SHARDS consecutive shards per sweep: refills live entries (no u32 ms wrap) and drops idle
-            // ones. Every awake worker walks all shards (review: a stride by the thread count left a sleeping worker's
-            // shards unswept); workers start spread out
-            let now = clientip::now_ms();
-            for _ in 0..clientip::SWEEP_SHARDS {
-                t.sweep(self.ip_sweep, now);
-                self.ip_sweep = (self.ip_sweep + 1) % clientip::SHARDS;
-            }
-            self.stats.ip_keys_max.set(t.keys() as u64);
+        if self.cfg.clientip.as_ref().is_some_and(|c| c.table.is_some()) || self.cfg.dest_rate.is_some() {
+            self.table_sweep();
         }
         true
+    }
+
+    /// 60.20 C3b / 60.39 the shared tables' part of the idle sweep (out of line and cold: idle_sweep is inlined into run).
+    /// SWEEP_SHARDS consecutive shards per sweep: refills live entries (no u32 ms wrap) and drops idle ones. Every awake
+    /// worker walks all shards (review: a stride by the thread count left a sleeping worker's shards unswept); workers
+    /// start spread out. The per-destination table (same shard count) shares the cursor.
+    #[cold]
+    #[inline(never)]
+    fn table_sweep(&mut self) {
+        let ip = self.cfg.clientip.as_ref().and_then(|c| c.table.as_ref());
+        let dest = self.cfg.dest_rate.as_deref();
+        let now = clientip::now_ms();
+        for _ in 0..clientip::SWEEP_SHARDS {
+            if let Some(t) = ip {
+                t.sweep(self.ip_sweep, now);
+            }
+            if let Some(d) = dest {
+                d.sweep(self.ip_sweep, metrics::now_ms()); // (u64 ms: no wrap)
+            }
+            self.ip_sweep = (self.ip_sweep + 1) % clientip::SHARDS;
+        }
+        if let Some(t) = ip {
+            self.stats.ip_keys_max.set(t.keys() as u64);
+        }
+        if let Some(d) = dest {
+            self.stats.dest_keys_max.set(d.keys() as u64);
+        }
     }
 
     pub(super) fn sweep(&mut self) {

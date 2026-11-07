@@ -4,6 +4,7 @@
 //! so there are no epoll_ctl calls on the hot path.
 use crate::clientip;
 use crate::credit;
+use crate::destrate;
 use crate::ext;
 use crate::http;
 use crate::mem;
@@ -30,6 +31,7 @@ mod input;
 mod ktls;
 mod levels;
 mod meter;
+mod pace;
 mod proxy;
 mod streamlog;
 mod sweep;
@@ -99,6 +101,9 @@ pub struct Config {
     /// 20.30 upload credit v2 (default on since 60.13; `--no-credit-v2` = off): a WS ping after CONTINUEs retires overwritten credit;
     /// level-0 grants are top-ups against an autotuned per-stream window (credit.rs). Off: base-2 unchanged.
     pub credit_v2: bool,
+    /// 60.42 --credit-pace (default off): no upload CONTINUE while the stream's target is parked on the client's output
+    /// (worker/pace.rs)
+    pub credit_pace: bool,
     /// 60.20 C3a `--max-conns` (None = off): the process-wide reservation, taken in accept_all, released in unload
     pub conn_gate: Option<Arc<net::ConnGate>>,
     /// 60.20 C3a `--max-streams-per-conn` (0 = off): open streams per Wisp connection (c.streams) before CONNECT gets 0x49
@@ -128,6 +133,9 @@ pub struct Config {
     pub proxy_tcp: bool,
     pub proxy_unix: bool,
     pub proxy_from: Box<[policy::Cidr]>,
+    /// 60.39 --stream-rate-per-dest / --stream-rate-per-dest-minute (None = off): the process-wide per-destination
+    /// table, taken once per stream in start_connect (or proxy_name for socks5h names)
+    pub dest_rate: Option<Box<crate::destrate::DestTable>>,
 }
 
 // ---- tuning (deliberate constants; benchmark before changing)
@@ -429,6 +437,7 @@ pub struct Worker {
     lwait: Vec<(u32, u32, u64)>,             // 60.25 C10b lpaused clients (index, gen, resume at now_ms64)
     lscan: u64,                              // 60.25 C10b next lwait scan (now_ms64)
     pending: HashMap<RawFd, proxy::Pending>, // 60.34 connections waiting for their PROXY header (empty when off)
+    cpace_st: Vec<pace::PaceSt>,             // 60.42 --credit-pace per target slot (empty when off: Target unchanged)
 }
 
 #[must_use]
@@ -563,6 +572,7 @@ impl Worker {
             lwait: Vec::new(),
             lscan: 0,
             pending: HashMap::new(),
+            cpace_st: Vec::new(),
         })
     }
 
@@ -583,10 +593,14 @@ impl Worker {
                 meter::tick_left(self.lscan)
             } else if !self.connecting.is_empty() || !self.lingering.is_empty() {
                 TIMER_TICK_MS
-            } else if self.clients.slots.len() > self.clients.free.len() || mem::cache_held() > 0 || !self.pending.is_empty() {
+            } else if self.clients.slots.len() > self.clients.free.len()
+                || mem::cache_held() > 0
+                || !self.pending.is_empty()
+                || self.dns_cache.capacity() != 0
+            {
                 // 20.11: wake for the idle sweep while clients exist (70.25 or the pool has a chunk mapped: remote frees
                 // reach only the owner, and empty chunks are unmapped by sweeps; 60.34 or PROXY headers are awaited:
-                // their timeout is the sweep)
+                // their timeout is the sweep; 60.41 or DNS cache entries wait to expire: at most DNS_TTL + a sweep)
                 self.next_sweep.saturating_duration_since(Instant::now()).as_millis().min(IDLE_SWEEP_MS as u128) as i32 + 1
             } else {
                 -1
@@ -725,6 +739,9 @@ impl Worker {
                             self.read_udp(idx);
                         } else {
                             self.read_target(idx);
+                            if self.cfg.credit_pace {
+                                self.pace_resume(idx, gen); // 60.42
+                            }
                         }
                     }
                 }

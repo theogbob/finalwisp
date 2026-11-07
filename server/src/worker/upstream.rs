@@ -97,6 +97,14 @@ impl Worker {
         if host.len() > 255 {
             return self.fail_target(ti, CLOSE_UNREACHABLE);
         }
+        if let Some(d) = self.cfg.dest_rate.as_deref() {
+            // 60.39 no local address: the name is the key (case folded; new_target removed one trailing dot), after the
+            // last check that can fail the stream (review: a 255-byte name failed 0x42 after its token)
+            let k = d.name_key(&lower, self.targets.at(ti).port);
+            if !self.dest_token(ti, d.take(k, metrics::now_ms())) {
+                return;
+            }
+        }
         let deadline = Instant::now() + self.cfg.connect_timeout;
         self.hs_put(
             ti,

@@ -18,7 +18,7 @@ pub(super) const CLOSE_INVALID: u8 = 0x41; // bad CONNECT (short, unknown type, 
 pub(super) const CLOSE_UNREACHABLE: u8 = 0x42; // no address / unreachable (net::connect_reason has the errno map)
 pub(super) const CLOSE_TIMEOUT: u8 = 0x43; // connect timeout
 pub(super) const CLOSE_BLOCKED: u8 = 0x48; // every address refused by the SSRF filter (net::Filter)
-pub(super) const CLOSE_THROTTLED: u8 = 0x49; // no admission (memory level 2+, stream limit), DNS in-flight limit, upload over its backlog cap
+pub(super) const CLOSE_THROTTLED: u8 = 0x49; // no admission (memory level 2+, stream limit), DNS in-flight limit, upload over its backlog cap, per-destination rate (60.39, after DNS)
 
 impl Worker {
     pub(super) fn on_message(&mut self, ci: u32, m: &[u8]) {

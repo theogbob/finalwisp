@@ -115,6 +115,9 @@ limits that you choose.
 | `--max-streams-per-conn N` | off | At most N streams on one connection. A CONNECT over it is refused with Wisp CLOSE `0x49` (throttled); the connection stays. |
 | `--max-conns-per-ip N` | off | At most N connections per client address (IPv4 address or IPv6 /64). A direct client over it is reset at accept; behind a trusted proxy it gets `429 Too Many Requests`. |
 | `--stream-rate-per-ip R[/B]` | off | New streams per second per client address, with a burst of B (default 2R). R is 1 to 1000000. Over it: CLOSE `0x49`. |
+| `--conn-rate-per-ip R[/B]` | off | New connections per second per client address, with a burst of B (default 2R). R is 1 to 1000000, B is 1 to 2000000. A direct client over it is reset at accept; behind a trusted proxy it gets `429 Too Many Requests`. "200 connections per 10 seconds" is `20/200`. |
+| `--stream-rate-per-dest R[/B]` | off | New streams per second to one destination (target IP and port), all clients together, with a burst of B (default 2R). R is 1 to 1000000. Over it: CLOSE `0x49`. See [per-destination limits](deployment.md#per-destination-limits). |
+| `--stream-rate-per-dest-minute N` | off | New streams per minute to one destination, all clients together (1 to 60000000). Over it: CLOSE `0x49`. |
 | `--download-rate RATE` | off | The most the server sends on one client connection per second, all its streams together. Uses kernel TCP pacing. Range 16K to 4095M bytes per second. Also turns off splice. |
 | `--upload-rate-per-stream RATE` | off | The most the server sends to one TCP target per second, per stream. Uses kernel TCP pacing. Range 16K to 4095M. |
 | `--upload-rate R[/B]` | off | The most finalwisp reads from one client connection per second (all its TCP and UDP streams). R is 8K to 1T. Burst B defaults to max(R, 16K) and must be at least 16K and at least R/10. Over the limit the client is not read until it is under again; nothing is dropped. |
@@ -180,11 +183,12 @@ line it is visible to other users of the host. Logs show it as `scheme://***@hos
 
 | option | default | what it does |
 |---|---|---|
-| `--dns-threads N` | `16` | Resolver threads. Identical names looked up at the same time share one lookup. `0` counts as 1. |
+| `--dns-threads N` | `16` | Resolver threads (both resolvers). Each thread runs one lookup at a time, so at most N new names are looked up at once: with a 20 ms name server, 16 threads answer about 750 new names per second and further lookups wait. Identical names looked up at the same time share one lookup. `0` counts as 1. |
 | `--dns-own` | off | Use the built-in resolver instead of the system's (`getaddrinfo`). It gives up on a dead name server after 1-2 s instead of about 10 s. |
 | `--dns-server IP[:PORT]` | from `/etc/resolv.conf` | Name servers for the built-in resolver. At most 3, repeatable. Implies `--dns-own`. IPv6: `[addr]:port`. |
 
-Both resolvers read `/etc/hosts` first. Every name is looked up as a full name: the `search` and `domain` lines of
+Each worker thread caches answers for 30 s (names with no address: 5 s); expired entries are dropped within about
+2 s, also on a worker with no clients. Both resolvers read `/etc/hosts` first. Every name is looked up as a full name: the `search` and `domain` lines of
 `/etc/resolv.conf` are not applied, so clients must send full names (`intranet.corp.example`, not `intranet`).
 
 ## Logging and metrics
@@ -201,12 +205,13 @@ Log formats and the metric names are in the [deployment guide](deployment.md#log
 
 ## Performance switches
 
-Both are off by default.
+All are off by default.
 
 | option | default | what it does |
 |---|---|---|
 | `--balance` | off | Hand each new connection to the least busy thread instead of letting the kernel choose. Helps a few busy long-lived connections on big machines (4-11 % on 36-72 threads) and costs 1-7 % when many short connections come and go. |
 | `--tcpmem-adapt` | off | When the host is near its kernel TCP memory limit (`net.ipv4.tcp_mem`), shrink the buffers of this server's sockets to remote peers. For a small VPS that runs out of TCP memory under many fast streams. Needs cgroup v2 socket accounting, Linux 5.15 or later, the host network namespace, credit v2 and the memory budget; the startup line says why it is off otherwise. |
+| `--no-credit-pace` | credit pace on | Turn off credit pacing. By default a stream gets no new upload credit while its download waits on the client (the client reads slower than the target answers), so echo-like traffic and other full-duplex bulk transfers cannot fill the kernel socket buffers faster than the client reads. Measured (60.42, echo 10 x 10, pacing vs v1.0.0): 1.06-1.10x the throughput on a laptop and 24- and 72-thread servers and 1.7x on a 2-core VPS; server memory 4-10x lower (1.3x on a 2-core VPS with small socket buffer limits, which stays in host TCP memory pressure with 100 echo streams in both builds; `--buffer 32` kept it out in most runs there); host TCP memory up to 5x lower on the big machines but only about 10% lower on 2-core VPSes at 100 streams. On the VPSes it takes most echo cases with fewer streams out of host TCP memory pressure. Cost: a single echo stream on one 2-core VPS was about 2-3% slower (no change or faster on the other machines). Uploads, downloads and request/response traffic are not affected. Turn it off only to compare or roll back. |
 
 ## Advanced and diagnostic
 

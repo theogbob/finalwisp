@@ -28,6 +28,7 @@ fn dirty_client_closed_in_same_turn_is_skipped() {
         prio: true,
         ext: ext::Ext::default(),
         credit_v2: false,
+        credit_pace: false,
         conn_gate: None,
         max_streams_per_conn: 0,
         policy: None,
@@ -42,6 +43,7 @@ fn dirty_client_closed_in_same_turn_is_skipped() {
         proxy_tcp: false,
         proxy_unix: false,
         proxy_from: Box::new([]),
+        dest_rate: None,
     });
     let (tx, _rx) = mpsc::channel();
     let mut w = Worker::new(cfg, tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
@@ -113,6 +115,7 @@ fn stalled_partial_frame_is_shed_at_level_2() {
         prio: true,
         ext: ext::Ext::default(),
         credit_v2: false,
+        credit_pace: false,
         conn_gate: None,
         max_streams_per_conn: 0,
         policy: None,
@@ -127,6 +130,7 @@ fn stalled_partial_frame_is_shed_at_level_2() {
         proxy_tcp: false,
         proxy_unix: false,
         proxy_from: Box::new([]),
+        dest_rate: None,
     });
     let (tx, _rx) = mpsc::channel();
     let mut w = Worker::new(cfg, tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
@@ -240,6 +244,7 @@ fn early_dns_answer_and_late_family() {
         prio: true,
         ext: ext::Ext::default(),
         credit_v2: false,
+        credit_pace: false,
         conn_gate: None,
         max_streams_per_conn: 0,
         policy: None,
@@ -254,6 +259,7 @@ fn early_dns_answer_and_late_family() {
         proxy_tcp: false,
         proxy_unix: false,
         proxy_from: Box::new([]),
+        dest_rate: None,
     });
     let (tx, rx) = mpsc::channel();
     let mut w = Worker::new(cfg, tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
@@ -411,6 +417,7 @@ fn credit_v2_ping_after_continue_pong_retires_and_grants() {
         prio: true,
         ext: ext::Ext::default(),
         credit_v2: true,
+        credit_pace: false,
         conn_gate: None,
         max_streams_per_conn: 0,
         policy: None,
@@ -425,6 +432,7 @@ fn credit_v2_ping_after_continue_pong_retires_and_grants() {
         proxy_tcp: false,
         proxy_unix: false,
         proxy_from: Box::new([]),
+        dest_rate: None,
     });
     let (tx, _rx) = mpsc::channel();
     let mut w = Worker::new(cfg, tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
@@ -552,6 +560,7 @@ fn credit_v2_state_is_lazy() {
         prio: true,
         ext: ext::Ext::default(),
         credit_v2: true,
+        credit_pace: false,
         conn_gate: None,
         max_streams_per_conn: 0,
         policy: None,
@@ -566,6 +575,7 @@ fn credit_v2_state_is_lazy() {
         proxy_tcp: false,
         proxy_unix: false,
         proxy_from: Box::new([]),
+        dest_rate: None,
     });
     let (tx, _rx) = mpsc::channel();
     let mut w = Worker::new(cfg, tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
@@ -701,6 +711,7 @@ fn starve_retry_keeps_flush_order() {
             prio: true,
             ext: ext::Ext::default(),
             credit_v2: false,
+            credit_pace: false,
             conn_gate: None,
             max_streams_per_conn: 0,
             policy: None,
@@ -715,6 +726,7 @@ fn starve_retry_keeps_flush_order() {
             proxy_tcp: false,
             proxy_unix: false,
             proxy_from: Box::new([]),
+            dest_rate: None,
         });
         let (tx, _rx) = mpsc::channel();
         let mut w = Worker::new(cfg, tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
@@ -847,6 +859,7 @@ fn starved_client_reads_a_bounded_slice() {
         prio: true,
         ext: ext::Ext::default(),
         credit_v2: false,
+        credit_pace: false,
         conn_gate: None,
         max_streams_per_conn: 0,
         policy: None,
@@ -861,6 +874,7 @@ fn starved_client_reads_a_bounded_slice() {
         proxy_tcp: false,
         proxy_unix: false,
         proxy_from: Box::new([]),
+        dest_rate: None,
     });
     let (tx, _rx) = mpsc::channel();
     let mut w = Worker::new(cfg, tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
@@ -1023,6 +1037,7 @@ fn tcp_level_caps_remote_sockets_only() {
         prio: true,
         ext: ext::Ext::default(),
         credit_v2: false,
+        credit_pace: false,
         conn_gate: None,
         max_streams_per_conn: 0,
         policy: None,
@@ -1037,6 +1052,7 @@ fn tcp_level_caps_remote_sockets_only() {
         proxy_tcp: false,
         proxy_unix: false,
         proxy_from: Box::new([]),
+        dest_rate: None,
     });
     let (tx, _rx) = mpsc::channel();
     let mut w = Worker::new(cfg, tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
@@ -1131,6 +1147,7 @@ fn up_rig(n: u32, small: bool) -> (super::Worker, Vec<(u32, u32, std::net::TcpSt
         prio: true,
         ext: ext::Ext::default(),
         credit_v2: false,
+        credit_pace: false,
         conn_gate: None,
         max_streams_per_conn: 0,
         policy: None,
@@ -1145,6 +1162,7 @@ fn up_rig(n: u32, small: bool) -> (super::Worker, Vec<(u32, u32, std::net::TcpSt
         proxy_tcp: false,
         proxy_unix: false,
         proxy_from: Box::new([]),
+        dest_rate: None,
     });
     let (tx, _rx) = mpsc::channel();
     let mut w = Worker::new(cfg, tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
@@ -1568,6 +1586,7 @@ fn honest_upload_over_pend_hard_pauses_instead_of_close() {
         prio: true,
         ext: ext::Ext::default(),
         credit_v2: false,
+        credit_pace: false,
         conn_gate: None,
         max_streams_per_conn: 0,
         policy: None,
@@ -1582,6 +1601,7 @@ fn honest_upload_over_pend_hard_pauses_instead_of_close() {
         proxy_tcp: false,
         proxy_unix: false,
         proxy_from: Box::new([]),
+        dest_rate: None,
     });
     let (tx, _rx) = mpsc::channel();
     let mut w = Worker::new(cfg, tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
@@ -1752,6 +1772,7 @@ fn pool_is_small_at_level_2() {
             prio: true,
             ext: ext::Ext::default(),
             credit_v2: false,
+            credit_pace: false,
             conn_gate: None,
             max_streams_per_conn: 0,
             policy: None,
@@ -1766,6 +1787,7 @@ fn pool_is_small_at_level_2() {
             proxy_tcp: false,
             proxy_unix: false,
             proxy_from: Box::new([]),
+            dest_rate: None,
         });
         let (tx, rx) = mpsc::channel();
         std::mem::forget(rx);
@@ -1993,6 +2015,7 @@ fn conn_gate_reserve_and_release_on_every_exit() {
             prio: true,
             ext: ext::Ext::default(),
             credit_v2: false,
+            credit_pace: false,
             conn_gate: Some(gate.clone()),
             max_streams_per_conn: 0,
             policy: None,
@@ -2007,6 +2030,7 @@ fn conn_gate_reserve_and_release_on_every_exit() {
             proxy_tcp: false,
             proxy_unix: false,
             proxy_from: Box::new([]),
+            dest_rate: None,
         })
     };
     let (tx, _rx) = mpsc::channel();
@@ -2107,6 +2131,7 @@ fn streams_per_conn_cap_and_every_stream_end_frees_a_slot() {
         prio: true,
         ext: ext::Ext::default(),
         credit_v2: false,
+        credit_pace: false,
         conn_gate: None,
         max_streams_per_conn: 2,
         policy: None,
@@ -2121,6 +2146,7 @@ fn streams_per_conn_cap_and_every_stream_end_frees_a_slot() {
         proxy_tcp: false,
         proxy_unix: false,
         proxy_from: Box::new([]),
+        dest_rate: None,
     });
     let (tx, rx) = mpsc::channel();
     let mut w = Worker::new(cfg, tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
@@ -2234,6 +2260,7 @@ fn conn_gate_follows_a_balance_hand_over() {
         prio: true,
         ext: ext::Ext::default(),
         credit_v2: false,
+        credit_pace: false,
         conn_gate: Some(gate.clone()),
         max_streams_per_conn: 0,
         policy: None,
@@ -2248,6 +2275,7 @@ fn conn_gate_follows_a_balance_hand_over() {
         proxy_tcp: false,
         proxy_unix: false,
         proxy_from: Box::new([]),
+        dest_rate: None,
     });
     let peers = Arc::new(vec![Inbox::new(), Inbox::new()]);
     let (tx, _rx) = mpsc::channel();
@@ -2310,6 +2338,7 @@ fn policy_refuses_before_the_cap_and_dns_and_filters_late_answers() {
         prio: true,
         ext: ext::Ext::default(),
         credit_v2: false,
+        credit_pace: false,
         conn_gate: None,
         max_streams_per_conn: 1,
         policy: policy::Policy::new(&rules).map(Box::new),
@@ -2324,6 +2353,7 @@ fn policy_refuses_before_the_cap_and_dns_and_filters_late_answers() {
         proxy_tcp: false,
         proxy_unix: false,
         proxy_from: Box::new([]),
+        dest_rate: None,
     });
     let (tx, rx) = mpsc::channel();
     let mut w = Worker::new(cfg, tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
@@ -2482,6 +2512,7 @@ fn clientip_cfg(
         prio: true,
         ext: ext::Ext::default(),
         credit_v2: false,
+        credit_pace: false,
         conn_gate: None,
         max_streams_per_conn: 0,
         policy: None,
@@ -2501,6 +2532,7 @@ fn clientip_cfg(
         proxy_tcp: false,
         proxy_unix: false,
         proxy_from: Box::new([]),
+        dest_rate: None,
     })
 }
 
@@ -2942,6 +2974,103 @@ fn trusted_proxy_client_charged_at_upgrade_and_spoofing_ignored() {
     std::mem::forget(w);
 }
 
+/// 60.40 --conn-rate-per-ip: a direct peer over its rate is reset at accept (refuse_ip_connrate, not refuse_ip_conns),
+/// closing its connections does not give its tokens back, and behind a trusted proxy the header's client over its rate
+/// gets 429 after the HTTP request (the proxy itself is not charged).
+#[test]
+fn conn_rate_per_ip_at_accept_and_at_upgrade() {
+    use super::*;
+    use std::io::{Read as _, Write as _};
+    use std::os::fd::FromRawFd;
+    let rated = |trusted: &[&str]| {
+        let mut cfg = clientip_cfg(trusted, 0, false, 1, None);
+        // 1 per 1000 s (none comes back during the test), burst 2
+        Arc::get_mut(&mut cfg).unwrap().clientip.as_mut().unwrap().table =
+            Some(clientip::IpTable::with_rates(None, None, Some((1e-6, 2.0))));
+        cfg
+    };
+    let reset = |p: &mut std::net::TcpStream| {
+        p.set_read_timeout(Some(Duration::from_millis(300))).unwrap();
+        matches!(p.read(&mut [0u8; 1]), Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset)
+    };
+    // direct peers
+    let cfg = rated(&[]);
+    let (tx, _rx) = mpsc::channel();
+    let mut w = Worker::new(cfg.clone(), tx.clone(), 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
+    let tab = cfg.clientip.as_ref().unwrap().table.as_ref().unwrap();
+    let port = unsafe { std::net::TcpListener::from_raw_fd(libc::dup(w.lfd)) }.local_addr().unwrap().port();
+    let k1 = clientip::key("127.0.0.1".parse().unwrap());
+    let mut peers: Vec<_> = (0..3).map(|_| connect_from([127, 0, 0, 1], port)).collect();
+    peers.push(connect_from([127, 0, 0, 2], port));
+    std::thread::sleep(Duration::from_millis(20));
+    w.accept_all();
+    let s = &w.stats;
+    assert_eq!((tab.conns(k1), s.refuse_ip_connrate.get(), s.refuse_ip_conns.get(), w.inbox.load.load(Relaxed)), (2, 1, 0, 3));
+    assert_eq!(peers.iter_mut().map(reset).filter(|&r| r).count(), 1, "the third from 127.0.0.1 got an RST");
+    w.close_client(0, Why::ClientClose);
+    w.close_client(1, Why::ClientClose);
+    w.reap_dead();
+    assert_eq!((tab.conns(k1), tab.keys()), (0, 2), "127.0.0.1's drained bucket is kept with no connection");
+    let mut again = connect_from([127, 0, 0, 1], port);
+    std::thread::sleep(Duration::from_millis(20));
+    w.accept_all();
+    assert!(reset(&mut again), "reconnecting does not reset the bucket");
+    assert_eq!(w.stats.refuse_ip_connrate.get(), 2);
+    w.shutdown_step(net::STOP_CLOSE);
+    w.reap_dead();
+    assert_eq!((tab.conns(k1), w.inbox.load.load(Relaxed)), (0, 0));
+    for fd in [w.ep, w.inbox.efd] {
+        unsafe { libc::close(fd) };
+    }
+    drop((peers, again));
+    std::mem::forget(w);
+    // behind a trusted proxy: the header's client, after the HTTP request
+    let cfg = rated(&["127.0.0.1"]);
+    let mut w = Worker::new(cfg.clone(), tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
+    let tab = cfg.clientip.as_ref().unwrap().table.as_ref().unwrap();
+    let port = unsafe { std::net::TcpListener::from_raw_fd(libc::dup(w.lfd)) }.local_addr().unwrap().port();
+    let up = "GET / HTTP/1.1\r\nHost: x\r\nX-Forwarded-For: 9.9.9.9\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
+              Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n";
+    let mut socks = Vec::new();
+    for _ in 0..3 {
+        let mut s = connect_from([127, 0, 0, 1], port);
+        s.write_all(up.as_bytes()).unwrap();
+        socks.push(s);
+    }
+    std::thread::sleep(Duration::from_millis(20));
+    w.accept_all();
+    assert_eq!((tab.keys(), w.inbox.load.load(Relaxed)), (0, 3), "the proxy is not charged at accept");
+    for i in 0..3u32 {
+        w.clients.at(i).readable = true;
+        w.read_client(i);
+    }
+    let k9 = clientip::key("9.9.9.9".parse().unwrap());
+    assert_eq!((tab.conns(k9), w.stats.refuse_ip_connrate.get(), w.stats.refuse_ip_conns.get()), (2, 1, 0));
+    let mut got = w.clients.at(2).obuf.clone(); // queued, or already written to the socket
+    let mut b = [0u8; 256];
+    socks[2].set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+    if let Ok(n) = socks[2].read(&mut b) {
+        got.extend_from_slice(&b[..n]);
+    }
+    assert!(got.starts_with(b"HTTP/1.1 429"), "{:?}", String::from_utf8_lossy(&got));
+    w.shutdown_step(net::STOP_CLOSE);
+    for _ in 0..5 {
+        w.reap_dead();
+    }
+    for i in 0..3u32 {
+        if w.clients.get(i, w.clients.gen(i)).is_some_and(|c| !c.dead) {
+            w.close_client(i, Why::ServerClose);
+        }
+    }
+    w.reap_dead();
+    assert_eq!((tab.conns(k9), tab.keys(), w.inbox.load.load(Relaxed)), (0, 1, 0), "released; the drained bucket stays");
+    for fd in [w.ep, w.inbox.efd] {
+        unsafe { libc::close(fd) };
+    }
+    drop(socks);
+    std::mem::forget(w);
+}
+
 /// 60.18 #16 one cache / in-flight key per name: `cached.test.` hits the entry of `cached.test`; a DNS request carries the
 /// name without the trailing dot (the pool makes it absolute); `.` (the root) fails without a lookup.
 #[test]
@@ -2961,6 +3090,91 @@ fn trailing_dot_shares_the_dns_cache_key() {
     assert!(w.new_target(0, 5, ".".into(), 80, false, false).is_none());
     assert!(w.new_target(0, 7, "cached.test..".into(), 80, false, false).is_none(), "two dots: refused, not cached.test");
     assert_eq!((w.stats.dns_miss.get(), w.stats.dns_hit.get()), (1, 1), "the root and `..`: no lookup, no cache hit");
+    for fd in [w.ep, w.lfd, w.inbox.efd] {
+        unsafe { libc::close(fd) };
+    }
+    std::mem::forget(w);
+}
+
+/// 60.41 the idle sweep drops cache entries past their TTL (NX 5 s, addresses 30 s), keeps the fresh ones, and gives the
+/// table back when nothing is left; the shrink also follows a big expiry.
+#[test]
+fn idle_sweep_expires_dns_cache_entries() {
+    use super::*;
+    let (tx, _rx) = mpsc::channel();
+    let mut w = Worker::new(clientip_cfg(&[], 0, false, 1, None), tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
+    let ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+    let t0 = Instant::now();
+    w.dns_cache.insert("nx.test".into(), (vec![], t0));
+    w.dns_cache.insert("pos.test".into(), (vec![ip], t0));
+    w.dns_expire(t0 + DNS_NEG_TTL - Duration::from_millis(1));
+    assert_eq!(w.dns_cache.len(), 2, "both still fresh");
+    w.dns_expire(t0 + DNS_NEG_TTL);
+    assert!(!w.dns_cache.contains_key("nx.test") && w.dns_cache.contains_key("pos.test"), "NX gone after 5 s, positive kept");
+    w.dns_expire(t0 + DNS_TTL);
+    assert!(w.dns_cache.is_empty() && w.dns_cache.capacity() == 0, "positive gone after 30 s, table freed");
+    // a full table (the 4096 cap) of NX names: one sweep empties it; a few fresh names keep a small table
+    for i in 0..4097 {
+        w.dns_cache.insert(format!("n{i}.test"), (vec![], t0));
+    }
+    let t1 = t0 + Duration::from_secs(10);
+    for i in 0..10 {
+        w.dns_cache.insert(format!("f{i}.test"), (vec![], t1));
+    }
+    let big = w.dns_cache.capacity();
+    w.dns_expire(t1 + Duration::from_secs(1));
+    assert_eq!(w.dns_cache.len(), 10);
+    assert!(w.dns_cache.capacity() < big / 16, "shrunk: {} of {big}", w.dns_cache.capacity());
+    // wired into idle_sweep: an NX entry 6 s old goes at the next due sweep, and so does the table of a map emptied
+    // by lookups (remove + a refused re-resolve): capacity, not len, keeps the sweep (and the idle wake) on
+    w.dns_cache.clear();
+    assert!(w.dns_cache.is_empty() && w.dns_cache.capacity() > 0);
+    w.next_sweep = Instant::now();
+    assert!(w.idle_sweep());
+    assert_eq!(w.dns_cache.capacity(), 0, "an empty map with slots is given back");
+    if let Some(old) = Instant::now().checked_sub(Duration::from_secs(6)) {
+        w.dns_cache.insert("old-nx.test".into(), (vec![], old));
+        w.next_sweep = Instant::now();
+        assert!(w.idle_sweep());
+        assert!(w.dns_cache.is_empty() && w.dns_cache.capacity() == 0, "expired by the idle sweep");
+    }
+    for fd in [w.ep, w.lfd, w.inbox.efd] {
+        unsafe { libc::close(fd) };
+    }
+    std::mem::forget(w);
+}
+
+/// 60.41 measurement (ignored; run on a timing box: `--ignored --nocapture dns_expire_cost`): one expiry sweep over a
+/// full table (4097 NX entries with 253-byte names), all expired / none expired.
+#[test]
+#[ignore]
+fn dns_expire_cost() {
+    use super::*;
+    let (tx, _rx) = mpsc::channel();
+    let mut w = Worker::new(clientip_cfg(&[], 0, false, 1, None), tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
+    for len in [21usize, 253] {
+        let (mut all, mut none) = (Vec::new(), Vec::new());
+        for _ in 0..21 {
+            let t0 = Instant::now();
+            for i in 0..4097 {
+                let mut n = format!("{i:08}.");
+                n.extend(std::iter::repeat_n('x', len - n.len()));
+                w.dns_cache.insert(n, (vec![], t0));
+            }
+            let s = Instant::now();
+            w.dns_expire(t0); // none expired
+            none.push(s.elapsed().as_micros());
+            let s = Instant::now();
+            w.dns_expire(t0 + DNS_NEG_TTL); // all expired
+            all.push(s.elapsed().as_micros());
+        }
+        all.sort();
+        none.sort();
+        println!(
+            "dns_expire 4097 x {len} B: none expired median {} us max {}; all expired median {} us max {}",
+            none[10], none[20], all[10], all[20]
+        );
+    }
     for fd in [w.ep, w.lfd, w.inbox.efd] {
         unsafe { libc::close(fd) };
     }
@@ -3221,6 +3435,7 @@ fn upstream_side_entry_released_on_every_exit() {
         prio: true,
         ext: ext::Ext::default(),
         credit_v2: false,
+        credit_pace: false,
         conn_gate: None,
         max_streams_per_conn: 0,
         policy: None,
@@ -3235,6 +3450,7 @@ fn upstream_side_entry_released_on_every_exit() {
         proxy_tcp: false,
         proxy_unix: false,
         proxy_from: Box::new([]),
+        dest_rate: None,
     });
     let (tx, _rx) = mpsc::channel();
     let mut w = Worker::new(cfg, tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
@@ -3384,6 +3600,7 @@ fn upload_rate_pauses_and_resumes() {
         prio: true,
         ext: ext::Ext::default(),
         credit_v2: false,
+        credit_pace: false,
         conn_gate: None,
         max_streams_per_conn: 0,
         policy: None,
@@ -3399,6 +3616,7 @@ fn upload_rate_pauses_and_resumes() {
         proxy_tcp: false,
         proxy_unix: false,
         proxy_from: Box::new([]),
+        dest_rate: None,
     });
     let (tx, _rx) = mpsc::channel();
     let mut w = Worker::new(cfg, tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
@@ -3742,4 +3960,392 @@ fn stream_log_lines_name_the_reason() {
     assert!(r15.contains(r#" host="x\" why=fake" port=80 "#) && r15.ends_with(" reason=0x41 why=invalid"), "{r15}"); // (a space: not a valid host)
     let sup = sup.unwrap() as usize;
     assert!((20..=28).contains(&refused.len()) && refused.len() + sup == 28, "{} lines + {sup} suppressed", refused.len());
+}
+
+/// 60.39 per-destination limits: a Config with `dest` and, if given, an upstream proxy (socks5h: names go to the proxy)
+fn dest_cfg(dest: crate::destrate::DestTable, upstream: Option<crate::upstream::Upstream>) -> std::sync::Arc<super::Config> {
+    use super::*;
+    Arc::new(Config {
+        addr: "127.0.0.1:0".parse().unwrap(),
+        threads: 1,
+        buffer: 128,
+        filter: net::Filter::new(true, false),
+        connect_timeout: Duration::from_secs(10),
+        dns_own: false,
+        abort_close: true,
+        splice: true,
+        balance: false,
+        tfo: false,
+        tls: None,
+        udp: true,
+        tls_rekey: 0,
+        notsent_lowat: 0,
+        adapt_lowat: 0,
+        keepalive: true,
+        prio: true,
+        ext: ext::Ext::default(),
+        credit_v2: false,
+        conn_gate: None,
+        max_streams_per_conn: 0,
+        policy: None,
+        clientip: None,
+        log_conns: false,
+        log_streams: true,
+        want_peer: true, // (--log-streams wants the peer)
+        pace: net::Pacing::default(),
+        unix: None,
+        upstream: upstream.map(Box::new),
+        upload_rate: None,
+        proxy_tcp: false,
+        proxy_unix: false,
+        proxy_from: Box::new([]),
+        dest_rate: Some(Box::new(dest)),
+        credit_pace: false,
+    })
+}
+
+/// 60.39 one open Wisp client on worker `w` (slot 0): (peer socket, send = write + feed)
+fn dest_client(w: &mut super::Worker) -> std::net::TcpStream {
+    use super::*;
+    use std::io::Write as _;
+    use std::os::fd::IntoRawFd;
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut peer = std::net::TcpStream::connect(l.local_addr().unwrap()).unwrap();
+    let (s, _) = l.accept().unwrap();
+    s.set_nonblocking(true).unwrap();
+    w.inbox.load.fetch_add(1, Relaxed);
+    w.adopt(net::Handoff::bare(s.into_raw_fd()));
+    peer.write_all(b"GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n").unwrap();
+    std::thread::sleep(Duration::from_millis(10));
+    dest_feed(w);
+    assert!(w.clients.at(0).state == CState::Open);
+    peer
+}
+
+fn dest_feed(w: &mut super::Worker) {
+    use super::*;
+    for _ in 0..100 {
+        w.clients.at(0).readable = true;
+        w.read_client(0);
+        if w.clients.get(0, w.clients.gen(0)).is_none_or(|c| net::inq(c.fd) == 0) {
+            break;
+        }
+    }
+}
+
+/// 60.39 one CONNECT with a host too long for dest_send's 7-bit frame length (16-bit WebSocket length)
+fn dest_send_long(w: &mut super::Worker, peer: &mut std::net::TcpStream, sid: u32, host: &str) {
+    use super::*;
+    use std::io::Write as _;
+    let mut p = vec![0x01];
+    p.extend(sid.to_le_bytes());
+    p.push(1);
+    p.extend(443u16.to_le_bytes());
+    p.extend(host.as_bytes());
+    let mut f = vec![0x82, 0x80 | 126];
+    f.extend((p.len() as u16).to_be_bytes());
+    f.extend([0, 0, 0, 0]); // masked with a zero key
+    f.extend(p);
+    peer.write_all(&f).unwrap();
+    std::thread::sleep(Duration::from_millis(5));
+    dest_feed(w);
+}
+
+/// 60.39 the stream lines written so far (reap_dead flushes the closed streams' lines to the outbox)
+fn dest_log(w: &mut super::Worker) -> String {
+    w.reap_dead();
+    let mut all = Vec::new();
+    if let Some(o) = &w.outbox {
+        o.take(&mut all);
+    }
+    String::from_utf8(all).unwrap()
+}
+
+fn dest_send(w: &mut super::Worker, peer: &mut std::net::TcpStream, frames: &[(u32, u8, u16, &str)]) {
+    use super::*;
+    use std::io::Write as _;
+    let mut bytes = Vec::new();
+    for &(sid, ty, port, host) in frames {
+        let mut p = vec![0x01];
+        p.extend(sid.to_le_bytes());
+        p.push(ty);
+        p.extend(port.to_le_bytes());
+        p.extend(host.as_bytes());
+        bytes.extend([0x82, 0x80 | p.len() as u8, 0, 0, 0, 0]); // masked with a zero key
+        bytes.extend(p);
+    }
+    peer.write_all(&bytes).unwrap();
+    std::thread::sleep(Duration::from_millis(5));
+    dest_feed(w);
+    w.run_deferred();
+}
+
+#[test]
+fn dest_rate_keys_on_the_resolved_address_and_refuses_with_0x49() {
+    use super::*;
+    let up = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let uport = up.local_addr().unwrap().port();
+    let other = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let oport = other.local_addr().unwrap().port();
+    // burst 3 per second (refill 1/s: nothing comes back unless the test stalls for a second), and a minute bucket of 4
+    let cfg = dest_cfg(crate::destrate::DestTable::new(Some((1, 3)), Some(4)), None);
+    let (tx, rx) = mpsc::channel();
+    let mut w = Worker::new(cfg, tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
+    let mut peer = dest_client(&mut w);
+    let st = w.stats.clone();
+    dest_send(&mut w, &mut peer, &[(1, 1, uport, "127.0.0.1"), (2, 1, uport, "127.0.0.1"), (3, 2, uport, "127.0.0.1")]);
+    assert_eq!((st.refuse_dest_rate.get(), st.close[0x49].get()), (0, 0), "burst 3 (a UDP stream counts too)");
+    dest_send(&mut w, &mut peer, &[(4, 1, uport, "::ffff:127.0.0.1"), (5, 1, oport, "127.0.0.1")]);
+    assert_eq!(
+        (st.refuse_dest_rate.get(), st.close[0x49].get()),
+        (1, 1),
+        "the 4th to 127.0.0.1:uport (mapped = IPv4); another port is its own key"
+    );
+    assert!(!w.clients.at(0).streams.contains_key(&4) && w.clients.at(0).streams.contains_key(&5));
+    // a name that resolves to the same address shares the key: refused after its DNS answer (one lookup, then 0x49)
+    dest_send(&mut w, &mut peer, &[(6, 1, uport, "site.test")]);
+    let req = rx.try_recv().unwrap();
+    let a1: IpAddr = "127.0.0.1".parse().unwrap();
+    w.inbox.q.lock().unwrap().push(net::DnsResp { host: req.host, token: req.token, addrs: vec![a1], nx: false, more: false });
+    w.inbox_ready();
+    assert_eq!(st.refuse_dest_rate.get(), 2);
+    assert!(!w.clients.at(0).streams.contains_key(&6));
+    assert!(!w.clients.at(0).dead && !w.clients.at(0).closing, "a refused stream, not a refused connection");
+    // the stream log names the rule
+    let lines = dest_log(&mut w);
+    assert_eq!(lines.lines().filter(|l| l.ends_with(" reason=0x49 why=limit rule=dest_rate")).count(), 2, "{lines}");
+    for fd in [w.ep, w.lfd, w.inbox.efd] {
+        unsafe { libc::close(fd) };
+    }
+    std::mem::forget(w);
+}
+
+#[test]
+fn dest_rate_minute_refusal_and_socks5h_names() {
+    use super::*;
+    let prox = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let up = crate::upstream::parse_url(&format!("socks5h://127.0.0.1:{}", prox.local_addr().unwrap().port())).unwrap();
+    up.addrs.publish(Ok(vec!["127.0.0.1".parse().unwrap()]), 0);
+    assert!(up.remote_dns);
+    // minute bucket only: 2 per name and port
+    let cfg = dest_cfg(crate::destrate::DestTable::new(None, Some(2)), Some(up));
+    let (tx, rx) = mpsc::channel();
+    let mut w = Worker::new(cfg, tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
+    let mut peer = dest_client(&mut w);
+    let st = w.stats.clone();
+    dest_send(&mut w, &mut peer, &[(1, 1, 443, "Site.Test"), (2, 1, 443, "site.test."), (3, 1, 443, "SITE.test")]);
+    assert!(rx.try_recv().is_err(), "socks5h: no local lookup");
+    assert_eq!((st.refuse_dest_rate.get(), st.close[0x49].get()), (1, 1), "case and one trailing dot fold into one key");
+    assert!(w.clients.at(0).streams.contains_key(&2) && !w.clients.at(0).streams.contains_key(&3));
+    dest_send(&mut w, &mut peer, &[(4, 1, 443, "other.test"), (5, 1, 80, "site.test")]);
+    assert_eq!(st.refuse_dest_rate.get(), 1, "another name, another port: other keys");
+    let lines = dest_log(&mut w);
+    assert!(lines.lines().any(|l| l.ends_with(" reason=0x49 why=limit rule=dest_rate_minute")), "{lines}");
+    // review: a name the proxy cannot take (over 255 bytes with its trailing dot: 0x42) spends no token
+    let long = "a".repeat(63) + "." + &"b".repeat(63) + "." + &"c".repeat(63) + "." + &"d".repeat(63); // 255 bytes
+    let keys = w.cfg.dest_rate.as_ref().unwrap().keys();
+    dest_send_long(&mut w, &mut peer, 6, &long);
+    assert_eq!((w.cfg.dest_rate.as_ref().unwrap().keys(), st.close[0x42].get()), (keys, 1), "0x42, no new key");
+    for fd in [w.ep, w.lfd, w.inbox.efd] {
+        unsafe { libc::close(fd) };
+    }
+    std::mem::forget(w);
+}
+
+#[test]
+fn dest_rate_charges_a_udp_stream_once_across_early_and_final_answers() {
+    use super::*;
+    // review: an early answer whose UDP connects all fail leaves the stream Resolving without addresses; the final
+    // answer goes through start_connect again and must not take a second token. 255.255.255.255 is allowed here
+    // (--allow-dest) so that its UDP connect fails at once (EACCES without SO_BROADCAST).
+    let mut c = Arc::into_inner(dest_cfg(crate::destrate::DestTable::new(Some((1, 5)), None), None)).unwrap();
+    c.filter = net::Filter { allow_dests: vec![policy::Cidr::parse("255.255.255.255").unwrap()].into(), ..net::Filter::new(true, false) };
+    let (tx, rx) = mpsc::channel();
+    let mut w = Worker::new(Arc::new(c), tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
+    let mut peer = dest_client(&mut w);
+    let u = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let uport = u.local_addr().unwrap().port();
+    dest_send(&mut w, &mut peer, &[(1, 2, uport, "dual.test")]);
+    let req = rx.try_recv().unwrap();
+    let (h, token) = (req.host.clone(), req.token);
+    let keys = |w: &Worker| w.cfg.dest_rate.as_ref().unwrap().keys();
+    w.inbox.q.lock().unwrap().push(net::DnsResp {
+        host: h.clone(),
+        token,
+        addrs: vec!["255.255.255.255".parse().unwrap()],
+        nx: false,
+        more: true,
+    });
+    w.inbox_ready();
+    let ti = *w.clients.at(0).streams.get(&1).unwrap();
+    let t = w.targets.at(ti);
+    assert!(t.state == TState::Resolving && t.addrs.is_empty() && t.err != 0 && t.dns_more, "the early UDP connect failed");
+    assert_eq!(keys(&w), 1, "charged at the early answer");
+    w.inbox.q.lock().unwrap().push(net::DnsResp { host: h, token, addrs: vec!["127.0.0.1".parse().unwrap()], nx: false, more: false });
+    w.inbox_ready();
+    assert!(w.targets.at(ti).state == TState::Open, "the final answer opened the stream");
+    assert_eq!((keys(&w), w.stats.refuse_dest_rate.get()), (1, 0), "no second token for the same stream");
+    for fd in [w.ep, w.lfd, w.inbox.efd] {
+        unsafe { libc::close(fd) };
+    }
+    std::mem::forget(w);
+}
+
+/// 60.42 --credit-pace: a due CONTINUE waits while the stream's target is parked (Target::blocked) and goes out when a
+/// resume reads the target without parking it again (pace_resume); a resume that parks it again keeps it held; off, it
+/// goes out at once. Base rule (refill 128 at half) and the credit v2 top-up both; slot reuse does not inherit a hold.
+#[test]
+fn credit_pace_holds_grants_while_the_target_is_parked() {
+    use super::*;
+    for (v2, pace) in [(false, false), (false, true), (true, true)] {
+        let cfg = Arc::new(Config {
+            addr: "127.0.0.1:0".parse().unwrap(),
+            threads: 1,
+            buffer: 128,
+            filter: net::Filter::new(true, false),
+            connect_timeout: Duration::from_secs(10),
+            dns_own: false,
+            abort_close: true,
+            splice: true,
+            balance: false,
+            tfo: false,
+            tls: None,
+            udp: true,
+            tls_rekey: 0,
+            notsent_lowat: 0,
+            adapt_lowat: 0,
+            keepalive: true,
+            prio: true,
+            ext: ext::Ext::default(),
+            credit_v2: v2,
+            credit_pace: pace,
+            conn_gate: None,
+            max_streams_per_conn: 0,
+            policy: None,
+            clientip: None,
+            log_conns: false,
+            log_streams: false,
+            want_peer: false,
+            pace: net::Pacing::default(),
+            unix: None,
+            upstream: None,
+            upload_rate: None,
+            proxy_tcp: false,
+            proxy_unix: false,
+            proxy_from: Box::new([]),
+            dest_rate: None,
+        });
+        let (tx, _rx) = mpsc::channel();
+        let mut w = Worker::new(cfg, tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
+        w.pend_cap = usize::MAX;
+        let mut fds = [0; 2];
+        assert_eq!(unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_NONBLOCK, 0, fds.as_mut_ptr()) }, 0);
+        w.inbox.load.fetch_add(1, Relaxed);
+        w.adopt(net::Handoff::bare(fds[0]));
+        let ci = 0;
+        w.clients.at(ci).state = CState::Open;
+        w.clients.at(ci).hs_credit = 128;
+        assert!(w.clients.at(ci).cv.is_none(), "60.13: no Pinger before the first CONTINUE");
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let (ti, tg) = w.new_target(ci, 1, "127.0.0.1".into(), l.local_addr().unwrap().port(), false, false).unwrap();
+        w.clients.at(ci).streams.insert(1, ti);
+        w.run_deferred();
+        let (mut peer, _) = l.accept().unwrap();
+        peer.set_nonblocking(true).unwrap();
+        for _ in 0..1000 {
+            if w.targets.get(ti, tg).is_some_and(|t| t.state == TState::Open) {
+                break;
+            }
+            w.target_event(ti, tg, libc::EPOLLOUT as u32);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let mut msg = vec![2u8, 1, 0, 0, 0];
+        msg.resize(5 + 16384, 7);
+        let mut sink = vec![0u8; 1 << 20];
+        let mut data = |w: &mut Worker, n: usize| {
+            for _ in 0..n {
+                w.on_message(ci, &msg);
+                while std::io::Read::read(&mut peer, &mut sink).is_ok_and(|k| k > 0) {}
+                w.target_event(ti, tg, libc::EPOLLOUT as u32);
+            }
+        };
+        // the frames queued for the client since the last call: (opcode, payload)
+        let frames = |w: &mut Worker| {
+            let c = w.clients.at(ci);
+            let (mut b, mut out) = (&c.obuf[c.ohead..], Vec::new());
+            while b.len() >= 2 {
+                let (op, l7) = (b[0] & 0x0f, (b[1] & 0x7f) as usize);
+                let (len, h) = match l7 {
+                    126 => (u16::from_be_bytes([b[2], b[3]]) as usize, 4),
+                    127 => (u64::from_be_bytes(b[2..10].try_into().unwrap()) as usize, 10),
+                    n => (n, 2),
+                };
+                out.push((op, b[h..h + len].to_vec()));
+                b = &b[h + len..];
+            }
+            c.obuf.clear();
+            c.ohead = 0;
+            out
+        };
+        let cont = |n: u32| (OP_BIN, [&[3u8, 1, 0, 0, 0][..], &n.to_le_bytes()].concat());
+        // base rule: the 64th packet makes CONTINUE(128) due; the target is parked on the client's output
+        data(&mut w, 63);
+        w.targets.at(ti).blocked = true;
+        data(&mut w, 1);
+        let ping1 = (OP_PING, 1u64.to_le_bytes().to_vec());
+        if !pace {
+            assert_eq!(frames(&mut w), [cont(128)], "off: granted while parked");
+            assert!(w.cpace_st.is_empty(), "off: side vector untouched");
+            w.close_target(ti, None);
+            continue;
+        }
+        assert!(frames(&mut w).is_empty(), "held while parked");
+        assert_eq!(w.stats.cpace_holds.get(), 1);
+        data(&mut w, 2);
+        assert!(frames(&mut w).is_empty(), "still parked: still held, counted once");
+        assert_eq!(w.stats.cpace_holds.get(), 1);
+        // a resume whose read parks the target again (the client's output is still at out_high): still held
+        let high = w.st.out_high;
+        w.clients.at(ci).obuf = vec![0; high];
+        w.resume(tok(K_TARGET, ti, tg));
+        assert!(w.targets.at(ti).blocked, "parked again");
+        assert_eq!(w.clients.at(ci).obuf.len(), high, "nothing granted");
+        w.clients.at(ci).obuf.clear();
+        w.clients.at(ci).blocked.clear();
+        // the resume that reads without parking releases it
+        w.resume(tok(K_TARGET, ti, tg));
+        let want = if v2 { vec![cont(128), ping1] } else { vec![cont(128)] };
+        assert_eq!(frames(&mut w), want, "released when the target runs again");
+        if v2 {
+            // the v2 top-up path (after the first pong)
+            w.on_frame(ci, true, OP_PONG, &1u64.to_le_bytes());
+            std::thread::sleep(credit::PING_GAP);
+            w.targets.at(ti).blocked = true;
+            let h0 = w.stats.cpace_holds.get();
+            for _ in 0..300 {
+                data(&mut w, 1);
+                if w.stats.cpace_holds.get() > h0 {
+                    break;
+                }
+            }
+            assert_eq!(w.stats.cpace_holds.get(), h0 + 1, "a v2 top-up came due while parked");
+            assert!(frames(&mut w).is_empty(), "v2 grant held while parked");
+            w.resume(tok(K_TARGET, ti, tg));
+            let f = frames(&mut w);
+            assert!(matches!(f.first(), Some((OP_BIN, p)) if p[0] == 3), "v2 CONTINUE after the release: {f:?}");
+        }
+        // held, then closed: a new target in the same slot starts unheld
+        let since = w.targets.at(ti).since;
+        w.targets.at(ti).blocked = true;
+        data(&mut w, 128 - since as usize);
+        assert!(w.cpace_st[ti as usize].held);
+        w.close_target(ti, None);
+        let (t2, g2) = w.new_target(ci, 3, "127.0.0.1".into(), l.local_addr().unwrap().port(), false, false).unwrap();
+        assert_eq!(t2, ti, "slot reused");
+        frames(&mut w);
+        w.pace_resume(t2, g2);
+        assert!(frames(&mut w).is_empty(), "another generation's hold releases nothing");
+        assert!(w.pace_hold(t2) == pace::PACE_GO && !w.cpace_st[ti as usize].held, "not parked: the stale hold is reset");
+        w.close_target(t2, None);
+    }
 }

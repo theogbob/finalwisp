@@ -137,7 +137,7 @@ impl Worker {
 
 impl Worker {
     /// 60.20 C2/C3b after the HTTP request: a trusted proxy's client gets its real IP from the header and is charged
-    /// now (a direct peer was charged at accept). false = over --max-conns-per-ip (429).
+    /// now (a direct peer was charged at accept). false = over --max-conns-per-ip or (60.40) --conn-rate-per-ip (429).
     fn client_ip(&mut self, ci: u32, fwd: &[Vec<u8>]) -> bool {
         let Some(cip) = &self.cfg.clientip else { return true };
         let Some(p) = self.peers_of.get_mut(ci as usize).and_then(Option::as_mut) else { return true };
@@ -171,8 +171,8 @@ impl Worker {
                 p.key = Some(k)
             }
             clientip::Charge::Untracked => self.stats.ip_untracked.bump(),
-            clientip::Charge::Refused => {
-                self.stats.refuse_ip_conns.bump();
+            r @ (clientip::Charge::Refused | clientip::Charge::Rate) => {
+                self.ip_refused(r);
                 return false;
             }
         }

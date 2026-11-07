@@ -99,6 +99,19 @@ impl Worker {
         self.targets.get(ti, tg).is_some().then_some((ti, tg))
     }
 
+    /// 60.41 (idle sweep) drop the cache entries past their TTL (NX after DNS_NEG_TTL, addresses after DNS_TTL). Before,
+    /// an entry left only when its name was asked again or at the clear past 4096 entries, so unique names (an NX flood,
+    /// long names) stayed until then: up to ~0.65-2 MiB per worker. The table shrinks too: its slots hold most of the
+    /// bytes. At most 4097 entries per sweep (the cap).
+    pub(super) fn dns_expire(&mut self, now: Instant) {
+        self.dns_cache.retain(|_, (a, at)| now.saturating_duration_since(*at) < if a.is_empty() { DNS_NEG_TTL } else { DNS_TTL });
+        if self.dns_cache.is_empty() {
+            self.dns_cache = HashMap::new();
+        } else if self.dns_cache.len() * 4 < self.dns_cache.capacity() {
+            self.dns_cache.shrink_to(self.dns_cache.len() * 2);
+        }
+    }
+
     fn resolve(&mut self, ti: u32, tg: u32, host: String) {
         if self.dns_inflight >= DNS_INFLIGHT_MAX {
             self.stats.refuse_dns.bump(); // 60.12
@@ -226,6 +239,17 @@ impl Worker {
             self.fail_target(ti, if before > 0 { CLOSE_BLOCKED } else { CLOSE_UNREACHABLE });
             return;
         }
+        // 60.39 once per stream: the first allowed address in the resolver's order, before interleave (wispurr parity).
+        // start_connect gets past the address rules once per target, except a UDP stream whose early-answer addresses
+        // all failed to connect (udp_open: t.err set, dns_more): the final answer comes here again (review), and
+        // that stream was charged then.
+        if let (Some(d), false) = (self.cfg.dest_rate.as_deref(), t.udp && t.err != 0) {
+            let k = destrate::DestTable::ip_key(t.addrs[0], t.port);
+            if !self.dest_token(ti, d.take(k, metrics::now_ms())) {
+                return;
+            }
+        }
+        let t = self.targets.at(ti);
         net::interleave(&mut t.addrs);
         if self.cfg.upstream.is_some() {
             return self.proxy_start(ti); // 60.27 C6 (UDP never gets here: refused at CONNECT with an upstream)
@@ -238,6 +262,25 @@ impl Worker {
         }
         t.attempt = 0;
         self.try_connect(ti);
+    }
+
+    /// 60.39 the per-destination verdict for target `ti`: false = refused (0x49, the target is failed)
+    pub(super) fn dest_token(&mut self, ti: u32, r: destrate::Take) -> bool {
+        let rule = match r {
+            destrate::Take::Ok => return true,
+            destrate::Take::Untracked => {
+                self.stats.dest_untracked.bump();
+                return true;
+            }
+            destrate::Take::Second => "dest_rate",
+            destrate::Take::Minute => "dest_rate_minute",
+        };
+        self.stats.refuse_dest_rate.bump();
+        if !self.streamlog.is_empty() {
+            self.slog_why(ti, SWhy::Limit, rule);
+        }
+        self.fail_target(ti, CLOSE_THROTTLED);
+        false
     }
 
     /// 20.15: start the connects deferred by new_target (see there).

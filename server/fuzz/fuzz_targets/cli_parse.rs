@@ -7,7 +7,7 @@
 use finalwisp_fuzz::cli;
 use libfuzzer_sys::fuzz_target;
 
-const FLAGS: [&str; 71] = [
+const FLAGS: [&str; 75] = [
     "--log-level", // 60.24 C4 (missing here since C4/C5)
     "--log-conns",
     "--log-streams",    // 60.35
@@ -20,6 +20,7 @@ const FLAGS: [&str; 71] = [
     "--drain-timeout",
     "--metrics-interval",
     "--tcpmem-adapt",
+    "--no-credit-pace",
     "--allow-loopback",
     "--allow-private",
     "--graceful-close",
@@ -59,7 +60,8 @@ const FLAGS: [&str; 71] = [
     "--real-ip-header",
     "--max-conns-per-ip",
     "--stream-rate-per-ip",
-    "--download-rate", // 60.30 C10a
+    "--conn-rate-per-ip", // 60.40
+    "--download-rate",    // 60.30 C10a
     "--upload-rate-per-stream",
     "--listen-unix", // 60.31 C7
     "--unix-mode",
@@ -69,6 +71,8 @@ const FLAGS: [&str; 71] = [
     "--upload-rate-per-ip",
     "--proxy-protocol", // 60.34
     "--proxy-protocol-from",
+    "--stream-rate-per-dest", // 60.39
+    "--stream-rate-per-dest-minute",
     "-h",
     "--help",
     "--credit-v2", // 60.18 removed: the "removed in base-4" error

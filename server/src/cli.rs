@@ -9,14 +9,19 @@ pub const USAGE: &str = "usage: finalwisp [PORT] [--config FILE] [--host H] [--p
 [--connect-timeout SECS] [--no-udp] [--tls-cert FILE --tls-key FILE]... [--tls-cipher-order client|server] \
 [--dns-threads N] [--dns-own] [--dns-server IP[:PORT]]... [--auth-file FILE] [--cert-auth-key FILE]... [--motd TEXT] \
 [--mem-budget BYTES[K|M|G] (0 = off)] [--drain-timeout SECS] [--metrics-interval SECS (0 = off)] [--no-credit-v2] \
+[--no-credit-pace (give a stream new upload credit even while its download waits on the client; the default holds it, so \
+full-duplex bulk such as echo keeps less socket memory and small hosts reach TCP memory pressure later)] \
 [--log-level error|warn|info|debug (default info)] [--log-conns (a line per connection, with the client IP)] \
 [--log-streams (a line per stream and per refused CONNECT, with the client IP and the target host)] \
 [--metrics-listen [ADDR:]PORT (Prometheus GET /metrics, no auth; a bare PORT listens on 127.0.0.1; off by default)]
 opt-in: [--balance (spread new connections evenly over the threads: helps a few busy long-lived connections, \
-+4..11% on 36-72 thread boxes; costs 1-7% on connection churn; 60.15 T21)] [--tcpmem-adapt (cap remote sockets near host TCP memory pressure; needs credit v2 and the memory budget)] \
++4..11% on 36-72 thread boxes; costs 1-7% on connection churn)] [--tcpmem-adapt (cap remote sockets near host TCP memory pressure; needs credit v2 and the memory budget)] \
 [--max-conns N (connections over N are reset at accept)] [--max-streams-per-conn N (CONNECT over N streams on one connection gets 0x49)]
 client IP and per-IP limits (off by default): [--trusted-proxy CIDRS] [--real-ip-header NAME (default x-forwarded-for)] \
-[--max-conns-per-ip N] [--stream-rate-per-ip R[/B] (CONNECTs per second, burst B, default 2R)]
+[--max-conns-per-ip N] [--stream-rate-per-ip R[/B] (CONNECTs per second, burst B, default 2R)] \
+[--conn-rate-per-ip R[/B] (new connections per second, burst B, default 2R)]
+per-destination limits (off by default; all clients together, per target IP:port; over: 0x49): \
+[--stream-rate-per-dest R[/B] (new streams per second, burst B, default 2R)] [--stream-rate-per-dest-minute N (new streams per minute)]
 bandwidth caps (kernel TCP pacing; RATE = bytes/s, K/M/G = KiB/MiB/GiB, 1M = 8.4 Mbit/s; off by default): \
 [--download-rate RATE (per connection)] [--upload-rate-per-stream RATE (per TCP stream)]
 unix socket listener (off by default; for a reverse proxy on this host): [--listen-unix PATH (plain ws://, besides the TCP \
@@ -72,6 +77,7 @@ pub struct Opts {
     pub tcpmem_adapt: bool,        // 20.31 B3 cap our sockets near the host's TCP memory pressure (opt-in; 60.14: default off again)
     pub metrics_interval: u64,     // 60.12 seconds between `ev=metrics` log lines (0 = off), <= MAX_METRICS_INTERVAL
     pub credit_v2: bool,           // 20.30 upload credit v2 (worker Config::credit_v2); 60.13: default on
+    pub credit_pace: bool,         // 60.42 no upload credit while the stream's download waits on the client (default on, 60.42 verify)
     pub max_conns: u32,            // 60.20 C3a --max-conns (0 = off): connections over it are reset at accept
     pub max_streams_per_conn: u32, // 60.20 C3a --max-streams-per-conn (0 = off): CONNECT over it gets 0x49
     /// 60.20 C1 request rules (--allow-host, --block-host, --allow-ports, --block-ports, --block-smtp, --no-direct-ip,
@@ -86,6 +92,9 @@ pub struct Opts {
     pub real_ip_header: String,          // 60.20 C2 --real-ip-header, lowercase
     pub max_conns_per_ip: u32,           // 60.20 C3b (0 = off)
     pub stream_rate: Option<(u32, u32)>, // 60.20 C3b --stream-rate-per-ip (per second, burst)
+    pub conn_rate: Option<(u32, u32)>,   // 60.40 --conn-rate-per-ip (new connections per second, burst)
+    pub dest_rate: Option<(u32, u32)>,   // 60.39 --stream-rate-per-dest (per second, burst)
+    pub dest_rate_min: Option<u32>,      // 60.39 --stream-rate-per-dest-minute (per minute)
     pub pace: crate::net::Pacing,        // 60.30 C10a --download-rate, --upload-rate-per-stream (bytes/s, 0 = off)
     pub log_level: crate::logs::Level,   // 60.24 --log-level (default info)
     pub log_conns: bool,                 // 60.24 --log-conns
@@ -103,6 +112,13 @@ pub struct Opts {
     pub proxy_tcp: bool,
     pub proxy_unix: bool,
     pub proxy_from: Vec<crate::policy::Cidr>,
+}
+
+impl Opts {
+    /// 60.20 C3b a per-IP limit is on, so the per-IP table exists (60.25 --upload-rate-per-ip, 60.40 --conn-rate-per-ip)
+    pub fn per_ip(&self) -> bool {
+        self.max_conns_per_ip > 0 || self.stream_rate.is_some() || self.upload_rate_ip.is_some() || self.conn_rate.is_some()
+    }
 }
 
 /// 60.20 C8: every long option parse_args accepts, and whether it takes a value. The --config file accepts exactly these
@@ -138,6 +154,7 @@ pub const FLAGS: &[(&str, bool)] = &[
     ("--motd", true),
     ("--mem-budget", true),
     ("--tcpmem-adapt", false),
+    ("--no-credit-pace", false),
     ("--metrics-interval", true),
     ("--max-conns", true),
     ("--max-streams-per-conn", true),
@@ -156,8 +173,11 @@ pub const FLAGS: &[(&str, bool)] = &[
     ("--real-ip-header", true),
     ("--max-conns-per-ip", true),
     ("--stream-rate-per-ip", true),
-    ("--download-rate", true),          // 60.30 C10a
-    ("--upload-rate-per-stream", true), // 60.30 C10a
+    ("--conn-rate-per-ip", true),            // 60.40
+    ("--stream-rate-per-dest", true),        // 60.39
+    ("--stream-rate-per-dest-minute", true), // 60.39
+    ("--download-rate", true),               // 60.30 C10a
+    ("--upload-rate-per-stream", true),      // 60.30 C10a
     ("--log-level", true),
     ("--log-conns", false),
     ("--log-streams", false),
@@ -269,7 +289,7 @@ pub fn parse_config(path: &str, data: &[u8]) -> Result<Vec<(usize, String, Optio
         match takes_value(&flag) {
             None => {
                 return Err(match removed(&flag) {
-                    Some(why) => format!("{at}: {flag} was removed in base-4 (60.18): {why}; drop it"),
+                    Some(why) => format!("{at}: {flag} was removed before v1.0.0: {why}; drop it"),
                     None => format!("{at}: unknown flag {name:?}"),
                 })
             }
@@ -352,6 +372,22 @@ where
     out.extend(file);
     out.extend_from_slice(&args[pos + 2..]);
     Ok(Expanded { args: out, config: Some(path), warning })
+}
+
+/// 60.20 C3b / 60.39 a stream rate `R` or `R/B`: per second 1..=1000000, burst 1..=2000000 (default 2R)
+fn stream_rate(flag: &str, v: &str) -> Result<(u32, u32), String> {
+    let bad = || format!("{flag}: R or R/B (R 1..1000000 per second, burst B 1..2000000): {v:?}");
+    let (r, b) = match v.split_once('/') {
+        Some((r, b)) => (r.parse::<u32>().map_err(|_| bad())?, b.parse::<u32>().map_err(|_| bad())?),
+        None => {
+            let r = v.parse::<u32>().map_err(|_| bad())?;
+            (r, r.saturating_mul(2))
+        }
+    };
+    if !(1..=1_000_000).contains(&r) || !(1..=2_000_000).contains(&b) {
+        return Err(bad());
+    }
+    Ok((r, b))
 }
 
 /// 60.30 C10a a pacing rate (SO_MAX_PACING_RATE), bytes per second with parse_size's suffixes (K/M/G = KiB/MiB/GiB):
@@ -445,6 +481,7 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I, threads: usize) -> Re
         metrics_interval: 0,
         tcpmem_adapt: false, // 60.14: off again (VPS A/B: bulk download 0.65-0.83 under host TCP pressure, 2.8x CPU/MiB)
         credit_v2: true,     // 60.13 default on (20.30 acceptance + browser compat)
+        credit_pace: true,   // 60.42 default on (Default-ON verification, owner 2026-11-07)
         max_conns: 0,
         max_streams_per_conn: 0,
         rules: crate::policy::Rules { direct_ip: true, ipv6: true, ..Default::default() },
@@ -456,6 +493,9 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I, threads: usize) -> Re
         real_ip_header: "x-forwarded-for".to_string(),
         max_conns_per_ip: 0,
         stream_rate: None,
+        conn_rate: None,
+        dest_rate: None,
+        dest_rate_min: None,
         pace: crate::net::Pacing::default(),
         log_level: crate::logs::Level::Info,
         log_conns: false,
@@ -532,7 +572,8 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I, threads: usize) -> Re
                 let v = val()?;
                 o.mem_budget = Some(parse_size(&v).ok_or_else(|| format!("--mem-budget: bad size {v:?}"))?);
             }
-            "--tcpmem-adapt" => o.tcpmem_adapt = true, // 60.14 opt-in
+            "--tcpmem-adapt" => o.tcpmem_adapt = true,   // 60.14 opt-in
+            "--no-credit-pace" => o.credit_pace = false, // 60.42 default on
             "--metrics-interval" => {
                 o.metrics_interval = num(&a, val()?)?;
                 if o.metrics_interval > MAX_METRICS_INTERVAL {
@@ -639,20 +680,15 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I, threads: usize) -> Re
                     o.upload_rate_ip = Some((r, b));
                 }
             }
-            "--stream-rate-per-ip" => {
+            "--stream-rate-per-ip" => o.stream_rate = Some(stream_rate(&a, &val()?)?),
+            "--conn-rate-per-ip" => o.conn_rate = Some(stream_rate(&a, &val()?)?), // 60.40
+            "--stream-rate-per-dest" => o.dest_rate = Some(stream_rate(&a, &val()?)?), // 60.39
+            "--stream-rate-per-dest-minute" => {
                 let v = val()?;
-                let bad = || format!("--stream-rate-per-ip: R or R/B (per second, burst; 1..1000000): {v:?}");
-                let (r, b) = match v.split_once('/') {
-                    Some((r, b)) => (r.parse::<u32>().map_err(|_| bad())?, b.parse::<u32>().map_err(|_| bad())?),
-                    None => {
-                        let r = v.parse::<u32>().map_err(|_| bad())?;
-                        (r, r.saturating_mul(2))
-                    }
-                };
-                if !(1..=1_000_000).contains(&r) || !(1..=2_000_000).contains(&b) {
-                    return Err(bad());
+                match v.parse::<u32>() {
+                    Ok(n) if (1..=60_000_000).contains(&n) => o.dest_rate_min = Some(n),
+                    _ => return Err(format!("--stream-rate-per-dest-minute: new streams per minute, 1..60000000: {v:?}")),
                 }
-                o.stream_rate = Some((r, b));
             }
             "--download-rate" => o.pace.download = rate(&a, &val()?)?,
             "--upload-rate-per-stream" => o.pace.upload = rate(&a, &val()?)?,
@@ -661,7 +697,7 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I, threads: usize) -> Re
             "-h" | "--help" => return Err(String::new()),
             p => {
                 if let Some(why) = removed(p) {
-                    return Err(format!("{p} was removed in base-4 (60.18): {why}; drop it"));
+                    return Err(format!("{p} was removed before v1.0.0: {why}; drop it"));
                 }
                 // 60.27 C6: an unknown argument is echoed only if it looks like a flag name (a mistyped `--upstrem URL` or
                 // `--upstream=URL` must not print the URL's password)
@@ -760,7 +796,8 @@ mod tests {
         assert!(!parse("").unwrap().log_streams && parse("--log-streams").unwrap().log_streams); // 60.35
         assert!(parse("--log-level verbose").is_err() && parse("--log-level").is_err());
         assert!(!parse("").unwrap().tcpmem_adapt && parse("--tcpmem-adapt").unwrap().tcpmem_adapt);
-        // 60.20 C3a: off by default (Q4)
+        assert!(parse("").unwrap().credit_pace && !parse("--no-credit-pace").unwrap().credit_pace); // 60.42 default on
+                                                                                                    // 60.20 C3a: off by default (Q4)
         let o = parse("--max-conns 1000 --max-streams-per-conn 64").unwrap();
         assert_eq!((o.max_conns, o.max_streams_per_conn), (1000, 64));
         let o = parse("").unwrap();
@@ -790,6 +827,18 @@ mod tests {
             (3, "x-real-ip", 8, Some((50, 100)))
         );
         assert_eq!(parse("--stream-rate-per-ip 10/15").unwrap().stream_rate, Some((10, 15)));
+        // 60.40 --conn-rate-per-ip: off by default, R[/B] like --stream-rate-per-ip; wispurr's 200 per 10 s = 20/200
+        assert!(parse("").unwrap().conn_rate.is_none() && !parse("").unwrap().per_ip());
+        let o = parse("--conn-rate-per-ip 20/200").unwrap();
+        assert_eq!((o.conn_rate, o.stream_rate, o.per_ip()), (Some((20, 200)), None, true));
+        assert_eq!(parse("--conn-rate-per-ip 5").unwrap().conn_rate, Some((5, 10)));
+        // 60.39: off by default; R[/B] as per IP; the minute form
+        let o = parse("").unwrap();
+        assert!(o.dest_rate.is_none() && o.dest_rate_min.is_none());
+        let o = parse("--stream-rate-per-dest 250 --stream-rate-per-dest-minute 6000").unwrap();
+        assert_eq!((o.dest_rate, o.dest_rate_min), (Some((250, 500)), Some(6000)));
+        assert_eq!(parse("--stream-rate-per-dest 250/250").unwrap().dest_rate, Some((250, 250)));
+        assert_eq!(parse("--stream-rate-per-dest-minute 60000000").unwrap().dest_rate_min, Some(60_000_000));
         // 60.29 C5: off by default; a bare port is loopback; IPv4 and [IPv6] forms
         assert!(parse("").unwrap().metrics_listen.is_none());
         assert_eq!(parse("--metrics-listen 9100").unwrap().metrics_listen, Some("127.0.0.1:9100".parse().unwrap()));
@@ -943,6 +992,18 @@ mod tests {
             "--stream-rate-per-ip 10/0",
             "--stream-rate-per-ip 10/x",
             "--stream-rate-per-ip 1000001",
+            "--conn-rate-per-ip 0",
+            "--conn-rate-per-ip 1/0",
+            "--conn-rate-per-ip 1/2000001",
+            "--conn-rate-per-ip x",
+            "--conn-rate-per-ip",
+            "--stream-rate-per-dest 0",
+            "--stream-rate-per-dest 10/",
+            "--stream-rate-per-dest 1000001",
+            "--stream-rate-per-dest",
+            "--stream-rate-per-dest-minute 0",
+            "--stream-rate-per-dest-minute 60000001",
+            "--stream-rate-per-dest-minute 5/s",
         ] {
             let e = parse(a).err().unwrap_or_else(|| panic!("{a} accepted"));
             assert!(!e.is_empty(), "{a}");
@@ -952,7 +1013,7 @@ mod tests {
         for a in ["--credit-v2", "--prio", "--no-tcpmem-adapt", "--no-dns-coalesce"] {
             for line in [a.to_string(), format!("7000 --threads 2 {a}"), format!("--tcpmem-adapt --no-prio {a} --balance")] {
                 let e = parse(&line).err().unwrap_or_else(|| panic!("{line} accepted"));
-                assert!(e.starts_with(&format!("{a} was removed in base-4 (60.18): ")) && e.ends_with("; drop it"), "{e}");
+                assert!(e.starts_with(&format!("{a} was removed before v1.0.0: ")) && e.ends_with("; drop it"), "{e}");
             }
         }
         assert_eq!(parse("--help").err(), Some(String::new()));
@@ -1074,7 +1135,7 @@ mod tests {
             ("balance s3cretVALUE", "f:1: --balance takes no value"),
             ("config other.conf", "f:1: --config inside a config file (no includes)"),
             ("help", "f:1: unknown flag \"help\""),
-            ("prio", "f:1: --prio was removed in base-4 (60.18): the priority lane is the default (--no-prio turns it off); drop it"),
+            ("prio", "f:1: --prio was removed before v1.0.0: the priority lane is the default (--no-prio turns it off); drop it"),
             ("motd a\u{1}b", "f:1: control character"),
         ] {
             let e = ex("--config f", file).unwrap_err();

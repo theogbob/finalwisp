@@ -97,7 +97,7 @@ impl Worker {
                 }
                 (!ok).then_some(Why::ProtocolError)
             } else {
-                (!self.charge(&mut h)).then_some(Why::Limit) // 60.20 C3b over --max-conns-per-ip
+                (!self.charge(&mut h)).then_some(Why::Limit) // 60.20 C3b over --max-conns-per-ip, 60.40 --conn-rate-per-ip
             };
             if let Some(why) = refused {
                 net::linger_zero(fd);
@@ -149,8 +149,9 @@ impl Worker {
     /// 60.20 C3b a direct peer (not a trusted proxy) is charged before any TLS/HTTP work and before the --balance
     /// hand-over (the key travels with the fd); a trusted proxy's client is charged in handle_http (client_ip). 60.34
     /// behind a PROXY header the peer is the header's source (called by pending_event). The load-bearing invariant
-    /// (60.28): trusted peers are never charged here, so client_ip never overwrites a key. false = refused
-    /// (refuse_ip_conns; the caller closes and releases).
+    /// (60.28): trusted peers are never charged here, so client_ip never overwrites a key. false = refused: over
+    /// --max-conns-per-ip (refuse_ip_conns) or 60.40 --conn-rate-per-ip (refuse_ip_connrate); the caller closes and
+    /// releases.
     pub(super) fn charge(&mut self, h: &mut net::Handoff) -> bool {
         let Some(cip) = &self.cfg.clientip else { return true };
         if let (Some(t), Some(ip)) = (&cip.table, h.peer.filter(|ip| !cip.is_trusted(*ip))) {
@@ -158,13 +159,24 @@ impl Worker {
             match t.charge(k, cip.max_conns, clientip::now_ms()) {
                 clientip::Charge::Charged => h.key = Some(k),
                 clientip::Charge::Untracked => self.stats.ip_untracked.bump(),
-                clientip::Charge::Refused => {
-                    self.stats.refuse_ip_conns.bump();
+                r @ (clientip::Charge::Refused | clientip::Charge::Rate) => {
+                    self.ip_refused(r);
                     return false;
                 }
             }
         }
         true
+    }
+
+    /// 60.20 C3b / 60.40 a per-IP refusal's counter: --max-conns-per-ip (refuse_ip_conns) or --conn-rate-per-ip
+    /// (refuse_ip_connrate). Out of line: the accept path keeps one call where it had one bump.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn ip_refused(&self, r: clientip::Charge) {
+        match r {
+            clientip::Charge::Rate => self.stats.refuse_ip_connrate.bump(),
+            _ => self.stats.refuse_ip_conns.bump(),
+        }
     }
 
     /// 60.20 C3a one client fewer on this worker: `Inbox.load`, the --max-conns reservation and (C3b) the per-IP key it

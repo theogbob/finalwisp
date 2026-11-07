@@ -2,7 +2,7 @@
 
 usage: wst link up [RATE=100mbit] [DELAY=10ms] [LIMIT=200]     (fwa 10.77.0.1 <-> fws 10.77.0.2, netem each way)
        wst link down
-       wst link ab VARIANTS.json REPS --rate R --delay D [--limit L] WBENCH-RUN-ARGS...
+       wst link ab VARIANTS.json REPS --rate R --delay D [--limit L] [--dur S] [--warmup S] WBENCH-RUN-ARGS...
   ab: brings the link up, runs `wst ab` with the server + target in fws and wbench in fwa (variants get
   --allow-private --host 10.77.0.2 appended), prints the per-variant summary, takes the link down again (also on
   SIGTERM / Ctrl-C). DELAY is one way (RTT = 2 x DELAY). LIMIT: netem queue in packets (1 Gbit x 40 ms RTT needs
@@ -45,7 +45,7 @@ def main(argv):
     if argv[0] != "ab" or len(argv) < 3:
         sys.exit("usage: wst link up|down|ab ... (wst link --help)")
     variants = json.load(open(argv[1])); reps = int(argv[2]); rest = argv[3:]
-    o = {"--rate": "100mbit", "--delay": "10ms", "--limit": "200", "--raw": None, "--dur": "4"}
+    o = {"--rate": "100mbit", "--delay": "10ms", "--limit": "200", "--raw": None, "--dur": "4", "--warmup": "1"}
     extra, i = [], 0
     while i < len(rest):
         if rest[i] in o and i + 1 < len(rest):
@@ -55,7 +55,7 @@ def main(argv):
     v = {k: c.removeprefix("exec ") + " --allow-private" for k, c in variants.items()}  # `ip netns exec` cannot run `exec`
     proc.install_handlers()
     with link(o["--rate"], o["--delay"], o["--limit"]) as env:
-        res = abmod.run_ab(v, reps, extra, wb=wbench.find(), dur=o["--dur"], raw=o["--raw"], link=f"{o['--rate']}/{o['--delay']}",
+        res = abmod.run_ab(v, reps, extra, wb=wbench.find(), dur=o["--dur"], warmup=o["--warmup"], raw=o["--raw"], link=f"{o['--rate']}/{o['--delay']}",
                            srv_prefix=env["SRV_PREFIX"].split(), cli_prefix=env["CLI_PREFIX"].split(),
                            srv_host=env["SRV_HOST"], srv_bind=env["SRV_BIND"])
     for line in abmod.summarize(extra[extra.index("--test") + 1], res):

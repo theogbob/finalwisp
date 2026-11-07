@@ -4,7 +4,7 @@ Cases: --max-conns 3 on --threads 4 (with and without --balance): 3 upgraded con
 accept; closing one makes room; 50 rounds of open/close leave no reservation behind (the 4th is still refused when 3
 are open). --max-streams-per-conn 2: the 3rd CONNECT gets CLOSE 0x49, the connection and both streams keep working,
 and a stream end (client CLOSE, target close) frees the slot. The metrics line shows refuse_conns / refuse_limit /
-conns_reserved."""
+conns_reserved. 60.39 --stream-rate-per-dest / -minute: one table for all threads, 0x49, both buckets, metrics and log."""
 import base64, os, socket, struct, subprocess, sys, tempfile, threading, time
 
 BIN, BASE = os.path.abspath(sys.argv[1]), int(sys.argv[2])
@@ -184,5 +184,35 @@ ok(alive(w), "the connection stays up through the refusals")
 time.sleep(1.3)
 ok(int(metric(p, "refuse_limit") or 0) == 2, f"metrics refuse_limit=2 ({metric(p, 'refuse_limit')})")
 w.close(); stop(p)
+
+# 60.39 --stream-rate-per-dest 3/3 --stream-rate-per-dest-minute 5 on --threads 4 (port BASE+2 again): one table for every
+# thread (one CONNECT on each of 4 connections: the 4th is refused wherever it lands); a refusal spends nothing
+p = start(port, "--threads", "4", "--stream-rate-per-dest", "3/3", "--stream-rate-per-dest-minute", "5", "--log-streams")
+ok("per-dest: streams 3/s burst 3 streams 5/min" in srvlog(p), "per-dest: capability line shows the limits")
+ws = [Wisp(port) for _ in range(4)]
+for w in ws: w.packets(0.2)
+for w in ws: w.connect(1)  # back to back: the per-second bucket refills 1 token per 333 ms
+codes = []
+for w in ws:
+    pk = w.packets(0.3)
+    codes.append(next((body[:1] for ty, s, body in pk if ty == 4 and s == 1), None))
+# (which of the 4 loses depends on the threads' timing. Per-worker tables would pass only if all 4 landed on one worker:
+# 4 x (1/4)^4 = 1/64, so this catches such a regression 63 times in 64; the worker test with one table is exact)
+ok(codes.count(None) == 3 and codes.count(b"\x49") == 1, f"per-dest: 3 streams to one IP:port from 4 connections, the 4th gets 0x49 ({codes})")
+ok(all(w.echo(1, b"x%d" % i) for i, w in enumerate(ws) if codes[i] is None), "per-dest: the admitted streams carry data")
+time.sleep(1.1)  # per second full again (3); per minute 5 - 3 + (about 2.3 s since) * 5/60 = 2.2: two more, then the minute refuses
+w = ws[3]
+w.connect(2); w.connect(3); w.connect(4)
+pk = w.packets(0.5)
+cl = {s: body[:1] for ty, s, body in pk if ty == 4}
+# (one input batch: IP literals start connecting at its end, the last CONNECT first)
+ok(list(cl.values()) == [b"\x49"], f"per-dest: after 1 s two more, the 3rd refused by the minute ({cl})")
+ok(alive(w), "per-dest: the connection stays up")
+time.sleep(1.3)
+ok(metric(p, "refuse_dest_rate") == "2", f"per-dest: metrics refuse_dest_rate=2 ({metric(p, 'refuse_dest_rate')})")
+log = srvlog(p)
+ok("why=limit rule=dest_rate\n" in log and "why=limit rule=dest_rate_minute" in log, "per-dest: stream log names both rules")
+for w in ws: w.close()
+stop(p)
 print(f"limits: {fails} failures")
 sys.exit(1 if fails else 0)
