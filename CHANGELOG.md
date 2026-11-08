@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.1.1
+
+Fixed:
+
+- Per-IP limits (`--max-conns-per-ip`, `--stream-rate-per-ip`, `--conn-rate-per-ip`, `--upload-rate-per-ip`): the
+  per-address table now keeps time in 64-bit milliseconds. Before, its 32-bit clock wrapped after 49.7 days: an
+  address that had used up its rate limit and came back after 49.7 days or more, on a server that had no clients at all
+  in between, could still find its limit used up (the idle time did not count) and be refused until the limit refilled
+  at its normal rate, up to one minute longer.
+- Per-IP rate limits count tokens exactly (integers). Before, `--stream-rate-per-ip` with `--upload-rate-per-ip`
+  could refill inexactly (too slowly or too quickly) while the address was uploading (float rounding of the small refill
+  of each read, most with a large burst).
+
+Docs: benchmark numbers re-measured with 1.1.0 on the same three machines ([benchmarks](docs/benchmarks.md)).
+
 ## v1.1.0
 
 Changed:

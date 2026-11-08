@@ -428,16 +428,11 @@ fn check_pacing(pace: net::Pacing, splice_asked: bool) -> String {
 fn build_clientip(o: &cli::Opts) -> Option<Box<clientip::ClientIp>> {
     let per_ip = o.per_ip();
     (per_ip || !o.trusted_proxies.is_empty() || o.listen_unix.is_some()).then(|| {
-        let rate = o.stream_rate.map(|(r, b)| (r as f32 / 1000.0, b as f32));
         let sentinel = o.listen_unix.as_ref().map(|_| policy::Cidr::parse(&format!("{}/128", clientip::UNIX_PEER)).unwrap());
         Box::new(clientip::ClientIp {
             trusted: o.trusted_proxies.iter().copied().chain(sentinel).collect(),
             header: o.real_ip_header.clone().into(),
-            table: per_ip.then(|| {
-                let up = o.upload_rate_ip.map(|(r, b)| (r as f64 / 1000.0, b as f64));
-                clientip::IpTable::with_rates(rate, up, o.conn_rate.map(|(r, b)| (r as f32 / 1000.0, b as f32)))
-                // 60.40
-            }),
+            table: per_ip.then(|| clientip::IpTable::with_rates(o.stream_rate, o.upload_rate_ip, o.conn_rate)), // (60.40, 60.45)
             max_conns: o.max_conns_per_ip,
         })
     })

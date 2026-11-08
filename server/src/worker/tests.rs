@@ -2984,9 +2984,8 @@ fn conn_rate_per_ip_at_accept_and_at_upgrade() {
     use std::os::fd::FromRawFd;
     let rated = |trusted: &[&str]| {
         let mut cfg = clientip_cfg(trusted, 0, false, 1, None);
-        // 1 per 1000 s (none comes back during the test), burst 2
-        Arc::get_mut(&mut cfg).unwrap().clientip.as_mut().unwrap().table =
-            Some(clientip::IpTable::with_rates(None, None, Some((1e-6, 2.0))));
+        // rate 0 (none comes back during the test; the cli takes 1..), burst 2
+        Arc::get_mut(&mut cfg).unwrap().clientip.as_mut().unwrap().table = Some(clientip::IpTable::with_rates(None, None, Some((0, 2))));
         cfg
     };
     let reset = |p: &mut std::net::TcpStream| {
@@ -3715,7 +3714,7 @@ fn upload_bootstrap_bytes_charged_to_the_key() {
     use super::*;
     let mut cfg = Arc::into_inner(clientip_cfg(&[], 0, false, 1, None)).unwrap();
     let burst = 1_000_000.0;
-    cfg.clientip.as_mut().unwrap().table = Some(clientip::IpTable::with_upload(None, Some((1.0, burst))));
+    cfg.clientip.as_mut().unwrap().table = Some(clientip::IpTable::with_upload(None, Some((1000, burst as u64))));
     let (tx, _rx) = mpsc::channel();
     let mut w = Worker::new(Arc::new(cfg), tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
     assert!(w.meter);
@@ -3769,7 +3768,7 @@ fn upload_bootstrap_bytes_charged_to_the_key() {
 fn upload_lease_top_up_in_room() {
     use super::*;
     let mut cfg = Arc::into_inner(clientip_cfg(&[], 0, false, 1, None)).unwrap();
-    cfg.clientip.as_mut().unwrap().table = Some(clientip::IpTable::with_upload(None, Some((1.0, 1_000_000.0))));
+    cfg.clientip.as_mut().unwrap().table = Some(clientip::IpTable::with_upload(None, Some((1000, 1_000_000))));
     let (tx, _rx) = mpsc::channel();
     let mut w = Worker::new(Arc::new(cfg), tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
     let mut fds = [0; 2];

@@ -8,6 +8,7 @@ use crate::policy::Cidr;
 use std::collections::HashMap;
 use std::hash::{BuildHasher, RandomState};
 use std::net::IpAddr;
+use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 use std::sync::Mutex;
 
@@ -28,12 +29,13 @@ pub const SHARD_CAP: usize = 1024;
 /// shards one idle sweep visits (consecutive; each awake worker walks all 64 in 16 sweeps = 32 s)
 pub const SWEEP_SHARDS: usize = 4;
 /// 60.25 C10b per-IP upload lease: this many ms of the key's rate, split by its connections, at most LEASE_MAX bytes
-const LEASE_MS: f64 = 50.0;
+const LEASE_MS: u64 = 50;
 const LEASE_MAX: u64 = 256 << 10;
 /// 60.25 merged A/B: the most a top-up may bring one connection's lease to (2 x LEASE_MAX: the bound's L doubles)
 const TOPUP_MAX: u64 = 2 * LEASE_MAX;
-/// ms: a `now` up to this much older than an entry's time is a lock-order reordering, not a wrap (IpTable::refill)
-const STALE_MS: u32 = 60_000;
+/// 60.45 buckets count milli-tokens (milli-bytes for the upload bucket): R per second is exactly R milli-units per ms,
+/// so a refill is integer and refills in steps add up to one refill (f32 tokens did not: review)
+const MILLI: u64 = 1000;
 
 /// An IPv4-mapped IPv6 address as IPv4 (a dual-stack listener reports IPv4 peers that way).
 pub fn canon(ip: IpAddr) -> IpAddr {
@@ -134,13 +136,19 @@ impl ClientIp {
 
 struct Entry {
     conns: u32,
-    tokens: f32,
-    at: u32, // ms (now_ms), wrapping
-    // 60.40 --conn-rate-per-ip: its own bucket and time (refill() and the upload paths that call it stay as they were)
-    ct: f32,
-    cat: u32,
-    ub: f64, // 60.25 C10b upload bytes left in the key's --upload-rate-per-ip bucket (leased out by take_bytes / top_up_bytes)
+    tokens: u32, // --stream-rate-per-ip milli-tokens (60.45; burst <= 2e6 tokens: <= 2e9)
+    // 60.45 now_ms (u64: no wrap) up to which every bucket of the entry is refilled (60.40's own conn time merged in:
+    // an exact clamped refill composes, so one time for all buckets gives the same tokens; Entry stays 96 bytes)
+    at: u64,
+    ct: u32, // 60.40 --conn-rate-per-ip milli-tokens
+    ub: i64, // 60.25 C10b milli-bytes left in the key's --upload-rate-per-ip bucket (leased out by take_bytes / top_up_bytes; down to -burst)
     q: Upq,  // 60.25 C10b waiters for that bucket
+}
+
+/// 60.45 `v` milli-units refilled for `dt` ms at `per_s` per second (= milli-units per ms), clamped to `cap` milli-units.
+/// Exact: min(min(v + a, cap) + b, cap) = min(v + a + b, cap), so refills in steps give one refill.
+fn fill(v: u64, per_s: u64, cap: u64, dt: u64) -> u64 {
+    v.saturating_add(per_s.saturating_mul(dt)).min(cap)
 }
 
 /// 60.25 C10b the starved-first queue of one key's --upload-rate-per-ip waiters (review: a shared cap needs a
@@ -155,7 +163,7 @@ struct Entry {
 struct Upq {
     head: u32,
     tail: u32,
-    ready_at: Option<u32>, // now_ms when the head's grant first became fundable
+    ready_at: Option<NonZeroU64>, // now_ms (at least 1) when the head's grant first became fundable (60.45: u64, 8 bytes)
     done: u64,
     late_n: u8,
     late: [u32; Upq::LATE], // given back beyond the window, sorted by distance from head
@@ -164,7 +172,7 @@ struct Upq {
 impl Upq {
     const WINDOW: u32 = 64;
     /// grace for the head holder once its grant is fundable: two 100 ms resume ticks plus margin (review)
-    const SLOT_MS: u32 = 300;
+    const SLOT_MS: u64 = 300;
     const LATE: usize = 8;
 
     fn join(&mut self) -> u32 {
@@ -179,7 +187,7 @@ impl Upq {
     }
 
     /// ticket `t` is served or given back: mark it, then move head past every finished ticket
-    fn release(&mut self, t: u32, now: u32) {
+    fn release(&mut self, t: u32, now: u64) {
         let off = t.wrapping_sub(self.head);
         if off < Self::WINDOW {
             self.done |= 1 << off;
@@ -196,9 +204,9 @@ impl Upq {
     /// move head past finished tickets, and past one head whose fundable grant waited SLOT_MS unclaimed. `fundable`:
     /// whether the bucket can pay the head's grant now (None: not known, a give-back); an unfundable poll restarts the
     /// grace (review: a bootstrap charge after readiness must not expire a live head)
-    fn settle(&mut self, now: u32, fundable: Option<bool>) {
+    fn settle(&mut self, now: u64, fundable: Option<bool>) {
         match fundable {
-            Some(true) if self.head != self.tail && self.ready_at.is_none() => self.ready_at = Some(now),
+            Some(true) if self.head != self.tail && self.ready_at.is_none() => self.ready_at = NonZeroU64::new(now.max(1)),
             Some(false) => self.ready_at = None,
             _ => {}
         }
@@ -216,11 +224,7 @@ impl Upq {
                 self.late.copy_within(1..self.late_n as usize, 0);
                 self.late_n -= 1;
             }
-            let stale = !skipped
-                && self.ready_at.is_some_and(|r| {
-                    let age = now.wrapping_sub(r);
-                    age > Self::SLOT_MS && age <= u32::MAX - STALE_MS
-                });
+            let stale = !skipped && self.ready_at.is_some_and(|r| now.saturating_sub(r.get()) > Self::SLOT_MS); // (u64: no wrap)
             if self.done & 1 == 0 && !stale {
                 break;
             }
@@ -244,9 +248,9 @@ pub struct IpTable {
     shards: Box<[Mutex<HashMap<IpKey, Entry, RandomState>>]>,
     hash: RandomState,
     keys: AtomicUsize,
-    rate: Option<(f32, f32)>,
-    up: Option<(f64, f64)>,        // 60.25 C10b --upload-rate-per-ip (bytes per ms, burst bytes)
-    conn_rate: Option<(f32, f32)>, // 60.40 --conn-rate-per-ip (connections per ms, burst)
+    rate: Option<(u32, u32)>,      // --stream-rate-per-ip (per second, burst; cli: R <= 1e6, B <= 2e6)
+    up: Option<(u64, u64)>,        // 60.25 C10b --upload-rate-per-ip (bytes per second, burst; cli: R <= 2^40, B <= 2^42)
+    conn_rate: Option<(u32, u32)>, // 60.40 --conn-rate-per-ip (per second, burst; as `rate`)
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -260,28 +264,29 @@ pub enum Charge {
     Untracked,
 }
 
-/// Coarse milliseconds since process start, wrapping every ~49.7 days (the bucket uses wrapping_sub; the sweep
-/// refreshes every live entry long before a wrap).
-pub fn now_ms() -> u32 {
+/// Milliseconds since process start. 60.45: u64, no wrap (the u32 clock wrapped after 49.7 days, and an entry that no
+/// sweep refreshed that long, every worker asleep without clients, refilled for a wrong gap).
+pub fn now_ms() -> u64 {
     static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-    START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u32
+    START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64
 }
 
 impl IpTable {
     #[cfg(test)]
-    pub fn new(rate: Option<(f32, f32)>) -> IpTable {
+    pub fn new(rate: Option<(u32, u32)>) -> IpTable {
         Self::with_upload(rate, None)
     }
 
-    /// 60.25 C10b: `up` = (bytes per ms, burst bytes) of --upload-rate-per-ip
+    /// 60.25 C10b: `up` = (bytes per second, burst bytes) of --upload-rate-per-ip
     #[cfg(test)]
-    pub fn with_upload(rate: Option<(f32, f32)>, up: Option<(f64, f64)>) -> IpTable {
+    pub fn with_upload(rate: Option<(u32, u32)>, up: Option<(u64, u64)>) -> IpTable {
         Self::with_rates(rate, up, None)
     }
 
-    /// `rate`: --stream-rate-per-ip (tokens per ms, burst); `up`: 60.25 C10b --upload-rate-per-ip (bytes per ms, burst
-    /// bytes); `conn_rate`: 60.40 --conn-rate-per-ip (connections per ms, burst)
-    pub fn with_rates(rate: Option<(f32, f32)>, up: Option<(f64, f64)>, conn_rate: Option<(f32, f32)>) -> IpTable {
+    /// Per second and burst, as cli parses them: `rate` --stream-rate-per-ip (R <= 1e6, B <= 2e6); `up` 60.25 C10b
+    /// --upload-rate-per-ip (bytes, R <= 2^40, B <= 2^42); `conn_rate` 60.40 --conn-rate-per-ip (as `rate`).
+    /// (Tests use R = 0: nothing refills.)
+    pub fn with_rates(rate: Option<(u32, u32)>, up: Option<(u64, u64)>, conn_rate: Option<(u32, u32)>) -> IpTable {
         let shards = (0..SHARDS).map(|_| Mutex::new(HashMap::with_hasher(RandomState::new()))).collect();
         IpTable { shards, hash: RandomState::new(), keys: AtomicUsize::new(0), rate, up, conn_rate }
     }
@@ -290,75 +295,66 @@ impl IpTable {
         &self.shards[self.hash.hash_one(k) as usize % SHARDS]
     }
 
-    /// refill `e` to `now` (wrapping_sub; the refill is clamped to the burst, so a huge or wrapped gap cannot overflow).
-    /// Callers read the clock before taking the shard lock, so a thread can arrive with a `now` a little older than
-    /// `e.at` (review: wrapping_sub would read that as ~49 days and refill the whole burst): a gap within STALE_MS
-    /// below `e.at` is such a reordering and changes nothing (`at` never moves back).
-    fn refill(&self, e: &mut Entry, now: u32) {
-        let dt = now.wrapping_sub(e.at);
-        if dt > u32::MAX - STALE_MS {
-            return;
+    /// refill every bucket of `e` to `now`, clamped to its burst. 60.45: u64 ms, so any gap is the real one (also 2^32
+    /// ms or more: an entry no sweep refreshed because every worker slept). Callers read the clock before taking the
+    /// shard lock, so a thread can arrive with a `now` a little older than `e.at`: such a reordering refills nothing and
+    /// `at` never moves back. Integer milli-units (saturating, then clamped): exact for any gap, also in steps.
+    fn refill(&self, e: &mut Entry, now: u64) {
+        let Some(dt) = now.checked_sub(e.at) else { return };
+        if let Some((r, b)) = self.rate {
+            e.tokens = fill(e.tokens.into(), r.into(), u64::from(b) * MILLI, dt) as u32;
+            // (cap <= 2e9: cli)
         }
-        if let Some((per_ms, burst)) = self.rate {
-            e.tokens = (e.tokens + dt as f32 * per_ms).min(burst);
+        if let Some((r, b)) = self.conn_rate {
+            e.ct = fill(e.ct.into(), r.into(), u64::from(b) * MILLI, dt) as u32;
         }
-        if let Some((per_ms, burst)) = self.up {
-            e.ub = (e.ub + dt as f64 * per_ms).min(burst);
+        if let Some((r, b)) = self.up {
+            // ub >= -cap, so adding at most 2 x cap (<= 8.8e15) reaches the cap: no i64 overflow, still exact
+            let cap = b * MILLI;
+            e.ub = (e.ub + r.saturating_mul(dt).min(2 * cap) as i64).min(cap as i64);
         }
         e.at = now;
     }
 
-    /// 60.40 refill the --conn-rate-per-ip bucket to `now` (the same wrap and reordering rules as refill, own time)
-    fn refill_conn(&self, e: &mut Entry, now: u32) {
-        let Some((per_ms, burst)) = self.conn_rate else { return };
-        let dt = now.wrapping_sub(e.cat);
-        if dt > u32::MAX - STALE_MS {
-            return;
-        }
-        e.ct = (e.ct + dt as f32 * per_ms).min(burst);
-        e.cat = now;
-    }
-
     fn idle(&self, e: &Entry) -> bool {
         e.conns == 0
-            && self.rate.is_none_or(|(_, burst)| e.tokens >= burst)
-            && self.up.is_none_or(|(_, burst)| e.ub >= burst)
-            && self.conn_rate.is_none_or(|(_, burst)| e.ct >= burst)
+            && self.rate.is_none_or(|(_, b)| u64::from(e.tokens) >= u64::from(b) * MILLI)
+            && self.up.is_none_or(|(_, b)| e.ub >= (b * MILLI) as i64)
+            && self.conn_rate.is_none_or(|(_, b)| u64::from(e.ct) >= u64::from(b) * MILLI)
     }
 
     /// One connection more for `k`; `max` 0 = no connection limit (the key is still tracked for the rates). Checked in
     /// order: --max-conns-per-ip (Refused), then 60.40 --conn-rate-per-ip (Rate); a refused connection takes no token.
-    pub fn charge(&self, k: IpKey, max: u32, now: u32) -> Charge {
+    pub fn charge(&self, k: IpKey, max: u32, now: u64) -> Charge {
         let mut m = self.shard(k).lock().unwrap();
         if let Some(e) = m.get_mut(&k) {
             if max > 0 && e.conns >= max {
                 return Charge::Refused;
             }
+            self.refill(e, now);
             if self.conn_rate.is_some() {
-                self.refill_conn(e, now);
-                if e.ct < 1.0 {
+                if u64::from(e.ct) < MILLI {
                     return Charge::Rate;
                 }
-                e.ct -= 1.0;
+                e.ct -= MILLI as u32;
             }
-            self.refill(e, now);
             e.conns += 1;
             return Charge::Charged;
         }
         if m.len() >= SHARD_CAP {
             return Charge::Untracked;
         }
-        let tokens = self.rate.map_or(0.0, |(_, b)| b);
-        let ub = self.up.map_or(0.0, |(_, b)| b);
-        let ct = self.conn_rate.map_or(0.0, |(_, b)| b - 1.0); // (burst >= 1: cli)
-        m.insert(k, Entry { conns: 1, tokens, at: now, ct, cat: now, ub, q: Upq::default() });
+        let tokens = self.rate.map_or(0, |(_, b)| b * MILLI as u32); // (milli-units: <= 2e9, cli)
+        let ub = self.up.map_or(0, |(_, b)| (b * MILLI) as i64);
+        let ct = self.conn_rate.map_or(0, |(_, b)| (b - 1) * MILLI as u32); // (burst >= 1: cli)
+        m.insert(k, Entry { conns: 1, tokens, at: now, ct, ub, q: Upq::default() });
         self.keys.fetch_add(1, Relaxed);
         Charge::Charged
     }
 
     /// One connection fewer for a key that was charged. The entry goes once nothing is left to remember (no
     /// connection, a full bucket); else the sweep removes it after the refill.
-    pub fn release(&self, k: IpKey, now: u32) {
+    pub fn release(&self, k: IpKey, now: u64) {
         let mut m = self.shard(k).lock().unwrap();
         let Some(e) = m.get_mut(&k) else {
             debug_assert!(false, "release of an uncharged key");
@@ -367,7 +363,6 @@ impl IpTable {
         debug_assert!(e.conns > 0, "per-IP release underflow");
         e.conns = e.conns.saturating_sub(1);
         self.refill(e, now);
-        self.refill_conn(e, now);
         if self.idle(e) {
             m.remove(&k);
             self.keys.fetch_sub(1, Relaxed);
@@ -375,25 +370,24 @@ impl IpTable {
     }
 
     /// --stream-rate-per-ip: take one token. An untracked key is not limited (fail open).
-    pub fn take(&self, k: IpKey, now: u32) -> bool {
+    pub fn take(&self, k: IpKey, now: u64) -> bool {
         let mut m = self.shard(k).lock().unwrap();
         let Some(e) = m.get_mut(&k) else { return true };
         self.refill(e, now);
-        if e.tokens >= 1.0 {
-            e.tokens -= 1.0;
+        if u64::from(e.tokens) >= MILLI {
+            e.tokens -= MILLI as u32;
             true
         } else {
             false
         }
     }
 
-    /// The idle sweep of one shard: refill every entry (so `at` never ages near the u32 wrap) and drop the idle ones.
-    pub fn sweep(&self, shard: usize, now: u32) {
+    /// The idle sweep of one shard: refill every entry and drop the idle ones.
+    pub fn sweep(&self, shard: usize, now: u64) {
         let mut m = self.shards[shard % SHARDS].lock().unwrap();
         let before = m.len();
         m.retain(|_, e| {
             self.refill(e, now);
-            self.refill_conn(e, now);
             !self.idle(e)
         });
         self.keys.fetch_sub(before - m.len(), Relaxed);
@@ -418,21 +412,21 @@ impl IpTable {
         k: IpKey,
         need: u64,
         ticket: &mut Option<u32>,
-        now: u32,
+        now: u64,
     ) -> Option<u64> {
         let e = m.get_mut(&k)?;
-        let (per_ms, burst) = self.up?;
+        let (rate, burst) = self.up?;
         self.refill(e, now);
-        let share = (per_ms * LEASE_MS / e.conns.max(1) as f64) as u64;
-        let want = share.clamp(need, LEASE_MAX.max(need)).min(burst as u64).max(need);
-        let avail = e.ub.max(0.0) as u64;
+        let share = rate * LEASE_MS / MILLI / u64::from(e.conns.max(1)); // (R <= 2^40: cli)
+        let want = share.clamp(need, LEASE_MAX.max(need)).min(burst).max(need);
+        let avail = e.ub.max(0) as u64 / MILLI;
         let q = &mut e.q;
         q.settle(now, Some(avail >= want));
         if q.head == q.tail {
             *ticket = None;
             if avail >= need {
                 let got = avail.min(want);
-                e.ub -= got as f64;
+                e.ub -= (got * MILLI) as i64; // (got <= avail)
                 return Some(got);
             }
             *ticket = Some(q.join());
@@ -452,7 +446,7 @@ impl IpTable {
         if avail < want.saturating_mul(ahead + 1) {
             return Some(0);
         }
-        e.ub -= want as f64;
+        e.ub -= (want * MILLI) as i64; // (want <= avail)
         e.q.release(t, now);
         *ticket = None;
         Some(want)
@@ -470,28 +464,28 @@ impl IpTable {
         self.top_up_at(&mut m, k, have, to, now)
     }
 
-    fn top_up_at(&self, m: &mut HashMap<IpKey, Entry, RandomState>, k: IpKey, have: u64, to: u64, now: u32) -> u64 {
+    fn top_up_at(&self, m: &mut HashMap<IpKey, Entry, RandomState>, k: IpKey, have: u64, to: u64, now: u64) -> u64 {
         let n = to.min(TOPUP_MAX).saturating_sub(have);
         let Some(e) = m.get_mut(&k) else { return 0 };
         if n == 0 || self.up.is_none() || e.q.head != e.q.tail {
             return 0;
         }
         self.refill(e, now);
-        if e.ub < n as f64 {
-            return 0;
+        if e.ub < (n * MILLI) as i64 {
+            return 0; // (n <= TOPUP_MAX)
         }
-        e.ub -= n as f64;
+        e.ub -= (n * MILLI) as i64;
         n
     }
 
     #[cfg(test)]
-    fn top_up_now(&self, k: IpKey, have: u64, to: u64, now: u32) -> u64 {
+    fn top_up_now(&self, k: IpKey, have: u64, to: u64, now: u64) -> u64 {
         let mut m = self.shard(k).lock().unwrap();
         self.top_up_at(&mut m, k, have, to, now)
     }
 
     #[cfg(test)]
-    fn take_bytes_now(&self, k: IpKey, need: u64, ticket: &mut Option<u32>, now: u32) -> Option<u64> {
+    fn take_bytes_now(&self, k: IpKey, need: u64, ticket: &mut Option<u32>, now: u64) -> Option<u64> {
         let mut m = self.shard(k).lock().unwrap();
         self.take_bytes_at(&mut m, k, need, ticket, now)
     }
@@ -504,11 +498,13 @@ impl IpTable {
         self.give_bytes_at(&mut m, k, n, ticket, now)
     }
 
-    fn give_bytes_at(&self, m: &mut HashMap<IpKey, Entry, RandomState>, k: IpKey, n: u64, ticket: Option<u32>, now: u32) {
+    fn give_bytes_at(&self, m: &mut HashMap<IpKey, Entry, RandomState>, k: IpKey, n: u64, ticket: Option<u32>, now: u64) {
         let Some(e) = m.get_mut(&k) else { return };
         self.refill(e, now);
-        if let Some((_, burst)) = self.up {
-            e.ub = (e.ub + n as f64).min(burst);
+        if let Some((_, b)) = self.up {
+            let cap = b * MILLI;
+            e.ub = (e.ub + n.saturating_mul(MILLI).min(2 * cap) as i64).min(cap as i64);
+            // (ub >= -cap: no overflow)
         }
         if let Some(t) = ticket.filter(|&t| e.q.holds(t)) {
             e.q.release(t, now);
@@ -522,8 +518,10 @@ impl IpTable {
         let now = now_ms();
         let Some(e) = m.get_mut(&k) else { return };
         self.refill(e, now);
-        if let Some((_, burst)) = self.up {
-            e.ub = (e.ub - n as f64).max(-burst);
+        if let Some((_, b)) = self.up {
+            let cap = b * MILLI;
+            e.ub = (e.ub - n.saturating_mul(MILLI).min(2 * cap) as i64).max(-(cap as i64));
+            // (ub <= cap: no overflow)
         }
     }
 
@@ -549,7 +547,7 @@ impl IpTable {
 
     #[cfg(test)]
     pub fn upload_left(&self, k: IpKey) -> Option<f64> {
-        self.shard(k).lock().unwrap().get(&k).map(|e| e.ub)
+        self.shard(k).lock().unwrap().get(&k).map(|e| e.ub as f64 / MILLI as f64)
     }
 
     #[cfg(test)]
@@ -641,7 +639,7 @@ mod tests {
 
     #[test]
     fn upload_lease_bounded_and_given_back() {
-        let t = IpTable::with_upload(None, Some((1.0, 100_000.0))); // 1000 B/s, burst 100 KB
+        let t = IpTable::with_upload(None, Some((1000, 100_000))); // 1000 B/s, burst 100 KB
         let a = key(ip("1.1.1.1"));
         assert_eq!(t.charge(a, 0, 0), Charge::Charged);
         let mut tk = None;
@@ -656,7 +654,7 @@ mod tests {
             t.give_bytes_at(&mut m, a, 1_000_000, None, 20_000);
         }
         assert_eq!(t.take_bytes_now(a, 100_000, &mut tk, 20_000), Some(100_000), "give back clamped to the burst");
-        assert_eq!(t.take_bytes_now(a, 10, &mut tk, u32::MAX - 5), Some(0), "a stale now (before at) refills nothing");
+        assert_eq!(t.take_bytes_now(a, 10, &mut tk, 19_990), Some(0), "a stale now (before at) refills nothing");
         assert_eq!(t.take_bytes_now(key(ip("9.9.9.9")), 77, &mut None, 0), None, "untracked key: fail open (nothing leased)");
         {
             let mut m = t.shard(a).lock().unwrap();
@@ -668,7 +666,7 @@ mod tests {
         t.sweep(t.shard_of(a), 600 + 200_000);
         assert_eq!(t.keys(), 0);
         // the share: 50 ms of the rate split by the key's connections
-        let f = IpTable::with_upload(None, Some((10_000.0, 1e9))); // 10 MB/s: 500 KB per 50 ms
+        let f = IpTable::with_upload(None, Some((10_000_000, 1_000_000_000))); // 10 MB/s: 500 KB per 50 ms
         let b = key(ip("2.2.2.2"));
         assert_eq!(f.charge(b, 0, 0), Charge::Charged);
         assert_eq!(f.take_bytes_now(b, 4096, &mut None, 0), Some(256 << 10), "one connection: LEASE_MAX");
@@ -682,12 +680,12 @@ mod tests {
     /// waits and the bucket can pay it all; a waiting sibling (a ticket out) or a short bucket leaves it alone
     #[test]
     fn upload_top_up_only_when_uncontended() {
-        let t = IpTable::with_upload(None, Some((1.0, 1_000_000.0))); // 1000 B/s, burst 1 MB
+        let t = IpTable::with_upload(None, Some((1000, 1_000_000))); // 1000 B/s, burst 1 MB
         let k = key(ip("6.6.6.6"));
         for _ in 0..2 {
             assert_eq!(t.charge(k, 0, 0), Charge::Charged);
         }
-        let ub = |t: &IpTable| t.shard(k).lock().unwrap()[&k].ub;
+        let ub = |t: &IpTable| t.upload_left(k).unwrap();
         let full = ub(&t);
         assert_eq!(t.top_up_now(k, 16_384, 245_955, 0), 245_955 - 16_384, "topped up to the read's room");
         assert_eq!(ub(&t), full - (245_955 - 16_384) as f64);
@@ -699,12 +697,12 @@ mod tests {
         assert_eq!(t.top_up_now(k, 0, before as u64 + 1, 0), 0, "short bucket: no partial top-up");
         assert_eq!(ub(&t), before);
         assert_eq!(t.top_up_now(k, 0, before as u64 + 1, 2000), before as u64 + 1, "2 s of refill pay it: topped up");
-        t.shard(k).lock().unwrap().get_mut(&k).unwrap().ub = before;
+        t.shard(k).lock().unwrap().get_mut(&k).unwrap().ub = (before * 1000.0) as i64;
         // a waiting sibling blocks it, even when the bucket could pay
         let mut x = None;
         while t.take_bytes_now(k, 4096, &mut x, 0) != Some(0) {}
         assert!(x.is_some(), "x waits with a ticket");
-        t.shard(k).lock().unwrap().get_mut(&k).unwrap().ub = 500_000.0;
+        t.shard(k).lock().unwrap().get_mut(&k).unwrap().ub = 500_000_000;
         assert_eq!(t.top_up_now(k, 16_384, 200_000, 0), 0, "a ticket is out: no top-up");
         assert_eq!(ub(&t), 500_000.0);
         assert_eq!(t.take_bytes_now(k, 4096, &mut x, 0).map(|g| g > 0), Some(true), "x served first");
@@ -715,7 +713,7 @@ mod tests {
     /// bucket serves tickets in order, and a holder that does not come back is skipped after its slot
     #[test]
     fn upload_queue_serves_in_order() {
-        let t = IpTable::with_upload(None, Some((1.0, 16_384.0))); // 1000 B/s, burst 16 KiB
+        let t = IpTable::with_upload(None, Some((1000, 16_384))); // 1000 B/s, burst 16 KiB
         let k = key(ip("3.3.3.3"));
         for _ in 0..3 {
             assert_eq!(t.charge(k, 0, 0), Charge::Charged);
@@ -754,14 +752,14 @@ mod tests {
             assert!(m[&k].q.head == m[&k].q.tail && m[&k].q.late_n == 0, "every ticket given back: empty");
         }
         // (review) a head behind a deficit (a bootstrap charge) is not skipped before its grant is fundable
-        let d = IpTable::with_upload(None, Some((1.0, 16_384.0)));
+        let d = IpTable::with_upload(None, Some((1000, 16_384)));
         let kd = key(ip("4.4.4.4"));
         assert_eq!(d.charge(kd, 0, 0), Charge::Charged);
         d.charge(kd, 0, 0);
         {
             let mut m = d.shard(kd).lock().unwrap();
             let e = m.get_mut(&kd).unwrap();
-            e.ub = -16_384.0; // the bucket owes a full burst
+            e.ub = -16_384_000; // the bucket owes a full burst (milli-bytes)
         }
         let (mut a, mut b) = (None, None);
         assert_eq!(d.take_bytes_now(kd, 4096, &mut a, 0), Some(0));
@@ -772,13 +770,13 @@ mod tests {
         // (review) the head's grant fundable once (a follower arms ready_at), then a bootstrap charge takes it
         // away: later polls restart the grace instead of skipping the live head
         for charged in [true, false] {
-            let d = IpTable::with_upload(None, Some((1.0, 16_384.0)));
+            let d = IpTable::with_upload(None, Some((1000, 16_384)));
             let k3 = key(ip("5.5.5.5"));
             assert_eq!(d.charge(k3, 0, 0), Charge::Charged);
-            d.shard(k3).lock().unwrap().get_mut(&k3).unwrap().ub = 0.0;
+            d.shard(k3).lock().unwrap().get_mut(&k3).unwrap().ub = 0;
             let (mut a, mut b) = (None, None);
             assert_eq!(d.take_bytes_now(k3, 4096, &mut a, 0), Some(0)); // a: the head
-            d.shard(k3).lock().unwrap().get_mut(&k3).unwrap().ub = 5000.0; // a's grant fundable, not a's + b's
+            d.shard(k3).lock().unwrap().get_mut(&k3).unwrap().ub = 5_000_000; // a's grant fundable, not a's + b's
             assert_eq!(d.take_bytes_now(k3, 4096, &mut b, 10), Some(0)); // b behind a, ready_at = 10
             if charged {
                 d.charge_bytes(k3, 1 << 30); // bucket to -burst
@@ -827,7 +825,7 @@ mod tests {
     /// then 20 per second = 200 per 10 s)
     #[test]
     fn conn_rate_bucket() {
-        let t = IpTable::with_rates(None, None, Some((20.0 / 1000.0, 200.0)));
+        let t = IpTable::with_rates(None, None, Some((20, 200)));
         assert!(t.has_conn_rate() && !t.has_rate());
         let k = key(ip("1.1.1.1"));
         assert!((0..200).all(|_| t.charge(k, 0, 0) == Charge::Charged), "the burst: 200 at once");
@@ -837,13 +835,13 @@ mod tests {
         assert_eq!(t.charge(k, 0, 51), Charge::Charged, "one per 50 ms (20/s)");
         assert_eq!(t.charge(k, 0, 51), Charge::Rate);
         // a steady client gets 200 in each further 10 s (one every 50 ms), not more
-        let n = (1..=200u32).filter(|i| t.charge(k, 0, 51 + i * 50) == Charge::Charged).count();
+        let n = (1..=200u64).filter(|i| t.charge(k, 0, 51 + i * 50) == Charge::Charged).count();
         assert_eq!(n, 200);
         assert_eq!(t.charge(k, 0, 10_051), Charge::Rate);
         assert_eq!(t.charge(k, 0, 10_040), Charge::Rate, "a reordered older now: no 49-day refill");
         assert_eq!(t.conns(k), 401);
         // the --max-conns-per-ip check comes first and takes no token
-        let m = IpTable::with_rates(None, None, Some((1.0 / 1000.0, 2.0)));
+        let m = IpTable::with_rates(None, None, Some((1, 2)));
         let a = key(ip("2.2.2.2"));
         assert_eq!((m.charge(a, 1, 0), m.charge(a, 1, 0)), (Charge::Charged, Charge::Refused));
         m.release(a, 0);
@@ -859,7 +857,7 @@ mod tests {
     /// entry (no connection, bucket not full); the sweep refills it and drops it only when it is full again
     #[test]
     fn conn_rate_survives_reconnect() {
-        let t = IpTable::with_rates(None, None, Some((1.0 / 1000.0, 3.0))); // 1/s, burst 3
+        let t = IpTable::with_rates(None, None, Some((1, 3))); // 1/s, burst 3
         let k = key(ip("5.5.5.5"));
         for _ in 0..3 {
             assert_eq!(t.charge(k, 0, 0), Charge::Charged);
@@ -886,6 +884,124 @@ mod tests {
         assert_eq!(off.keys(), 0);
     }
 
+    /// 60.45 the table clock as a caller passes it: `now_ms()` of a process that has run `t` ms
+    fn ms(t: u64) -> u64 {
+        t
+    }
+
+    /// 60.45 an entry no sweep refreshed for 2^32 ms or more (every worker asleep: a server without clients for 49.7
+    /// days) refills as for the real gap: a full burst, in every bucket. With the old u32 clock a gap of 2^32 + x ms
+    /// read as x ms and a gap just under 2^32 as a reordering (no refill at all).
+    #[test]
+    fn idle_beyond_u32_ms_refills_fully() {
+        const W: u64 = 1 << 32;
+        for gap in [W + 10, W - 30_000, 3 * W + 7] {
+            // --stream-rate-per-ip 10/s burst 20 and --conn-rate-per-ip 1/s burst 3 in one table
+            let t = IpTable::with_rates(Some((10, 20)), None, Some((1, 3)));
+            let k = key(ip("1.1.1.1"));
+            assert!((0..3).all(|_| t.charge(k, 0, ms(1000)) == Charge::Charged), "conn burst");
+            assert_eq!(t.charge(k, 0, ms(1000)), Charge::Rate);
+            assert!((0..20).all(|_| t.take(k, ms(1000))) && !t.take(k, ms(1000)), "stream burst spent");
+            let late = ms(1000 + gap);
+            assert!((0..20).all(|_| t.take(k, late)), "gap {gap}: a full stream burst after the idle time");
+            assert!(!t.take(k, late));
+            assert!((0..3).all(|_| t.charge(k, 0, late) == Charge::Charged), "gap {gap}: a full conn burst");
+            assert_eq!(t.charge(k, 0, late), Charge::Rate);
+            // a drained entry without connections that no sweep saw for that long: the first sweep drops it
+            let d = key(ip("2.2.2.2"));
+            assert_eq!(t.charge(d, 0, ms(1000)), Charge::Charged);
+            t.release(d, ms(1000));
+            assert_eq!(t.conns(d), 0);
+            assert_eq!(t.keys(), 2, "k (connected) and the drained d");
+            t.sweep(t.shard_of(d), late);
+            assert_eq!(t.keys(), 1, "gap {gap}: d full again: dropped by the sweep; k kept (connected)");
+            assert!((0..3).all(|_| t.charge(d, 0, late) == Charge::Charged), "gap {gap}: d starts a full burst");
+            assert_eq!(t.charge(d, 0, late), Charge::Rate);
+            // --upload-rate-per-ip: the whole burst again
+            let u = IpTable::with_upload(None, Some((1000, 100_000)));
+            assert_eq!(u.charge(k, 0, ms(1000)), Charge::Charged);
+            assert_eq!(u.take_bytes_now(k, 100_000, &mut None, ms(1000)), Some(100_000));
+            assert_eq!(u.take_bytes_now(k, 100_000, &mut None, ms(1000 + gap)), Some(100_000), "gap {gap}: upload burst");
+        }
+    }
+
+    /// 60.45 a waiting head whose grant became fundable (ready_at) and then nobody polled for 2^32 ms or more: its slot
+    /// has long expired, so the next poll skips it. With the old u32 ready_at the age wrapped to a few ms (or into the
+    /// reordering window) and the follower kept waiting behind a holder that never came back.
+    #[test]
+    fn stale_head_skipped_after_u32_ms() {
+        const W: u64 = 1 << 32;
+        for gap in [W + 100, W - 30_000] {
+            let d = IpTable::with_upload(None, Some((1000, 6000))); // burst 6000: one 4096 grant, not two
+            let k = key(ip("5.5.5.5"));
+            assert_eq!(d.charge(k, 0, ms(0)), Charge::Charged);
+            d.shard(k).lock().unwrap().get_mut(&k).unwrap().ub = 0;
+            let (mut a, mut b) = (None, None);
+            assert_eq!(d.take_bytes_now(k, 4096, &mut a, ms(0)), Some(0)); // a: the head
+            d.shard(k).lock().unwrap().get_mut(&k).unwrap().ub = 5_000_000; // a's grant fundable, not a's + b's
+            assert_eq!(d.take_bytes_now(k, 4096, &mut b, ms(10)), Some(0)); // b behind a, ready_at = 10
+            assert_eq!(d.take_bytes_now(k, 4096, &mut b, ms(10 + gap)), Some(4096), "gap {gap}: a's slot expired, b served");
+            assert!(!d.shard(k).lock().unwrap()[&k].q.holds(a.unwrap()), "gap {gap}: a skipped");
+        }
+    }
+
+    /// 60.45 (parent review) a gap up to the end of u64 refills exactly the burst (saturating milli-units: no overflow),
+    /// and a reordered older `now` refills nothing and leaves the entry's time where it was
+    #[test]
+    fn huge_gap_and_reordered_now() {
+        let t = IpTable::with_rates(Some((10, 20)), Some((1000, 100_000)), Some((1, 3)));
+        let k = key(ip("7.7.7.7"));
+        let at = |t: &IpTable| t.shard(k).lock().unwrap()[&k].at;
+        let buckets = |t: &IpTable| {
+            let m = t.shard(k).lock().unwrap();
+            (m[&k].tokens, m[&k].ct, m[&k].ub)
+        };
+        assert_eq!(t.charge(k, 0, 5000), Charge::Charged);
+        assert!((0..20).all(|_| t.take(k, 5000)));
+        assert_eq!(buckets(&t), (0, 2000, 100_000_000), "milli-units");
+        // older now: nothing refilled, at unchanged (not moved back), the refusal stands
+        assert!(!t.take(k, 4000));
+        assert_eq!(at(&t), 5000);
+        assert_eq!(t.charge(k, 0, 1), Charge::Charged); // (ct 2 -> 1: the charge spends, the refill adds nothing)
+        assert_eq!((at(&t), buckets(&t)), (5000, (0, 1000, 100_000_000)));
+        t.release(k, 0);
+        t.sweep(t.shard_of(k), 4999);
+        assert_eq!((at(&t), buckets(&t)), (5000, (0, 1000, 100_000_000)), "release and sweep with an older now: no change");
+        for now in [5000 + (1u64 << 40), u64::MAX] {
+            assert!(t.take(k, now));
+            let (tk, ct, ub) = buckets(&t);
+            assert_eq!((tk, ct, ub), (19_000, 3000, 100_000_000), "{now}: exactly the burst");
+            assert_eq!(at(&t), now);
+            assert!((0..19).all(|_| t.take(k, now)) && !t.take(k, now));
+        }
+    }
+
+    /// 60.45 review: the conn bucket refilled in steps (a stream take in between) must give the same tokens as
+    /// one refill: 20/s burst 1, 20 ms then 30 ms is exactly one token (f32 gave 0.99999994: refused)
+    #[test]
+    fn refill_in_steps_is_exact() {
+        let t = IpTable::with_rates(Some((10, 20)), None, Some((20, 1)));
+        let k = key(ip("8.8.8.8"));
+        assert_eq!(t.charge(k, 0, 0), Charge::Charged);
+        assert!(t.take(k, 20));
+        assert_eq!(t.charge(k, 0, 50), Charge::Charged, "50 ms of 20/s: one token, in two refills");
+        assert_eq!(t.charge(k, 0, 50), Charge::Rate);
+    }
+
+    /// 60.45 review: a large burst refilled by an upload every ms (1 ms = 1 milli-token at 1/s) fills up as in
+    /// one step (f32 at 1e5 dropped every 0.001 token)
+    #[test]
+    fn small_refills_of_a_large_burst_add_up() {
+        let t = IpTable::with_rates(None, Some((1000, 1_000_000_000)), Some((1, 100_000)));
+        let k = key(ip("8.8.4.4"));
+        assert_eq!(t.charge(k, 0, 0), Charge::Charged); // conn bucket 99,999
+        for now in 1..=1000 {
+            assert!(t.take_bytes_now(k, 1, &mut None, now).is_some_and(|g| g > 0));
+        }
+        let n = (0..100_001).take_while(|_| t.charge(k, 0, 1000) == Charge::Charged).count();
+        assert_eq!(n, 100_000, "1000 refills of 1 ms = one token: the bucket is full again");
+    }
+
     /// 60.40 the per-entry size the conn bucket costs (the table exists only with a per-IP limit on: main build_clientip)
     #[test]
     fn entry_size() {
@@ -895,7 +1011,7 @@ mod tests {
 
     #[test]
     fn bucket_refill_burst_and_wrap() {
-        let t = IpTable::new(Some((10.0 / 1000.0, 20.0))); // 10/s, burst 20
+        let t = IpTable::new(Some((10, 20))); // 10/s, burst 20
         let k = key(ip("1.1.1.1"));
         assert_eq!(t.charge(k, 0, 1000), Charge::Charged);
         assert!((0..20).all(|_| t.take(k, 1000)), "burst");
@@ -906,11 +1022,12 @@ mod tests {
         assert!(!t.take(k, 1090), "a now older than the entry's (lock reordering): no 49-day refill");
         assert!(!t.take(k, 1150) && t.take(k, 1200), "the entry's time did not move back");
         assert!(t.take(k, 1_000_000) && (0..19).all(|_| t.take(k, 1_000_000)) && !t.take(k, 1_000_000), "refill clamped at the burst");
-        // across the u32 wrap: 100 ms from u32::MAX - 49 to 50
+        // 60.45 past 2^32 ms (where the old u32 clock wrapped): 100 ms from 2^32 - 50 to 2^32 + 50 is one token
         let w = key(ip("3.3.3.3"));
-        assert_eq!(t.charge(w, 0, u32::MAX - 49), Charge::Charged);
-        assert!((0..20).all(|_| t.take(w, u32::MAX - 49)) && !t.take(w, u32::MAX - 49));
-        assert!(t.take(w, 50) && !t.take(w, 50), "one token over the wrap (wrapping_sub), not a full burst");
+        let w0 = (1u64 << 32) - 50;
+        assert_eq!(t.charge(w, 0, w0), Charge::Charged);
+        assert!((0..20).all(|_| t.take(w, w0)) && !t.take(w, w0));
+        assert!(t.take(w, w0 + 100) && !t.take(w, w0 + 100), "one token over 2^32 ms, not a full burst");
         assert!(t.take(key(ip("9.9.9.9")), 0), "an untracked key is not limited");
         // release keeps a drained bucket (a reconnect cannot reset it); the sweep drops it once refilled
         t.release(k, 1_000_000);
@@ -923,7 +1040,7 @@ mod tests {
             t.sweep(s, 1_010_000);
         }
         assert_eq!(t.keys(), 1, "k full after 10 s: dropped; w has a connection");
-        t.release(w, 1_010_000);
+        t.release(w, w0 + 10_100); // (w's time is past 2^32 ms: full 10 s after its last take)
         assert_eq!(t.keys(), 0);
     }
 }

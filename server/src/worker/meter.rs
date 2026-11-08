@@ -32,7 +32,7 @@ pub(super) fn tick_left(lscan: u64) -> i32 {
     (lscan.saturating_sub(now_ms64()) as i32).clamp(1, TIMER_TICK_MS)
 }
 
-/// Monotonic ms since the first call (u64: no wrap; the per-IP table keeps its u32 clock and STALE_MS rule).
+/// Monotonic ms since the first call (u64: no wrap; the per-IP table has its own u64 clock, clientip::now_ms).
 pub(super) fn now_ms64() -> u64 {
     static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
     START.get_or_init(Instant::now).elapsed().as_millis() as u64

@@ -35,7 +35,7 @@ impl Worker {
     }
 
     /// 60.20 C3b / 60.39 the shared tables' part of the idle sweep (out of line and cold: idle_sweep is inlined into run).
-    /// SWEEP_SHARDS consecutive shards per sweep: refills live entries (no u32 ms wrap) and drops idle ones. Every awake
+    /// SWEEP_SHARDS consecutive shards per sweep: refills live entries and drops idle ones (both clocks u64 ms: 60.45). Every awake
     /// worker walks all shards (review: a stride by the thread count left a sleeping worker's shards unswept); workers
     /// start spread out. The per-destination table (same shard count) shares the cursor.
     #[cold]

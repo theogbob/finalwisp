@@ -9,27 +9,29 @@ How many times faster finalwisp is than each server:
 
 | finalwisp vs | Throughput | Requests/s | New streams/s |
 |---|---|---|---|
-| [epoxy-server](https://github.com/MercuryWorkshop/epoxy-tls) | 1.5–5.2× | 1.0–1.4× | 1.7–5.9× |
-| [wisp-server-python](https://github.com/MercuryWorkshop/wisp-server-python) | 3.0–6.9× | 2.0–4.7× | 2.9–7.3× |
-| [wisp-js](https://github.com/MercuryWorkshop/wisp-client-js) | 3.9–37× | 1.8–15× | 3.3–15× |
-| [wispurr](https://www.npmjs.com/package/wispurr) | 1.5–11×¹ | 2.0–6.5× | 2.6–5.2× |
+| [epoxy-server](https://github.com/MercuryWorkshop/epoxy-tls) | 1.5–5.4× | 1.0–1.4× | 1.9–5.9× |
+| [wisp-server-python](https://github.com/MercuryWorkshop/wisp-server-python) | 2.7–7.2× | 2.0–4.2× | 3.3–7.3× |
+| [wisp-js](https://github.com/MercuryWorkshop/wisp-client-js) | 3.7–37× | 1.8–18× | 3.3–17× |
+| [wispurr](https://www.npmjs.com/package/wispurr) | 1.5–10×¹ | 2.1–6.0× | 2.4–5.1× |
 
-Ranges cover a 72-thread Intel Xeon Gold server and two 2-core cloud VPSes, base-6 build, every server at its
-default or documented settings. On the big server finalwisp moved 21 GiB/s of downloads and 443k requests/s; on a 2-core VPS,
-2.4 GiB/s and 60–95k requests/s.
+Ranges cover a 72-thread Intel Xeon Gold server and two 2-core cloud VPSes, finalwisp 1.1.0, every server at its
+default or documented settings. On the big server finalwisp moved 21.8 GiB/s of downloads and 445k requests/s; on a
+2-core VPS, 2.4 GiB/s and 64–93k requests/s.
 
-finalwisp also hands memory back when the load stops: 4 MiB after the heaviest test on a 2-core VPS, where the others
-held 150 MiB to 3.4 GB. Peak memory under load is compared in the benchmarks page.
+finalwisp also hands memory back when the load stops: its resident memory right after the heaviest test was 4 MiB on
+the 2-core VPSes, where the others held 145 MiB to 3.3 GiB. Its peak memory under load (VmHWM) was the lowest of the
+five servers on the big server and one VPS, and level with wisp-server-python's on the other VPS (156 vs 160 MiB). The
+benchmarks page has both.
 
 These are loopback tests without TLS: they show what each server can push when the network is not the limit. Over a real link,
 the link usually runs out first. Full tables and method: [benchmarks](docs/benchmarks.md).
 
-¹ Valid cells only: wispurr moved no data in the single-stream upload and echo tests, and failed the big server's
+¹ Valid cells only: wispurr moved no data in most single-stream upload and echo runs, and failed the big server's
 download test (known bugs in the tested version).
 
 ## Quick start
 
-Latest version: **1.0.0**. Download it from the [Releases](../../releases) page, check its SHA-256 sum, then:
+Latest version: **1.1.1**. Download it from the [Releases](../../releases) page, check its SHA-256 sum, then:
 
 ```sh
 finalwisp --port 6001
