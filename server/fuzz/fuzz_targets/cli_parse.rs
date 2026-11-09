@@ -7,7 +7,7 @@
 use finalwisp_fuzz::cli;
 use libfuzzer_sys::fuzz_target;
 
-const FLAGS: [&str; 75] = [
+const FLAGS: [&str; 77] = [
     "--log-level", // 60.24 C4 (missing here since C4/C5)
     "--log-conns",
     "--log-streams",    // 60.35
@@ -21,6 +21,8 @@ const FLAGS: [&str; 75] = [
     "--metrics-interval",
     "--tcpmem-adapt",
     "--no-credit-pace",
+    "--park-rcvlock",    // 60.47
+    "--adaptive-splice", // 60.46 opt-in (v1.2.0)
     "--allow-loopback",
     "--allow-private",
     "--graceful-close",

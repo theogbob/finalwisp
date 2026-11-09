@@ -33,6 +33,7 @@ mod levels;
 mod meter;
 mod pace;
 mod proxy;
+mod rcvlock;
 mod streamlog;
 mod sweep;
 mod target;
@@ -104,6 +105,13 @@ pub struct Config {
     /// 60.42 --credit-pace (default off): no upload CONTINUE while the stream's target is parked on the client's output
     /// (worker/pace.rs)
     pub credit_pace: bool,
+    /// 60.47 --park-rcvlock (default off): the receive-buffer floor in kernel units (SO_RCVBUF as getsockopt reports it;
+    /// main: min(512 KiB, 2 x net.core.rmem_max)), 0 = off. A download-only stream's target socket that parks again on
+    /// its client's output gets its receive buffer locked until a read drains it (worker/rcvlock.rs)
+    pub park_rcvlock: u32,
+    /// 60.46 --adaptive-splice (default off since v1.2.0, 60.50: on a 2-vCPU host it cost same-host clients with more than
+    /// SPLICE_FEW streams): read_target splices SPLICE_SLICE for a backed-up many-stream client; off = SPLICE_PIPE always
+    pub adaptive_splice: bool,
     /// 60.20 C3a `--max-conns` (None = off): the process-wide reservation, taken in accept_all, released in unload
     pub conn_gate: Option<Arc<net::ConnGate>>,
     /// 60.20 C3a `--max-streams-per-conn` (0 = off): open streams per Wisp connection (c.streams) before CONNECT gets 0x49
@@ -204,6 +212,21 @@ const HE_MEMORY: Duration = Duration::from_secs(300); // 20.24 how long a first 
 const HE_PARALLEL: usize = 4; // 20.14 most attempts in flight per target (blackholed names cost fds until the deadline)
 const SPLICE_PIPE: usize = 256 * 1024; // per-client pipe for the splice download path
 const MIN_SPLICE_PIPE: usize = 64 * 1024; // review r1: the default pipe size; smaller (over quota) = copy path
+/// 60.46 splice length while the client's socket is backed up (Client::splice = SPLICE_SLOW), only with --adaptive-splice
+/// (Config::adaptive_splice; off = SPLICE_PIPE always): the copy path's read size.
+/// Bounds one splice call, not a target's drain per RTT (that stays bounded by out_high / out_high_bulk): it removes the
+/// splice-only 256 KiB bursts a parked stream got on each resume, which on kernel 6.8 grew a tail of parked targets'
+/// rcvbufs to 8-16 MiB (receive autotuning; kernels with "tcp: add receive queue awareness in tcp_rcv_space_adjust()"
+/// discount queued bytes). With many streams per client the lane room of a backed-up client then spreads over more streams.
+const SPLICE_SLICE: usize = 64 * 1024;
+/// 60.46 SPLICE_SLICE only for a client with more open streams than this: a client with few streams cannot hold many
+/// parked targets, and on a 2-vCPU loopback the smaller splices cost 1x1 6% (60.46). Open streams, not parked ones: the
+/// stream that splices is the first one resumed, when flush_dirty has just moved every parked stream to `ready`.
+const SPLICE_FEW: usize = 4;
+/// 60.46 Client::splice states
+const SPLICE_OFF: u8 = 0;
+const SPLICE_SLOW: u8 = 1;
+const SPLICE_FAST: u8 = 2;
 
 // 20.21 adaptive lowat for kTLS (b1): --notsent-lowat costs kTLS clients ~7-11% of bulk throughput when the
 // server is CPU-bound (more, smaller packets: one TLS record per TCP push), and buys nothing where the queue
@@ -438,6 +461,8 @@ pub struct Worker {
     lscan: u64,                              // 60.25 C10b next lwait scan (now_ms64)
     pending: HashMap<RawFd, proxy::Pending>, // 60.34 connections waiting for their PROXY header (empty when off)
     cpace_st: Vec<pace::PaceSt>,             // 60.42 --credit-pace per target slot (empty when off: Target unchanged)
+    rcvlock: Vec<rcvlock::LockSt>,           // 60.47 --park-rcvlock per target slot (empty when off: Target unchanged)
+    now: Instant,                            // 60.47 the loop turn's time (read once after epoll_wait; idle_sweep uses it)
 }
 
 #[must_use]
@@ -573,6 +598,8 @@ impl Worker {
             lscan: 0,
             pending: HashMap::new(),
             cpace_st: Vec::new(),
+            rcvlock: Vec::new(),
+            now: Instant::now(),
         })
     }
 
@@ -612,6 +639,7 @@ impl Worker {
                 }
                 panic!("epoll_wait: {}", std::io::Error::last_os_error());
             }
+            self.now = Instant::now(); // 60.47 (was read in idle_sweep at the end of the turn: still one read per turn)
             for ev in &evs[..n as usize] {
                 let (t, e) = (ev.u64, ev.events);
                 self.dispatch(t, e);
@@ -643,7 +671,7 @@ impl Worker {
             if !self.lwait.is_empty() {
                 self.meter_timers(); // 60.25 C10b
             }
-            let swept = self.idle_sweep();
+            let swept = self.idle_sweep(self.now);
             self.tls_timeouts();
             if self.accept_retry {
                 self.accept_retry = false;
@@ -739,6 +767,9 @@ impl Worker {
                             self.read_udp(idx);
                         } else {
                             self.read_target(idx);
+                            if self.cfg.park_rcvlock != 0 {
+                                self.rcvlock_resumed(idx, gen); // 60.47
+                            }
                             if self.cfg.credit_pace {
                                 self.pace_resume(idx, gen); // 60.42
                             }

@@ -256,6 +256,19 @@ const WARN_SOMAXCONN: u64 = 4096; // net::listen asks for a backlog of 4096
 const WARN_NOFILE: u64 = 65536;
 const WARN_RTT_MS: u64 = 50;
 
+/// 60.47 --park-rcvlock: the worker's receive-buffer floor (Config::park_rcvlock, kernel units: SO_RCVBUF as reported, i.e.
+/// doubled) from the SO_BUF_LOCK probe and `limit` = 2 x net.core.rmem_max (net::rcvbuf_limit: a probe, not the sysctl,
+/// which containers hide). SO_RCVBUF is clamped to that, so the floor stays at or below it (a raise never shrinks a
+/// buffer); limit unknown: refused (a floor of 1 never raises: the 60.47 gold2 loss).
+fn park_rcvlock_floor(buf_lock: Option<bool>, limit: Option<u64>) -> Result<u32, &'static str> {
+    const FLOOR: u64 = 512 << 10;
+    match buf_lock {
+        Some(true) => limit.map(|m| FLOOR.min(m).max(1) as u32).ok_or("--park-rcvlock: the receive buffer limit probe failed"),
+        Some(false) => Err("--park-rcvlock needs SO_BUF_LOCK (Linux 5.15 or later)"),
+        None => Err("--park-rcvlock: the SO_BUF_LOCK probe failed"),
+    }
+}
+
 fn sysctl(path: &str, field: usize) -> Option<u64> {
     std::fs::read_to_string(path).ok()?.split_whitespace().nth(field)?.parse().ok()
 }
@@ -630,6 +643,15 @@ private, own-address and --block-dest checks apply to IP literals only"
             std::process::exit(1)
         }))
     });
+    // 60.47 --park-rcvlock: refused without SO_BUF_LOCK (a lock it could not lift would stay for the stream's life)
+    let park_rcvlock = if o.park_rcvlock {
+        park_rcvlock_floor(net::buf_lock_supported(), net::rcvbuf_limit()).unwrap_or_else(|e| {
+            eprintln!("finalwisp: {e}");
+            std::process::exit(2)
+        })
+    } else {
+        0
+    };
     let cfg = Arc::new(Config {
         addr: std::net::SocketAddr::new(o.ip, o.port),
         threads: o.threads.max(1),
@@ -659,6 +681,8 @@ private, own-address and --block-dest checks apply to IP literals only"
         ext,
         credit_v2: o.credit_v2,
         credit_pace: o.credit_pace,
+        park_rcvlock,
+        adaptive_splice: o.adaptive_splice,
         conn_gate: (o.max_conns > 0).then(|| Arc::new(net::ConnGate::new(o.max_conns))),
         max_streams_per_conn: o.max_streams_per_conn,
         policy: policy.map(Box::new),
@@ -723,9 +747,11 @@ private, own-address and --block-dest checks apply to IP literals only"
     }
     let v2_note = if cfg.credit_v2 { ", upload credit v2" } else { "" }; // 20.30
     let pace_note = if cfg.credit_pace { ", credit pace" } else { "" }; // 60.42
+    let lock_note = if cfg.park_rcvlock != 0 { ", park rcvlock" } else { "" }; // 60.47
+    let splice_note = if cfg.adaptive_splice && cfg.splice { ", adaptive splice" } else { "" }; // 60.46 (inert without splice)
     say!(
         Info,
-        "finalwisp listening on {scheme}://{}/ ({} threads, buffer {}{v2_note}{pace_note}{auth_note})",
+        "finalwisp listening on {scheme}://{}/ ({} threads, buffer {}{v2_note}{pace_note}{lock_note}{splice_note}{auth_note})",
         cfg.addr,
         cfg.threads,
         cfg.buffer
@@ -959,6 +985,22 @@ mod tests {
         assert!(!c.is_trusted("100::1".parse().unwrap()) && !c.is_trusted("::".parse().unwrap()), "exactly 100::");
         let c = build_clientip(&o("--listen-unix /run/x.sock --trusted-proxy 10.0.0.0/8 --max-conns-per-ip 3")).unwrap();
         assert!(c.is_trusted(clientip::UNIX_PEER) && c.is_trusted("10.1.2.3".parse().unwrap()) && c.table.is_some());
+    }
+
+    #[test]
+    fn park_rcvlock_floor_rules() {
+        // 60.47: 512 KiB, or the SO_RCVBUF limit (2 x rmem_max) below that (stock 425984); refused without SO_BUF_LOCK
+        assert_eq!(park_rcvlock_floor(Some(true), Some(8 << 20)), Ok(512 << 10));
+        assert_eq!(park_rcvlock_floor(Some(true), Some(425984)), Ok(425984));
+        let lim = net::rcvbuf_limit().expect("probe");
+        assert!(lim >= 4608 && lim.is_multiple_of(2), "2 x rmem_max: {lim}");
+        assert_eq!(park_rcvlock_floor(Some(true), Some(0)), Ok(1));
+        assert!(park_rcvlock_floor(Some(true), None).is_err()); // (refused: a floor of 1 never raises, a measured loss)
+        assert!(park_rcvlock_floor(Some(false), Some(1 << 20)).unwrap_err().contains("SO_BUF_LOCK"));
+        assert!(park_rcvlock_floor(None, Some(1 << 20)).is_err());
+        for e in [park_rcvlock_floor(Some(false), None), park_rcvlock_floor(None, None), park_rcvlock_floor(Some(true), None)] {
+            assert!(!e.unwrap_err().contains(|c| cli::REDACTION_MARKS.contains(c)));
+        }
     }
 
     #[test]

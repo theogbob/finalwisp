@@ -147,6 +147,8 @@ fn config(v: u8) -> Option<Config> {
         ext,
         credit_v2: v != 2,   // 20.30 credit v2 is the default (60.13); variant 2 (the off-switches) runs the base-2 rule
         credit_pace: v != 2, // 60.42 default on; variant 2 (the off-switches) runs without it
+        park_rcvlock: if v == 1 { 512 << 10 } else { 0 }, // 60.47 opt-in: variant 1 runs with it
+        adaptive_splice: v == 1, // 60.46 opt-in since v1.2.0: variant 1 runs with it
         conn_gate: None,
         max_streams_per_conn: 0,
         policy: None,
@@ -505,6 +507,7 @@ impl Harness {
         self.resolver();
         self.sink();
         let n = unsafe { libc::epoll_wait(self.w.ep, self.evs.as_mut_ptr(), self.evs.len() as i32, 0) };
+        self.w.now = Instant::now(); // 60.47 as Worker::run
         for ev in &self.evs[..n.max(0) as usize] {
             let (t, e) = (ev.u64, ev.events);
             self.w.dispatch(t, e);
@@ -529,9 +532,9 @@ impl Harness {
             self.w.meter_timers(); // 60.25 C10b (variant 1 runs an upload limit)
         }
         if sweep {
-            self.w.next_sweep = Instant::now();
+            self.w.next_sweep = self.w.now;
         }
-        let swept = self.w.idle_sweep();
+        let swept = self.w.idle_sweep(self.w.now);
         self.w.tls_timeouts();
         self.w.reap_dead();
         if swept {

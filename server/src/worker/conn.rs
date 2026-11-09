@@ -250,7 +250,7 @@ impl Worker {
                 frag: None,
                 proxy_target: None,
                 pipe: [-1, -1],
-                splice_ok: self.cfg.splice,
+                splice: if self.cfg.splice { SPLICE_SLOW } else { SPLICE_OFF },
                 splice_pending: 0,
                 splice_at: NO_MARK,
                 active: true,

@@ -33,7 +33,7 @@ impl Worker {
     /// PACE_RELEASED = grant, re-decided by pace_resume after a hold (the client ran dry because of us: credit v2 must
     /// not count it as starvation, which would grow the window, review r1 P2), PACE_GO = grant
     pub(super) fn pace_hold(&mut self, ti: u32) -> u8 {
-        let tg = self.targets.gen(ti);
+        let tg = self.targets.gen(ti) & 0x3fff_ffff; // the token's 30 bits, as pace_resume/rcvlock get them (untok)
         let blocked = self.targets.at(ti).blocked;
         let i = ti as usize;
         if self.cpace_st.len() <= i {

@@ -1,5 +1,36 @@
 # Changelog
 
+## v1.2.0
+
+No default changes. Two new options for small hosts that serve many slow downloads, and a guide for them.
+
+Added (both off by default):
+
+- `--adaptive-splice`: a client with more than 4 streams whose socket is backed up gets 64 KiB zero-copy reads from
+  its targets instead of 256 KiB. On a 2-core VPS serving one client 112 ms away with 100 download streams, the
+  download was 1.2-1.4x faster, the host stayed out of kernel TCP memory pressure (0 of 16 runs instead of 9-12), and
+  another program on the same host kept receiving a plain TCP upload at full speed (22.5 MiB/s median instead of 1.9,
+  12 rounds). Cost: on the same kind of VPS, clients on the same host with more than 4 streams were slower (echo
+  10 x 5 streams 6-11%, a 100-stream download less than half as fast). Use it when clients are far away. Clients with
+  1-4 streams are not affected.
+- `--park-rcvlock`: while a download waits on a slow client, its target connection's kernel receive buffer stops
+  growing (it is never made smaller, so no data is dropped). On an 80-thread server, peak host TCP memory with 100
+  waiting downloads went from 952 to 613 MiB, with no throughput loss. It does nothing while the memory budget is
+  below 256 MiB. Needs Linux 5.15 or later.
+- Metrics: `rcvlock_locks`, `rcvlock_errors`.
+
+Fixed:
+
+- Credit pacing (on by default since 1.1.0): once one target slot of a worker thread had been reused about a billion
+  times (2^30 streams), a stream whose upload credit was held while its download waited on the client could stay held
+  after the client caught up. Its upload then paused for up to 2 seconds (with `--no-credit-v2`: until other traffic
+  on the stream, so an echo stream could stall). A server that opens about 1000 short streams per second on one
+  thread could reach that after about 12 days.
+
+Docs: [small hosts and many slow downloads](docs/deployment.md#small-hosts-and-many-slow-downloads): how to tell if a
+host is in kernel TCP memory pressure, and what `--no-splice`, per-IP limits, `--buffer 32` and the two new options
+cost and gain.
+
 ## v1.1.1
 
 Fixed:

@@ -6,9 +6,9 @@ use super::*;
 impl Worker {
     /// 20.11: every IDLE_SWEEP_MS, give back the buffers of clients that did no I/O during a whole
     /// period and hold nothing. They regrow on the next read (from RBUF_MIN) or target read (reserve).
-    /// true = a sweep ran (70.25 run() then trims the pool's dirty set, after reap_dead)
-    pub(super) fn idle_sweep(&mut self) -> bool {
-        let now = Instant::now();
+    /// true = a sweep ran (70.25 run() then trims the pool's dirty set, after reap_dead). `now`: the turn's time (run:
+    /// Worker::now, read after epoll_wait; 60.47)
+    pub(super) fn idle_sweep(&mut self, now: Instant) -> bool {
         if now < self.next_sweep {
             return false;
         }

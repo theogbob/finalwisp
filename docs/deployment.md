@@ -655,10 +655,97 @@ Notes:
   (echo-like streams) builds up. It does not always keep a small host out of TCP memory pressure: on a VPS with small
   socket buffer limits, echo with 100 streams still reaches it; `--buffer 32` (a smaller first upload window per stream)
   kept it out in most runs there (60.42). `--tcpmem-adapt` shrinks this server's socket buffers when the host gets close to it.
+  Many downloads that wait on slow clients (one client with many streams, for example) keep the targets' data in this
+  server's target connections, up to `net.ipv4.tcp_rmem` max each. `--park-rcvlock` (off by default) stops those buffers
+  from growing while their streams wait. It catches a buffer before it grows only if the stream starts to wait early;
+  a buffer that has already grown keeps its size.
+  See [small hosts and many slow downloads](#small-hosts-and-many-slow-downloads) for the trade-offs.
 - finalwisp's virtual size (VSZ) is larger than its resident memory, because it reserves memory in 4 MiB chunks. Only
   resident memory counts. If you set `ulimit -v`, size it from VSZ.
 - After a big burst, resident memory can stay higher for about 10 seconds while freed buffers are returned in small
   batches.
+
+### Small hosts and many slow downloads
+
+On a small host, one client can push the whole host into kernel TCP memory pressure. Other clients then pay for it.
+
+When it happens: a client runs many downloads at once (about 100 streams) and its own link cannot take them as fast
+as the targets send. Each waiting stream keeps the target's data in the kernel's receive queue of its target socket.
+The kernel grows those queues on its own, up to `tcp_rmem` max. finalwisp's own memory stays small (about 5 MiB in
+these tests); the bytes sit in kernel socket memory.
+
+What we measured on a 2-vCPU VPS with 3.8 GB of RAM and the kernel's default `tcp_mem` (pressure starts at 233 MiB),
+with far clients on 20 ms and 112 ms paths and the targets on another host:
+
+- One far client with one connection and 100 download streams. The target queues held 140-230 MiB, and the host was
+  in TCP memory pressure in 13-14 of 16 runs, for about a third of the run (median). The downloading client itself
+  still got 80-100 MiB/s at 20 ms round trip.
+- While that download ran, a separate upload through the same server slowed down. At 20 ms round trip it fell from
+  22-65 MiB/s to 0.3 MiB/s in all 4 runs. At 112 ms the median fell from 23 to 17.5 MiB/s, and one of 4 runs fell to
+  3.4 MiB/s. These are small samples, with the upload sent from the same far machine as the download.
+- With 10 connections of 10 streams each, the host stayed out of pressure at 20 ms but entered it at 112 ms.
+- Why uploads suffer: while the host is in pressure, the kernel limits the receive window of every socket that
+  receives data to about four packets. By the same kernel rule, uploads from any client and data sent to other
+  programs on the host are affected too (not measured separately). Sending is hit less.
+- Another Wisp server we tested held as much or more TCP memory in the same case. The base effect is the kernel's
+  limit; how a server reads its targets changes how much it holds (see `--no-splice` below).
+
+What helps, with the measured costs:
+
+- **`--no-splice`.** The copy path reads less from each target socket at a time, so the kernel probably grows fewer of
+  them to large sizes. In the 100-stream case at 20 ms the download was 1.2x faster (1.16-1.21x in three paired
+  comparisons of 16 runs), the runs in pressure fell from 13-14 of 16 to 0-2 of 16, and the host TCP peak fell from
+  233-234 to 178-180 MiB. The upload next to it kept 4-40 MiB/s at 20 ms (median 19) and 16-26 MiB/s at 112 ms
+  (median 24). The cost is on fast local paths: on loopback on the same kind of VPS, downloads were 12-31% slower
+  (1 stream 12%, 10 x 10 streams 31%), and the host held more TCP memory there, not less (10 x 10 streams: in
+  pressure in all 16 runs instead of 8). An older test on another machine lost more on one loopback stream (3.5 to
+  1.9 GiB/s). Use it on a small host whose clients are far away; leave splice on where clients and targets are close
+  and fast.
+- **`--adaptive-splice`** (off by default). Keeps splice on, but a client with more than 4 streams (busy or idle)
+  whose socket is backed up gets 64 KiB reads from its targets instead of 256 KiB. In the 100-stream case at 112 ms
+  the download was 1.2-1.4x faster and the host left TCP memory pressure (0 of 16 runs instead of 9-12), and
+  single-stream loopback downloads did not change. The cost: on the same kind of 2-core VPS, clients on the same host
+  with more than 4 streams were slower (echo 10 x 5 streams 6-11%, now with TCP memory pressure; a 100-stream
+  download less than half as fast, in pressure with or without the flag). Use it on a small host whose clients are
+  far away.
+- **Per-IP and per-connection limits.** Fewer parallel streams per client means less waiting data. In the same test
+  at 20 ms, one connection with 10 streams peaked at 58 MiB of host TCP memory, with 50 streams at 176-232 MiB, with
+  100 at 231-244 MiB. `--max-streams-per-conn` caps the streams on one connection (the 256 in the example under
+  [securing a public server](#securing-a-public-server) does not stop 100). `--max-conns-per-ip` caps how many
+  connections one address can spread them over (10 x 10 streams still reached pressure at 112 ms).
+  `--stream-rate-per-ip` only limits how fast new streams open, not how many run at once. Set the caps above what your
+  normal clients use; we did not measure a particular value.
+- **More RAM or a larger `tcp_mem`.** The kernel sets `tcp_mem` from the RAM size (pressure starts at the second
+  value, about 6% of RAM), and finalwisp never changes it. The startup warning about `tcp_mem` below 512 MiB points at
+  this case. Raise all three values of `net.ipv4.tcp_mem` yourself if the host has the memory, or move to a larger
+  host.
+- **`--buffer 32`.** A smaller first upload window per stream. It helps when the pressure comes from echo-like traffic
+  (many streams that upload and download at once). In a loopback echo test with 10 x 10 streams on the same kind of
+  VPS, the runs in pressure went from 16 of 16 to 1 of 16, the host TCP peak from 234 to 198 MiB, and server memory
+  from 144 to 22 MiB. It does not target the many-downloads case above (downloads do not use upload credit). The
+  cost: an upload of 1-4 MiB on an already open connection waits one more round trip. At 115 ms round trip a 1 MiB
+  upload took 243 ms instead of 121 ms (median), a 4 MiB upload 494 ms instead of 358 ms. Uploads up to 256 KiB took
+  2% longer or less, and uploads that open a new connection each time did not change. A new upload stream also
+  started slower in its first second on a 150 ms test link (0.75x). Use it only where echo-like traffic causes the
+  pressure and large uploads on open connections are rare.
+- **Not a fix:** `--tcpmem-adapt` kept the host out of pressure but cost the many-stream downloads a quarter to a
+  third of their speed. A low `--mem-budget` counts socket memory and slows everything: 256 MiB cut that download to
+  about half.
+
+How to tell:
+
+1. Look at the host's TCP memory: `cat /proc/net/sockstat` (the `mem` value on the `TCP:` line, in 4 KiB pages)
+   against `cat /proc/sys/net/ipv4/tcp_mem` (three values, also in pages). Pressure starts above the second value and
+   ends below the first.
+2. Check whether the host is in pressure now: the `press` column of the `TCP` line in `/proc/net/protocols` reads
+   `yes`.
+3. Count how often it entered pressure: `nstat -az TcpExtTCPMemoryPressures TcpExtTCPMemoryPressuresChrono`. The first
+   counts entries (a host that stays in pressure counts once), the second the milliseconds spent in pressure, added
+   only when a pressure period ends.
+4. Find the cause: `finalwisp_streams` is high against `finalwisp_connections` (many streams per connection), and
+   `--log-streams` shows which client addresses run them. Uploads from other clients slow down at the same time.
+5. Check finalwisp's own memory (`finalwisp_process_resident_bytes`). If it is small but host TCP memory is near the
+   limit, the bytes are in socket queues, and the options above apply.
 
 ## Kernel features
 
@@ -716,6 +803,10 @@ finalwisp looks up every name as a full name and ignores `search` in `/etc/resol
 A stream limit was hit, or the server is under memory pressure. Check the `finalwisp_memory_level` metric and the
 `refuse_*` counters. Under pressure, raise the memory limit or lower the load.
 
+**Uploads slow down for everyone while one client downloads a lot.**
+On a small host this is often kernel TCP memory pressure. See
+[small hosts and many slow downloads](#small-hosts-and-many-slow-downloads).
+
 **Name lookups are slow when a name server is down.**
 The system resolver waits about 10 s per dead server. `--dns-own` (or `--dns-server`) gives up after 1-2 s.
 
@@ -734,6 +825,9 @@ finalwisp warns about host settings that limit it, but never changes them:
 
 - Linux on x86_64 only.
 - `wss://` needs kTLS. TLS 1.3 key updates need Linux 6.14; on older kernels a KeyUpdate closes the connection.
+- On a small host, one client with many parallel downloads that its own link cannot take can push the host into
+  kernel TCP memory pressure, and uploads from other clients then slow down sharply. See
+  [small hosts and many slow downloads](#small-hosts-and-many-slow-downloads).
 - `--download-rate` is per connection. There is no per-IP download cap: a client with several connections gets the
   cap on each.
 - UDP uploads are not paced by `--upload-rate-per-stream`; `--upload-rate` does cover them.

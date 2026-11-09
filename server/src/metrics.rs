@@ -225,6 +225,11 @@ stats! {
     dest_keys_max,
     /// 60.42 --credit-pace: upload CONTINUEs held because the stream's target was parked on its client's output
     cpace_holds,
+    /// 60.47 --park-rcvlock: receive buffers locked (a download-only stream's target parked again on its client's output)
+    rcvlock_locks,
+    /// 60.47 --park-rcvlock: lock, unlock or floor-raise syscalls that failed, or a raise that lowered a buffer (a failed
+    /// lock leaves the stream unlocked, a failed unlock is tried again at the next unparked resume)
+    rcvlock_errors,
 }
 
 impl Stats {

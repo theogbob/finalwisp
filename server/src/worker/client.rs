@@ -37,7 +37,11 @@ pub(super) struct Client {
     // 20.08 splice download path: target bytes sit in `pipe` (not in obuf); they belong in the
     // output stream at obuf offset `splice_at` (right after their frame header).
     pub(super) pipe: [RawFd; 2],
-    pub(super) splice_ok: bool,
+    // 60.46 (was splice_ok: bool; a new field would grow the 512-byte slab slot): SPLICE_OFF = copy path only;
+    // SPLICE_SLOW = the last splice did not go out whole (or none yet): with --adaptive-splice read_target splices
+    // SPLICE_SLICE if the client has more than SPLICE_FEW streams, else (and always without the flag) SPLICE_PIPE;
+    // SPLICE_FAST = it did: SPLICE_PIPE
+    pub(super) splice: u8,
     pub(super) splice_pending: usize,
     pub(super) splice_at: usize,
     pub(super) active: bool, // 20.11: I/O since the last idle sweep
@@ -119,6 +123,11 @@ pub(super) struct Client {
     #[cfg(test)]
     pub(super) ku_refuse: bool, // 60.15 T40 test: key_update acts as if the kernel refused the record
 }
+
+// 60.46 / 60.22: the record fills its 512-byte slab slot ((u32, Option<Client>)); a new field there costs every client 8 more
+// bytes and a non-power-of-two slot (checked in every non-test build; test builds: worker::tests::client_size_unchanged)
+#[cfg(not(test))]
+const _: () = assert!(std::mem::size_of::<(u32, Option<Client>)>() == 512);
 
 /// 20.13/20.17 handshake state: unbuffered rustls (so it can become a kernel connection) and its
 /// pending output. rbuf[..kept] holds bytes rustls has seen but not released (a handshake

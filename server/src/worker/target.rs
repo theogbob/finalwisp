@@ -202,6 +202,7 @@ impl Worker {
     /// reserved header gap, then write the headers in front. Zero payload copies.
     pub(super) fn read_target(&mut self, ti: u32) {
         let tg = self.targets.gen(ti);
+        let mut slen = 0; // 60.46 splice length, fixed for this call at its first splice (no growth within one call)
         for _ in 0..BUDGET {
             let t = self.targets.at(ti);
             if t.blocked {
@@ -220,13 +221,14 @@ impl Worker {
             let past = (lane && pending >= self.st.out_high_bulk) || pending >= self.st.out_high;
             if lane && pending >= self.st.out_high_bulk && sroom == 0 {
                 self.targets.at(ti).blocked = true;
-                // Round-robin: the cap gap is only ~3 reads, so the first resumed stream refills it and the
-                // others park again without reading. Those keep their order at the front (behind earlier
-                // non-readers since the last drain); a stream that read since its last park goes to the
-                // back. Plain FIFO let one stream take nearly all of the lane (a page response waited behind
-                // the download: 100 Mbit page p50 +16-25%); insert(0) reversed the list and starved 3+
-                // streams (review P0); a rotate at the drain starved one of two streams when no-read rounds
-                // alternate (review P1); "no read in this call" missed reads before a BUDGET requeue (r3).
+                c.splice = c.splice.min(SPLICE_SLOW); // 60.46 backed up (also through the copy path): FAST -> SLOW, OFF stays
+                                                      // Round-robin: the cap gap is only ~3 reads, so the first resumed stream refills it and the
+                                                      // others park again without reading. Those keep their order at the front (behind earlier
+                                                      // non-readers since the last drain); a stream that read since its last park goes to the
+                                                      // back. Plain FIFO let one stream take nearly all of the lane (a page response waited behind
+                                                      // the download: 100 Mbit page p50 +16-25%); insert(0) reversed the list and starved 3+
+                                                      // streams (review P0); a rotate at the drain starved one of two streams when no-read rounds
+                                                      // alternate (review P1); "no read in this call" missed reads before a BUDGET requeue (r3).
                 let t = self.targets.at(ti);
                 let read = std::mem::replace(&mut t.lane_read, false);
                 if read {
@@ -240,6 +242,7 @@ impl Worker {
             }
             if pending >= self.st.out_high && sroom == 0 {
                 self.targets.at(ti).blocked = true;
+                c.splice = c.splice.min(SPLICE_SLOW); // 60.46 (as above)
                 c.blocked.push(tok(K_TARGET, ti, tg));
                 return;
             }
@@ -251,8 +254,13 @@ impl Worker {
                 c.compact_bulk();
             }
             let c = self.clients.at(ci);
-            if bulk && !past && c.splice_ok && c.splice_pending == 0 && c.obuf.len() == c.ohead && c.bulk.len() == c.bhead {
-                match self.splice_target(ti, ci, fd, sid, raw) {
+            if bulk && !past && c.splice != SPLICE_OFF && c.splice_pending == 0 && c.obuf.len() == c.ohead && c.bulk.len() == c.bhead {
+                if slen == 0 {
+                    // off (default): SPLICE_PIPE always, the v1.1.1 length (Client::splice is still kept up to date)
+                    let adaptive = self.cfg.adaptive_splice && c.splice == SPLICE_SLOW && c.streams.len() > SPLICE_FEW;
+                    slen = if adaptive { SPLICE_SLICE } else { SPLICE_PIPE };
+                }
+                match self.splice_target(ti, ci, fd, sid, raw, slen) {
                     SpliceRes::Again => continue,
                     SpliceRes::Done => return,
                 }
@@ -350,7 +358,9 @@ impl Worker {
 
     /// 20.08 splice download: target socket -> pipe -> client socket, payload never enters user
     /// space. Only used when nothing else is queued for the client, so stream order is trivial.
-    fn splice_target(&mut self, ti: u32, ci: u32, fd: RawFd, sid: u32, raw: bool) -> SpliceRes {
+    /// 60.46: moves at most `len` bytes (SPLICE_PIPE, or with --adaptive-splice SPLICE_SLICE for a backed-up client with many
+    /// streams: read_target).
+    fn splice_target(&mut self, ti: u32, ci: u32, fd: RawFd, sid: u32, raw: bool, len: usize) -> SpliceRes {
         if self.clients.at(ci).pipe[0] < 0 {
             if Instant::now() < self.pipe_retry_at {
                 self.targets.at(ti).bulk = false;
@@ -382,14 +392,7 @@ impl Worker {
         }
         let c = self.clients.at(ci);
         let n = unsafe {
-            libc::splice(
-                fd,
-                std::ptr::null_mut(),
-                c.pipe[1],
-                std::ptr::null_mut(),
-                SPLICE_PIPE,
-                libc::SPLICE_F_MOVE | libc::SPLICE_F_NONBLOCK,
-            )
+            libc::splice(fd, std::ptr::null_mut(), c.pipe[1], std::ptr::null_mut(), len, libc::SPLICE_F_MOVE | libc::SPLICE_F_NONBLOCK)
         };
         if n <= 0 {
             // TCP urgent data: splice stops at the urgent mark and reports EAGAIN/0 even though
@@ -405,7 +408,7 @@ impl Worker {
                     return SpliceRes::Done;
                 }
                 if e == libc::EINVAL || e == libc::ENOSYS {
-                    c.splice_ok = false; // kernel/socket cannot splice: copy path from now on
+                    c.splice = SPLICE_OFF; // kernel/socket cannot splice: copy path from now on
                     self.targets.at(ti).bulk = false;
                     return SpliceRes::Again;
                 }
@@ -440,7 +443,9 @@ impl Worker {
             return SpliceRes::Done;
         }
         let c = self.clients.at(ci);
-        if c.splice_pending > 0 || c.ohead < c.obuf.len() {
+        let whole = c.splice_pending == 0 && c.ohead == c.obuf.len();
+        c.splice = if whole { SPLICE_FAST } else { SPLICE_SLOW }; // 60.46 (not OFF here: EINVAL returned above)
+        if !whole {
             // Client socket full: the rest goes out on EPOLLOUT via flush_dirty. Park the target in
             // `blocked` so flush_dirty resumes it — with EPOLLET a target whose data (and FIN) is
             // already buffered raises no new event, so without this the stream stalls forever.

@@ -267,6 +267,48 @@ pub fn uncap_bufs(fd: RawFd, saved: (i32, i32)) {
 
 const SO_BUF_LOCK: i32 = 72; // asm-generic/socket.h (not in every libc version)
 
+/// 60.47 SOCK_RCVBUF_LOCK in SO_BUF_LOCK's bit mask (include/net/sock.h; SOCK_SNDBUF_LOCK = 1)
+pub const RCVBUF_LOCK: i32 = 2;
+
+fn getsockopt_int(fd: RawFd, level: i32, opt: i32) -> Option<i32> {
+    let mut v: libc::c_int = 0;
+    let mut len = size_of::<libc::c_int>() as libc::socklen_t;
+    (unsafe { libc::getsockopt(fd, level, opt, &mut v as *mut _ as *mut _, &mut len) } == 0).then_some(v)
+}
+
+/// 60.47 (Linux 5.15+) the socket's buffer lock bits (SO_BUF_LOCK: SOCK_SNDBUF_LOCK | SOCK_RCVBUF_LOCK); None = error
+pub fn buf_lock(fd: RawFd) -> Option<i32> {
+    getsockopt_int(fd, libc::SOL_SOCKET, SO_BUF_LOCK)
+}
+
+/// 60.47 set the lock bits (no size change: a locked receive buffer keeps its size, autotuning stops growing it)
+pub fn set_buf_lock(fd: RawFd, bits: i32) -> bool {
+    setsockopt_int(fd, libc::SOL_SOCKET, SO_BUF_LOCK, bits)
+}
+
+/// 60.47 SO_RCVBUF as the kernel reports it (doubled); None = error
+pub fn rcvbuf(fd: RawFd) -> Option<i32> {
+    getsockopt_int(fd, libc::SOL_SOCKET, libc::SO_RCVBUF)
+}
+
+/// 60.47 2 x net.core.rmem_max as the kernel applies it: SO_RCVBUF on a throwaway socket is clamped to it, so a huge
+/// request reads back that limit (works where the net sysctls are hidden, e.g. containers). None = the probe failed
+pub fn rcvbuf_limit() -> Option<u64> {
+    let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0) };
+    if fd < 0 {
+        return None;
+    }
+    let v = (setsockopt_int(fd, libc::SOL_SOCKET, libc::SO_RCVBUF, i32::MAX / 2)).then(|| rcvbuf(fd)).flatten();
+    unsafe { libc::close(fd) };
+    v.filter(|&v| v > 0).map(|v| v as u64)
+}
+
+/// 60.47 SO_RCVBUF (`kernel` = the reported, doubled size wanted; clamped to 2 x net.core.rmem_max; also sets
+/// SOCK_RCVBUF_LOCK)
+pub fn set_rcvbuf(fd: RawFd, kernel: i32) -> bool {
+    setsockopt_int(fd, libc::SOL_SOCKET, libc::SO_RCVBUF, kernel / 2)
+}
+
 /// 80.01 F2 startup probe: does this kernel have SO_BUF_LOCK (Linux 5.15+; not in RHEL 9)? Sets it to 0 on
 /// a throwaway socket (no buffer is locked there, so no effect). Some(false) = ENOPROTOOPT: sockets capped
 /// under memory pressure stay capped (`uncap_bufs`); None = the probe itself failed. Log only, no behaviour change.

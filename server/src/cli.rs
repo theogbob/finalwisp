@@ -16,6 +16,11 @@ full-duplex bulk such as echo keeps less socket memory and small hosts reach TCP
 [--metrics-listen [ADDR:]PORT (Prometheus GET /metrics, no auth; a bare PORT listens on 127.0.0.1; off by default)]
 opt-in: [--balance (spread new connections evenly over the threads: helps a few busy long-lived connections, \
 +4..11% on 36-72 thread boxes; costs 1-7% on connection churn)] [--tcpmem-adapt (cap remote sockets near host TCP memory pressure; needs credit v2 and the memory budget)] \
+[--park-rcvlock (stop growing the receive buffer of a download-only stream's target socket while the stream waits on a slow \
+client: many parked downloads keep less kernel memory; Linux 5.15+)] \
+[--adaptive-splice (a client with more than 4 streams whose socket is backed up gets 64 KiB target reads instead of 256 KiB: \
+helps many slow downloads from far clients on a small host, which keeps less kernel TCP memory; costs clients on the same \
+host with more than 4 streams on a 2-core host: echo 6-11% slower, a 100-stream download less than half as fast)] \
 [--max-conns N (connections over N are reset at accept)] [--max-streams-per-conn N (CONNECT over N streams on one connection gets 0x49)]
 client IP and per-IP limits (off by default): [--trusted-proxy CIDRS] [--real-ip-header NAME (default x-forwarded-for)] \
 [--max-conns-per-ip N] [--stream-rate-per-ip R[/B] (CONNECTs per second, burst B, default 2R)] \
@@ -78,6 +83,8 @@ pub struct Opts {
     pub metrics_interval: u64,     // 60.12 seconds between `ev=metrics` log lines (0 = off), <= MAX_METRICS_INTERVAL
     pub credit_v2: bool,           // 20.30 upload credit v2 (worker Config::credit_v2); 60.13: default on
     pub credit_pace: bool,         // 60.42 no upload credit while the stream's download waits on the client (default on, 60.42 verify)
+    pub park_rcvlock: bool,        // 60.47 lock a parked download-only target's receive buffer (opt-in)
+    pub adaptive_splice: bool,     // 60.46 rule B splice length (opt-in since v1.2.0: 60.50 same-host cost on 2-vCPU)
     pub max_conns: u32,            // 60.20 C3a --max-conns (0 = off): connections over it are reset at accept
     pub max_streams_per_conn: u32, // 60.20 C3a --max-streams-per-conn (0 = off): CONNECT over it gets 0x49
     /// 60.20 C1 request rules (--allow-host, --block-host, --allow-ports, --block-ports, --block-smtp, --no-direct-ip,
@@ -155,6 +162,8 @@ pub const FLAGS: &[(&str, bool)] = &[
     ("--mem-budget", true),
     ("--tcpmem-adapt", false),
     ("--no-credit-pace", false),
+    ("--park-rcvlock", false),
+    ("--adaptive-splice", false),
     ("--metrics-interval", true),
     ("--max-conns", true),
     ("--max-streams-per-conn", true),
@@ -482,6 +491,8 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I, threads: usize) -> Re
         tcpmem_adapt: false, // 60.14: off again (VPS A/B: bulk download 0.65-0.83 under host TCP pressure, 2.8x CPU/MiB)
         credit_v2: true,     // 60.13 default on (20.30 acceptance + browser compat)
         credit_pace: true,   // 60.42 default on (Default-ON verification, owner 2026-11-07)
+        park_rcvlock: false, // 60.47 opt-in
+        adaptive_splice: false, // 60.46 opt-in (v1.2.0, 60.50)
         max_conns: 0,
         max_streams_per_conn: 0,
         rules: crate::policy::Rules { direct_ip: true, ipv6: true, ..Default::default() },
@@ -572,8 +583,10 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I, threads: usize) -> Re
                 let v = val()?;
                 o.mem_budget = Some(parse_size(&v).ok_or_else(|| format!("--mem-budget: bad size {v:?}"))?);
             }
-            "--tcpmem-adapt" => o.tcpmem_adapt = true,   // 60.14 opt-in
-            "--no-credit-pace" => o.credit_pace = false, // 60.42 default on
+            "--tcpmem-adapt" => o.tcpmem_adapt = true,       // 60.14 opt-in
+            "--no-credit-pace" => o.credit_pace = false,     // 60.42 default on
+            "--park-rcvlock" => o.park_rcvlock = true,       // 60.47 opt-in
+            "--adaptive-splice" => o.adaptive_splice = true, // 60.46 opt-in
             "--metrics-interval" => {
                 o.metrics_interval = num(&a, val()?)?;
                 if o.metrics_interval > MAX_METRICS_INTERVAL {
@@ -797,7 +810,9 @@ mod tests {
         assert!(parse("--log-level verbose").is_err() && parse("--log-level").is_err());
         assert!(!parse("").unwrap().tcpmem_adapt && parse("--tcpmem-adapt").unwrap().tcpmem_adapt);
         assert!(parse("").unwrap().credit_pace && !parse("--no-credit-pace").unwrap().credit_pace); // 60.42 default on
-                                                                                                    // 60.20 C3a: off by default (Q4)
+        assert!(!parse("").unwrap().park_rcvlock && parse("--park-rcvlock").unwrap().park_rcvlock); // 60.47 opt-in
+        assert!(!parse("").unwrap().adaptive_splice && parse("--adaptive-splice").unwrap().adaptive_splice); // 60.46 opt-in
+                                                                                                             // 60.20 C3a: off by default (Q4)
         let o = parse("--max-conns 1000 --max-streams-per-conn 64").unwrap();
         assert_eq!((o.max_conns, o.max_streams_per_conn), (1000, 64));
         let o = parse("").unwrap();
@@ -1075,6 +1090,8 @@ mod tests {
         assert!(ex("--config f", "").unwrap().args.is_empty());
         // --config as the value of another flag is not a config file
         assert_eq!(ex("--motd --config", "port 1").unwrap().args, ["--motd", "--config"]);
+        // 60.46 --adaptive-splice as a config key (opt-in)
+        assert!(parse_args(ex("--config f", "adaptive-splice\n").unwrap().args, 1).unwrap().adaptive_splice);
     }
 
     #[test]
