@@ -148,7 +148,7 @@ fn config(v: u8) -> Option<Config> {
         credit_v2: v != 2,   // 20.30 credit v2 is the default (60.13); variant 2 (the off-switches) runs the base-2 rule
         credit_pace: v != 2, // 60.42 default on; variant 2 (the off-switches) runs without it
         park_rcvlock: if v == 1 { 512 << 10 } else { 0 }, // 60.47 opt-in: variant 1 runs with it
-        adaptive_splice: v == 1, // 60.46 opt-in since v1.2.0: variant 1 runs with it
+        adaptive_splice: v != 2, // 60.51 default on since v1.2.1; variant 2 (the off-switches) runs without it
         conn_gate: None,
         max_streams_per_conn: 0,
         policy: None,

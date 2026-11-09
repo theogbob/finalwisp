@@ -1850,6 +1850,18 @@ mod tests {
         assert_eq!((ga.len(), gb.len(), ga[0].nx || gb[0].nx), (1, 1, false));
     }
     #[test]
+    fn min_rtt_of_a_loopback_peer() {
+        // 60.51: a loopback connection has its handshake sample at accept (far below 10 ms); a unix socket has none
+        use std::os::fd::AsRawFd;
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let _c = std::net::TcpStream::connect(l.local_addr().unwrap()).unwrap();
+        let (s, _) = l.accept().unwrap();
+        let v = min_rtt_us(s.as_raw_fd()).expect("TCP_INFO min_rtt");
+        assert!(v < 10_000, "{v}");
+        let (a, _b) = std::os::unix::net::UnixStream::pair().unwrap();
+        assert_eq!(min_rtt_us(a.as_raw_fd()), None);
+    }
+    #[test]
     fn same_host_peers() {
         // B: loopback (v4, v6, another 127/8 address) is this host; a socket with no peer is not
         let pair = |bind: &str, to: &str| {

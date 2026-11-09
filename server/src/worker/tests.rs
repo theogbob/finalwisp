@@ -1101,6 +1101,11 @@ fn splice_length_steps(adaptive: bool) {
     let ci = 0;
     w.clients.at(ci).state = CState::Open;
     assert_eq!(w.clients.at(ci).splice, SPLICE_SLOW, "a new client starts SLOW");
+    // 60.51 the socketpair client has no TCP RTT: near (v1.1.1 length) with the flag; the steps below act as a far client
+    assert_eq!(w.splice_far.first().copied(), adaptive.then_some(false), "splice_far is only kept with the flag");
+    if adaptive {
+        w.splice_far[ci as usize] = true;
+    }
     let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = l.local_addr().unwrap().port();
     let (ti, tg) = w.new_target(ci, 1, "127.0.0.1".into(), port, false, false).unwrap();
@@ -1218,6 +1223,19 @@ fn splice_length_steps(adaptive: bool) {
         let want = if adaptive { 1..=SPLICE_SLICE } else { SPLICE_SLICE + 1..=SPLICE_PIPE };
         assert!(want.contains(&c.splice_pending), "adaptive {adaptive}: {}", c.splice_pending);
         assert!(c.splice == SPLICE_SLOW && w.targets.at(ti).blocked);
+        // 3b. (60.51) the same for a near client (min RTT at accept < SPLICE_FAR_RTT_US): up to SPLICE_PIPE, as v1.1.1
+        if adaptive {
+            w.splice_far[ci as usize] = false;
+            empty_client(&mut w);
+            refill(&mut peer);
+            fill_client();
+            unpark(&mut w);
+            w.read_target(ti);
+            let c = w.clients.at(ci);
+            assert!((SPLICE_SLICE + 1..=SPLICE_PIPE).contains(&c.splice_pending), "near: {}", c.splice_pending);
+            assert!(c.splice == SPLICE_SLOW && w.targets.at(ti).blocked);
+            w.splice_far[ci as usize] = true;
+        }
         // 4. SLOW + few streams (<= SPLICE_FEW): SPLICE_PIPE, as v1.1.1
         many(&mut w, false);
         empty_client(&mut w);

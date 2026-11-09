@@ -63,7 +63,7 @@ finalwisp
 ```
 
 ```text
-finalwisp listening on ws://127.0.0.1:6001/ (8 threads, buffer 128, upload credit v2)
+finalwisp listening on ws://127.0.0.1:6001/ (8 threads, buffer 128, upload credit v2, credit pace, adaptive splice)
 finalwisp: capabilities: 8 threads, memory budget 7845 MiB (MemTotal/2; ...), TLS off, splice on, TFO on, ...
 finalwisp: hint: mail ports 25/465/587 are open to clients; --block-smtp closes them
 ```
@@ -701,13 +701,15 @@ What helps, with the measured costs:
   pressure in all 16 runs instead of 8). An older test on another machine lost more on one loopback stream (3.5 to
   1.9 GiB/s). Use it on a small host whose clients are far away; leave splice on where clients and targets are close
   and fast.
-- **`--adaptive-splice`** (off by default). Keeps splice on, but a client with more than 4 streams (busy or idle)
-  whose socket is backed up gets 64 KiB reads from its targets instead of 256 KiB. In the 100-stream case at 112 ms
-  the download was 1.2-1.4x faster and the host left TCP memory pressure (0 of 16 runs instead of 9-12), and
-  single-stream loopback downloads did not change. The cost: on the same kind of 2-core VPS, clients on the same host
-  with more than 4 streams were slower (echo 10 x 5 streams 6-11%, now with TCP memory pressure; a 100-stream
-  download less than half as fast, in pressure with or without the flag). Use it on a small host whose clients are
-  far away.
+- **Adaptive splice** (on by default since 1.2.1; `--no-adaptive-splice` turns it off). Keeps splice on, but a far
+  client (round trip 10 ms or more when it connected) with more than 4 streams (busy or idle) whose socket is backed up gets 64 KiB reads from its targets
+  instead of 256 KiB. In the 100-stream case at 112 ms the download was 1.2-1.4x faster and the host left TCP memory
+  pressure (0 of 16 runs instead of 9-12). Clients closer than 10 ms (same host, LAN) and clients on `--listen-unix`
+  keep 256 KiB reads, so on a 2-core VPS with clients on the same host nothing changed with it on. **Behind a
+  reverse proxy on the same host (nginx or Caddy as in [Behind a reverse proxy](#behind-a-reverse-proxy), the usual
+  setup) every client looks local to finalwisp, so it does nothing there: no gain, no cost.** It helps only when
+  far clients connect to finalwisp directly (measured with plain ws://; its own TLS should behave the same but was not
+  measured; behind a TCP load balancer the round trip is the balancer's).
 - **Per-IP and per-connection limits.** Fewer parallel streams per client means less waiting data. In the same test
   at 20 ms, one connection with 10 streams peaked at 58 MiB of host TCP memory, with 50 streams at 176-232 MiB, with
   100 at 231-244 MiB. `--max-streams-per-conn` caps the streams on one connection (the 256 in the example under

@@ -109,8 +109,9 @@ pub struct Config {
     /// main: min(512 KiB, 2 x net.core.rmem_max)), 0 = off. A download-only stream's target socket that parks again on
     /// its client's output gets its receive buffer locked until a read drains it (worker/rcvlock.rs)
     pub park_rcvlock: u32,
-    /// 60.46 --adaptive-splice (default off since v1.2.0, 60.50: on a 2-vCPU host it cost same-host clients with more than
-    /// SPLICE_FEW streams): read_target splices SPLICE_SLICE for a backed-up many-stream client; off = SPLICE_PIPE always
+    /// 60.46 adaptive splice (opt-in in v1.2.0, 60.50: ungated it cost same-host clients with more than SPLICE_FEW streams on
+    /// a 2-vCPU host; default on since v1.2.1 with the 60.51 far-client gate): read_target splices SPLICE_SLICE for a
+    /// backed-up many-stream far client; off (--no-adaptive-splice) = SPLICE_PIPE always
     pub adaptive_splice: bool,
     /// 60.20 C3a `--max-conns` (None = off): the process-wide reservation, taken in accept_all, released in unload
     pub conn_gate: Option<Arc<net::ConnGate>>,
@@ -223,6 +224,12 @@ const SPLICE_SLICE: usize = 64 * 1024;
 /// parked targets, and on a 2-vCPU loopback the smaller splices cost 1x1 6% (60.46). Open streams, not parked ones: the
 /// stream that splices is the first one resumed, when flush_dirty has just moved every parked stream to `ready`.
 const SPLICE_FEW: usize = 4;
+/// 60.51 --adaptive-splice slices only for a client whose TCP min RTT at accept (net::min_rtt_us: the handshake sample) is
+/// at least this. On a same-host or LAN client the client socket fills from the server host's own CPU and softirq
+/// scheduling, not from a slow peer: there 64 KiB slices cost CPU (VPS2 echo 10x5 +17% server CPU per MiB) and pressure
+/// (download 1x100 0.31-0.45 of v1.1.1), so such a client keeps the v1.1.1 length. Unix-socket clients, clients behind a
+/// same-host reverse proxy and clients without a sample count as near (v1.1.1 length).
+const SPLICE_FAR_RTT_US: u32 = 10_000;
 /// 60.46 Client::splice states
 const SPLICE_OFF: u8 = 0;
 const SPLICE_SLOW: u8 = 1;
@@ -463,6 +470,7 @@ pub struct Worker {
     cpace_st: Vec<pace::PaceSt>,             // 60.42 --credit-pace per target slot (empty when off: Target unchanged)
     rcvlock: Vec<rcvlock::LockSt>,           // 60.47 --park-rcvlock per target slot (empty when off: Target unchanged)
     now: Instant,                            // 60.47 the loop turn's time (read once after epoll_wait; idle_sweep uses it)
+    splice_far: Vec<bool>, // 60.51 --adaptive-splice per client slot: min RTT at accept >= SPLICE_FAR_RTT_US (empty when off)
 }
 
 #[must_use]
@@ -600,6 +608,7 @@ impl Worker {
             cpace_st: Vec::new(),
             rcvlock: Vec::new(),
             now: Instant::now(),
+            splice_far: Vec::new(),
         })
     }
 

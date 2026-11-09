@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.2.1
+
+Changed:
+
+- **Adaptive splice is on by default, for far clients only.** A client whose round trip was 10 ms or more when it
+  connected, with more than 4 streams and a backed-up socket, gets 64 KiB zero-copy reads from its targets instead of
+  256 KiB. Clients closer than 10 ms (same host, LAN), clients on `--listen-unix`, and every client behind a reverse
+  proxy on the same host keep 256 KiB reads, exactly as before. On a 2-core VPS with one client 112 ms away running
+  100 download streams, compared with 1.1.1: the download was 1.37x faster, the host stayed out of kernel TCP memory
+  pressure (0 of 16 runs instead of 12), and another program on the same host kept receiving a plain TCP upload at
+  full speed (22.2 MiB/s median instead of 0.1, 12 rounds). With clients on the same host, a 2-core VPS and a
+  72-thread server showed no slowdown and no new memory pressure. In 1.2.0, `--adaptive-splice` also slowed clients on
+  the same host of a 2-core VPS (a 100-stream download less than half as fast); the round-trip check removes that. If
+  you used `--adaptive-splice` in 1.2.0 behind a reverse proxy or load balancer on the same host, it now does nothing
+  there. `--no-adaptive-splice` turns it off; `--adaptive-splice` is still accepted.
+
 ## v1.2.0
 
 No default changes. Two new options for small hosts that serve many slow downloads, and a guide for them.

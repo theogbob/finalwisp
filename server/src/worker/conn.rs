@@ -311,7 +311,17 @@ impl Worker {
                 net::cap_bufs(fd, mem::client_caps(self.capl));
                 self.stats.cap_apply.bump(); // 60.12
             }
+            let unix = c.local == LOCAL_UNIX;
             let (i, g) = self.clients.insert(c);
+            if self.cfg.adaptive_splice {
+                // 60.51 read once: the handshake's RTT sample (a unix client has none: near)
+                let far = !unix && net::min_rtt_us(fd).is_some_and(|r| r >= SPLICE_FAR_RTT_US);
+                let i = i as usize;
+                if self.splice_far.len() <= i {
+                    self.splice_far.resize(i + 1, false);
+                }
+                self.splice_far[i] = far;
+            }
             if !ep_add(self.ep, fd, tok(K_CLIENT, i, g), EV_ALL) {
                 unsafe { libc::close(fd) };
                 self.clients.remove(i);

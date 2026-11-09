@@ -31,7 +31,7 @@ download test (known bugs in the tested version).
 
 ## Quick start
 
-Latest version: **1.2.0**. Download it from the [Releases](../../releases) page, check its SHA-256 sum, then:
+Latest version: **1.2.1**. Download it from the [Releases](../../releases) page, check its SHA-256 sum, then:
 
 ```sh
 finalwisp --port 6001

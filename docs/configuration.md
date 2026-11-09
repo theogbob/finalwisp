@@ -9,7 +9,8 @@ All options are off or at a safe default unless you set them. A plain `finalwisp
 
 - Options are read left to right. When an option is given twice, the last one wins (`--port 7000 --port 7001` listens
   on 7001).
-- A switch such as `--no-splice` cannot be turned off again later on the same command line.
+- A switch such as `--no-splice` cannot be turned off again later on the same command line. (Exception: `--adaptive-splice`
+  after `--no-adaptive-splice` turns it back on.)
 - A bare number is the port: `finalwisp 7000` is the same as `finalwisp --port 7000`.
 - The policy, CIDR and `--proxy-protocol` lists take comma-separated values and can be repeated; repeated values add
   up. `--dns-server`, `--tls-cert` / `--tls-key` and `--cert-auth-key` take one value each: repeat the option.
@@ -59,7 +60,8 @@ How the file and the command line combine:
   the file; an option before it is overridden by the file.
 - A list option given anywhere on the command line replaces the file's whole list. Lists are not merged.
   `--tls-cert` and `--tls-key` count as one list.
-- A switch set in the file cannot be turned off on the command line. Remove the line instead.
+- A switch set in the file cannot be turned off on the command line. Remove the line instead. (Exception:
+  `--adaptive-splice` on the command line undoes `no-adaptive-splice` in the file.)
 
 Errors stop the server before it opens any socket, with status 2. The message names `FILE:LINE` and the option, but
 never the value, because the file may hold secrets. Limits: the file must be at most 1 MiB, each line at most 16 KiB,
@@ -205,7 +207,7 @@ Log formats and the metric names are in the [deployment guide](deployment.md#log
 
 ## Performance switches
 
-All are off by default.
+All are off by default, except the two whose default says "on".
 
 | option | default | what it does |
 |---|---|---|
@@ -213,7 +215,7 @@ All are off by default.
 | `--tcpmem-adapt` | off | When the host is near its kernel TCP memory limit (`net.ipv4.tcp_mem`), shrink the buffers of this server's sockets to remote peers. For a small VPS that runs out of TCP memory under many fast streams. Needs cgroup v2 socket accounting, Linux 5.15 or later, the host network namespace, credit v2 and the memory budget; the startup line says why it is off otherwise. |
 | `--no-credit-pace` | credit pace on | Turn off credit pacing. By default a stream gets no new upload credit while its download waits on the client (the client reads slower than the target answers), so echo-like traffic and other full-duplex bulk transfers cannot fill the kernel socket buffers faster than the client reads. Measured (60.42, echo 10 x 10, pacing vs v1.0.0): 1.06-1.10x the throughput on a laptop and 24- and 72-thread servers and 1.7x on a 2-core VPS; server memory 4-10x lower (1.3x on a 2-core VPS with small socket buffer limits, which stays in host TCP memory pressure with 100 echo streams in both builds; `--buffer 32` kept it out in most runs there); host TCP memory up to 5x lower on the big machines but only about 10% lower on 2-core VPSes at 100 streams. On the VPSes it takes most echo cases with fewer streams out of host TCP memory pressure. Cost: a single echo stream on one 2-core VPS was about 2-3% slower (no change or faster on the other machines). Uploads, downloads and request/response traffic are not affected. Turn it off only to compare or roll back. |
 | `--park-rcvlock` | off | Stop the kernel from growing the receive buffer of a download stream's target connection while the stream waits on a slow client. Without it, each waiting download can hold up to `net.ipv4.tcp_rmem` max (6-32 MiB) of the target's data in kernel memory, and many waiting downloads can push a small host into TCP memory pressure. The buffer keeps the size it has (it is never made smaller, so no data is dropped; one below 512 KiB is raised to 512 KiB or to twice `net.core.rmem_max`, whichever is smaller; finalwisp measures that limit with a test socket, so it also works in containers that hide the net sysctls) and grows again once the client catches up. Streams whose client sent data in the last 250 ms, or whose upload credit pacing holds, are not affected. It does nothing while the memory budget is below 256 MiB (the memory caps already limit these buffers there; `rcvlock_locks` stays 0). After a period of memory pressure, a target that the caps skipped can keep its lock until its stream next catches up, or until it closes. Needs Linux 5.15 or later (the server refuses to start otherwise). See the [deployment guide](deployment.md#memory-budget) for when it helps. |
-| `--adaptive-splice` | off | Read less from the targets of a busy client at a time. When a client has more than 4 streams open (busy or idle) and its socket is backed up, each zero-copy read from one of its targets takes at most 64 KiB instead of 256 KiB. This helps a small host that serves many slow downloads to far clients: with one client 112 ms away running 100 download streams on a 2-core VPS, the download was 1.2-1.4x faster and the host stayed out of kernel TCP memory pressure (0 of 16 runs instead of 9-12). The cost is on clients close to the server: on the same kind of 2-core VPS, clients on the same host with more than 4 streams were slower (echo with 10 x 5 streams 6-11% slower, and the host now entered TCP memory pressure; a 100-stream download less than half as fast, with the host in TCP memory pressure with or without the flag). Clients with 1-4 streams are not affected. It does nothing when splice is off (`--no-splice`, or a `--download-rate` cap). See the [deployment guide](deployment.md#small-hosts-and-many-slow-downloads). |
+| `--no-adaptive-splice` | adaptive splice on | Turn off adaptive splice (on by default since 1.2.1; `--adaptive-splice` is still accepted). Adaptive splice reads less from the targets of a busy far client at a time. When a client whose round trip was 10 ms or more at connect has more than 4 streams open (busy or idle) and its socket is backed up, each zero-copy read from one of its targets takes at most 64 KiB instead of 256 KiB. This helps a small host that serves many slow downloads to far clients: with one client 112 ms away running 100 download streams on a 2-core VPS, the download was 1.2-1.4x faster and the host stayed out of kernel TCP memory pressure (0 of 16 runs instead of 9-12). Clients closer than 10 ms (same host, LAN), clients on `--listen-unix` and all clients behind a reverse proxy on the same host keep the 256 KiB reads, so it changes nothing for them: no gain and no cost. On a 2-core VPS with clients on the same host, echo and download tests with 1 to 100 streams per client showed no difference with it on. Turn it off only to compare or roll back. Clients with 1-4 streams are not affected. It does nothing when splice is off (`--no-splice`, or a `--download-rate` cap). See the [deployment guide](deployment.md#small-hosts-and-many-slow-downloads). |
 
 ## Advanced and diagnostic
 
