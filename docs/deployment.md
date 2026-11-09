@@ -702,14 +702,18 @@ What helps, with the measured costs:
   1.9 GiB/s). Use it on a small host whose clients are far away; leave splice on where clients and targets are close
   and fast.
 - **Adaptive splice** (on by default since 1.2.1; `--no-adaptive-splice` turns it off). Keeps splice on, but a far
-  client (round trip 10 ms or more when it connected) with more than 4 streams (busy or idle) whose socket is backed up gets 64 KiB reads from its targets
-  instead of 256 KiB. In the 100-stream case at 112 ms the download was 1.2-1.4x faster and the host left TCP memory
-  pressure (0 of 16 runs instead of 9-12). Clients closer than 10 ms (same host, LAN) and clients on `--listen-unix`
-  keep 256 KiB reads, so on a 2-core VPS with clients on the same host nothing changed with it on. **Behind a
-  reverse proxy on the same host (nginx or Caddy as in [Behind a reverse proxy](#behind-a-reverse-proxy), the usual
-  setup) every client looks local to finalwisp, so it does nothing there: no gain, no cost.** It helps only when
-  far clients connect to finalwisp directly (measured with plain ws://; its own TLS should behave the same but was not
-  measured; behind a TCP load balancer the round trip is the balancer's).
+  client (round trip 10 ms or more when it connected) with more than 4 streams (busy or idle) whose socket is backed
+  up gets 64 KiB reads from its targets instead of 256 KiB. In the 100-stream case at 112 ms the download was 1.2-1.4x
+  faster (1.66x with the built-in TLS) and the host left TCP memory pressure (0 of 16 runs instead of 9-13). On a
+  lossy 20-30 ms path, 100 streams on one connection also kept the host out of pressure (0 of 16 runs instead of 13),
+  with no clear change in download speed. With 10 connections of 10 streams on that path the host was in pressure in
+  about 9 of 32 runs instead of all 32, but the download was about 5% slower than with `--no-adaptive-splice`; turning
+  it off gets that back, but on a small host it can put the kernel into TCP memory pressure, which slows every other
+  TCP connection on that host. Clients closer than 10 ms (same host, LAN) and clients on `--listen-unix` keep 256 KiB
+  reads, so on a 2-core VPS with clients on the same host nothing changed with it on. **Behind a reverse proxy on the
+  same host (nginx or Caddy as in [Behind a reverse proxy](#behind-a-reverse-proxy), the usual setup) every client
+  looks local to finalwisp, so it does nothing there: no gain, no cost.** It helps only when far clients connect to
+  finalwisp directly, with plain ws:// or its own TLS (behind a TCP load balancer the round trip is the balancer's).
 - **Per-IP and per-connection limits.** Fewer parallel streams per client means less waiting data. In the same test
   at 20 ms, one connection with 10 streams peaked at 58 MiB of host TCP memory, with 50 streams at 176-232 MiB, with
   100 at 231-244 MiB. `--max-streams-per-conn` caps the streams on one connection (the 256 in the example under
