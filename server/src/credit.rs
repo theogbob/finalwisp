@@ -6,7 +6,7 @@
 //! the bound becomes `recv at the pong + the last CONTINUE` plus the CONTINUEs sent since (`Stream::bound`).
 //! On that bound, level-0 grants are top-ups against a per-stream window (`Stream::win`). The window is
 //! autotuned like TCP's receive buffer (`Stream::on_pong`). Pure state machines here; worker/upload.rs feeds them.
-//! Doc: docs/summaries/20.30-upload-credit-v2.md.
+//! Doc: note 20.30.
 use std::time::{Duration, Instant};
 
 /// first window per stream (bytes): 1 MiB. A 2 MiB start (base-2's 128 packets at wbench's 16 KiB) kept 2-4 MiB of pend

@@ -6,7 +6,7 @@
 //! TC=1 retries over TCP, FORMERR with EDNS resends once without it. Each family moves to the next server on its
 //! own, so a failed A keeps the AAAA answer. Same result contract as net::lookup: unfiltered addresses,
 //! Err(true) = definitive (NXDOMAIN / no address in both families: cached 5 s), Err(false) = anything else.
-//! Design and numbers: docs/summaries/70.09-dns-own-design.md.
+//! Design and numbers: note 70.09.
 //! unsafe (60.16): blocks without their own SAFETY comment are plain libc calls whose pointer arguments come from a
 //! live local or slice with the length taken from the same value (or are plain integers); no pointer outlives the call.
 use std::collections::HashMap;

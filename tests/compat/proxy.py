@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """40.02 reverse-proxy compat (60.12): finalwisp (ws://, 127.0.0.1) behind nginx and Caddy (TLS at the proxy), with the
-configurations of docs/summaries/40.01-deployment.md, in docker (--network host). Per proxy: the real wisp-js client
+configurations of docs/deployment.md, in docker (--network host). Per proxy: the real wisp-js client
 (wispjs.mjs over wss://, incl. a 2x64 MiB download), a 32 MiB upload to a target that stops reading for 6 s (the client must
 run out of credit: backpressure through the proxy; every byte must arrive in order: digest), and a connection idle for 125 s (longer than finalwisp's 120 s keepalive
 idle) that must still work. The same checks run direct (no proxy) as the reference.

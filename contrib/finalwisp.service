@@ -3,7 +3,7 @@
 # Reload certificates: systemctl reload finalwisp (SIGHUP). Stop: SIGTERM = graceful drain (60.12).
 [Unit]
 Description=finalwisp Wisp server
-Documentation=file:///usr/local/share/doc/finalwisp/40.01-deployment.md
+Documentation=https://github.com/theogbob/finalwisp/blob/main/docs/deployment.md
 After=network-online.target
 Wants=network-online.target
 

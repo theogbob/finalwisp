@@ -654,7 +654,7 @@ Notes:
   budget. Credit pacing (on by default, `--no-credit-pace` turns it off) reduces how much of it full-duplex bulk traffic
   (echo-like streams) builds up. It does not always keep a small host out of TCP memory pressure: on a VPS with small
   socket buffer limits, echo with 100 streams still reaches it; `--buffer 32` (a smaller first upload window per stream)
-  kept it out in most runs there (60.42). `--tcpmem-adapt` shrinks this server's socket buffers when the host gets close to it.
+  kept it out in most runs there. `--tcpmem-adapt` shrinks this server's socket buffers when the host gets close to it.
   Many downloads that wait on slow clients (one client with many streams, for example) keep the targets' data in this
   server's target connections, up to `net.ipv4.tcp_rmem` max each. `--park-rcvlock` (off by default) stops those buffers
   from growing while their streams wait. It catches a buffer before it grows only if the stream starts to wait early;

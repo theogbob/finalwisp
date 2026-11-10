@@ -7,7 +7,7 @@
 //! Release rule (strict): a held grant is re-decided when the target, resumed after its client's output drained below
 //! out_low, reads without parking again (to EAGAIN under out_high, or its read budget ran out). Every unpark goes through
 //! Worker::resume, so that is the only release point (no list, no per-turn scan). Releasing when the client merely drained the output queued at the hold, or after a timer
-//! without client progress, kept the pressure (spike, docs/summaries/60.42-credit-pace.md).
+//! without client progress, kept the pressure (spike, note 60.42).
 //! Deadlock check (bench/probes/writeall.py): a client that stops reading its socket cannot receive a CONTINUE in either
 //! build (it waits behind the unread DATA), so pacing stalls no transfer that completes without it.
 //! Upload-only and download-only streams never hold: a stream without replies never parks, one without upload has no

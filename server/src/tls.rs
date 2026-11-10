@@ -2,7 +2,7 @@
 //! rustls (ring) runs only the handshake, inside the epoll loop. Then the session keys move into
 //! the kernel (TCP_ULP "tls" + TLS_TX/TLS_RX), and every later read/write/writev/splice on the
 //! client socket is plain: the kernel en/decrypts. There is no userspace TLS data path.
-//! See docs/summaries/20.06-performance-findings.md (section 20.13).
+//! See note 20.06 (section 20.13).
 //! unsafe (60.16): blocks without their own SAFETY comment are plain libc calls whose pointer arguments come from a
 //! live local or slice with the length taken from the same value (or are plain integers); no pointer outlives the call.
 use rustls::crypto::ring as ring_provider;

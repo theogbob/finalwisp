@@ -1,7 +1,7 @@
 //! 20.18 Wisp v2 protocol extensions: the server INFO payload and the check of the client's INFO.
 //! Password auth (0x02), ed25519 key auth (0x03), MOTD (0x04); ref/wisp-protocol/protocol.md
 //! "Protocol Extensions". Behaviour follows epoxy-server and wispurr where the spec is vague
-//! (docs/summaries/20.06-performance-findings.md, section 20.18).
+//! (note 20.06, section 20.18).
 use ring::digest::{digest, SHA256};
 use ring::rand::SecureRandom;
 use ring::signature::{UnparsedPublicKey, ED25519};

@@ -1,7 +1,7 @@
 //! 60.47 --park-rcvlock (opt-in): lock the receive buffer of a download-only stream's target socket while the stream
 //! waits on its client, so kernel receive autotuning does not grow it to tcp_rmem max while nobody reads it.
 //!
-//! Why (docs/summaries/60.47-park-rcvlock.md): a stream parked on its client's output (Target::blocked) still lets the
+//! Why (note 60.47): a stream parked on its client's output (Target::blocked) still lets the
 //! origin fill our target socket's receive queue up to its receive buffer, and autotuning (DRS) grows that buffer from
 //! the largest drain per RTT. 100 parked downloads held 140-230 MiB on a 2-vCPU host (60.43), enough for tcp_mem
 //! pressure. 60.44's prototype shrank SO_RCVBUF at the park: a buffer below what is queued makes the kernel prune and

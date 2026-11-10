@@ -1,4 +1,4 @@
-//! 20.01 finalwisp — entry point. See docs/summaries/10.01-wisp-protocol.md and the roadmap (60.01).
+//! 20.01 finalwisp — entry point. See note 10.01 and the roadmap (60.01).
 //! unsafe (60.16): blocks without their own SAFETY comment are plain libc calls whose pointer arguments come from a
 //! live local or slice with the length taken from the same value (or are plain integers); no pointer outlives the call.
 mod cli;
