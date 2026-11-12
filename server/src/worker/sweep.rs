@@ -25,6 +25,10 @@ impl Worker {
             self.meter_sweep(); // 60.25 C10b (after count_stalls in sweep: a new stall interval starts)
         }
         self.stats.rx_bytes.set(self.rx_total); // 60.25 C5
+        self.fd_trim(true); // 60.57 A2 allowance above one unused block goes back to the process count
+        if self.fd_mask & crate::fdgate::MARK_SHARE != 0 {
+            self.sfd_sweep(); // 60.57 C
+        }
         if !self.pending.is_empty() {
             self.pending_sweep(); // 60.34 PROXY headers that did not come
         }
@@ -47,6 +51,8 @@ impl Worker {
         for _ in 0..clientip::SWEEP_SHARDS {
             if let Some(t) = ip {
                 t.sweep(self.ip_sweep, now);
+                crate::hints::one_key(t, self.ip_sweep, &self.peers, &self.stats);
+                // 60.59 hint (c)
             }
             if let Some(d) = dest {
                 d.sweep(self.ip_sweep, metrics::now_ms()); // (u64 ms: no wrap)
@@ -135,6 +141,7 @@ impl Worker {
         let mut expired = Vec::new(); // review r1: handshakes past HS_SWEEPS (active or not: slowloris)
         let mut gone = Vec::new(); // 70.02 dead peers with output queued
         let mut stuck = Vec::new(); // 20.27 0x49 hold: hpaused clients past HOLD_SWEEPS
+        let mut pipes = 0; // 60.57 A2 idle splice pipes closed below (2 fds each)
         for (i, (_, slot)) in self.clients.slots.iter_mut().enumerate() {
             let Some(c) = slot.as_mut() else { continue };
             if c.hpaused && !c.dead {
@@ -188,11 +195,19 @@ impl Worker {
             // queued in it): close it. It costs 2 fds and 64 pages of the user's pipe quota
             // (fs.pipe-user-pages-soft, 16384 pages by default = 256 such pipes per user).
             if c.pipe[0] >= 0 && c.splice_at == NO_MARK && c.splice_pending == 0 {
+                if self.fd_mask & crate::fdgate::MARK_SHARE != 0 {
+                    // 60.57 C the key's count goes down before the fds are closed
+                    Self::sfd_apply(&mut self.sfds, &self.peers_of, &self.cfg, self.idx, i as u32, -2);
+                }
                 for p in c.pipe {
                     unsafe { libc::close(p) };
                 }
                 c.pipe = [-1, -1];
+                pipes += 2;
             }
+        }
+        if pipes > 0 {
+            self.fd_put_cold(pipes);
         }
         for ci in stuck {
             // close with 0x49 every stream still over PEND_HARD (review r2: several can cross it in one batch; a

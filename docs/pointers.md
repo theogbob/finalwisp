@@ -104,6 +104,12 @@ repository; the comments carry their reasoning inline. This index gives the topi
 | 60.47 | --park-rcvlock: lock, don't shrink, the receive buffer of a parked download-only target |
 | 60.50 | v1.2 combined measurement: v1.1.1 against the splice and receive-buffer changes |
 | 60.51 | --adaptive-splice for far clients only |
+| 60.57 | File descriptors: count them, refuse early, two opt-in gates |
+| 60.58 | --dns-share: who gets a resolver thread; lookup expiry; wait counters |
+| 60.59 | Preset form: --preset public, its layers, the startup line, proxy-chain hints, the TCP pressure line |
+| 60.60 | Command line usability: one option table, short help, plain errors, --show-config, start block |
+| 60.63 | Section E: bounds on what the server can see on its host |
+| 60.67 | Acceptance tests T1 to T8 of the preset design, on the final v1.3.0 build |
 | 70.01 | Fuzzing base-1.1 network parsers |
 | 70.02 | dead-peer detection |
 | 70.03 | glibc mmap threshold 16 KiB + M_MMAP_MAX |

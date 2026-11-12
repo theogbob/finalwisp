@@ -177,9 +177,8 @@ impl Worker {
                 }
             }
         }
-        if st.admit && self.accept_paused {
-            self.accept_paused = false;
-            self.accept_all();
+        if st.admit {
+            self.accept_paused = false; // 60.57 A5 the episode is over (nothing waits: accept_on reset what came)
         }
     }
 }

@@ -32,7 +32,7 @@ def conf(name, text, mode=0o600):
 
 def start(args, port):
     log = open(os.path.join(D, f"srv{port}.log"), "w+")
-    p = subprocess.Popen([BIN, *args], stdout=log, stderr=subprocess.STDOUT)
+    p = subprocess.Popen([BIN, "--log-level", "debug", *args], stdout=log, stderr=subprocess.STDOUT)  # 60.60: the capabilities line is a debug line
     for _ in range(100):
         try:
             socket.create_connection(("127.0.0.1", port), timeout=1).close(); break
@@ -101,8 +101,8 @@ stop(p)
 # 4. bad files: exit 2, FILE:LINE, value not shown, nothing listens
 SECRET = "s3cretVALUE"
 for name, text, want in [
-    ("badval.conf", f"port {BASE}\nthreads {SECRET}\n", "badval.conf:2: --threads: bad value (value not shown)"),
-    ("unknown.conf", f"port {BASE}\n\nbogus-flag 1\n", 'unknown.conf:3: unknown flag "bogus-flag"'),
+    ("badval.conf", f"port {BASE}\nthreads {SECRET}\n", "badval.conf:2: --threads: (value not shown) is not a whole number"),
+    ("unknown.conf", f"port {BASE}\n\nbogus-flag 1\n", 'unknown.conf:3: unknown option "bogus-flag"'),
     ("include.conf", "config other.conf\n", "include.conf:1: --config inside a config file (no includes)"),
     ("big.conf", "#" * ((1 << 20) + 10), "big.conf: larger than 1024 KiB"),
     ("utf8.conf", b"motd \xff\n", "utf8.conf:1: not valid UTF-8"),

@@ -29,7 +29,7 @@ threading.Thread(target=acceptor, daemon=True).start()
 D = tempfile.mkdtemp(prefix="fw-limits-")
 def start(port, *args):
     log = open(os.path.join(D, f"srv{port}.log"), "w+")
-    p = subprocess.Popen([BIN, str(port), "--allow-loopback", "--metrics-interval", "1", *args], stdout=log, stderr=subprocess.STDOUT)
+    p = subprocess.Popen([BIN, str(port), "--allow-loopback", "--log-level", "debug", "--metrics-interval", "1", *args], stdout=log, stderr=subprocess.STDOUT)
     p.logf = log
     for _ in range(100):
         try:

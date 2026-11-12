@@ -114,7 +114,7 @@ servers = []  # every finalwisp this test starts: killed in main()'s finally, al
 
 
 def start(extra):
-    p = subprocess.Popen([BIN, "--port", str(PORT), "--threads", "2", "--allow-loopback", *extra],
+    p = subprocess.Popen([BIN, "--port", str(PORT), "--threads", "2", "--allow-loopback", "--log-level", "debug", *extra],
                          stderr=subprocess.PIPE, text=True)
     servers.append(p)
     return p

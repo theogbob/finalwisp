@@ -271,6 +271,7 @@ impl Harness {
             unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_NONBLOCK | libc::SOCK_CLOEXEC, 0, fds.as_mut_ptr()) };
         assert_eq!(r, 0);
         self.w.inbox.load.fetch_add(1, Relaxed);
+        assert!(self.w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
         self.w.adopt(net::Handoff::bare(fds[0]));
         let ci = (0..self.w.clients.slots.len() as u32)
             .find(|&i| self.w.clients.slots[i as usize].1.as_ref().is_some_and(|c| c.fd == fds[0]))
@@ -345,6 +346,7 @@ impl Harness {
         let one: i32 = 1;
         unsafe { libc::setsockopt(cfd, libc::IPPROTO_TCP, libc::TCP_NODELAY, &one as *const _ as *const _, 4) };
         self.w.inbox.load.fetch_add(1, Relaxed);
+        assert!(self.w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
         self.w.adopt(net::Handoff::bare(sfd));
         let ci = (0..self.w.clients.slots.len() as u32)
             .find(|&i| self.w.clients.slots[i as usize].1.as_ref().is_some_and(|c| c.fd == sfd))

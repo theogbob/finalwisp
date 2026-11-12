@@ -1,6 +1,8 @@
 # 70.09 --dns-own / --dns-server functional test: a fake DNS server (UDP + TCP, IPv4 + IPv6) behind real finalwisp
 # servers, driven by Wisp CONNECTs to a local echo target. Stdlib only.
-# usage: python3 dns_own.py BIN BASEPORT     (uses BASEPORT .. BASEPORT+9)
+# usage: python3 dns_own.py BIN BASEPORT [preset]     (uses BASEPORT .. BASEPORT+9)
+# `preset` (60.58, the compat step dns-preset): every server also gets --preset public, which sets dns-own and
+# dns-reserve; the same cases must pass, and the last case shows the reserve.
 # Cases: A, A SERVFAIL + AAAA ok, TC -> TCP, NXDOMAIN (+ negative cache), NODATA, SERVFAIL, timeout (deadline),
 # garbage / wrong-ID / wrong-question packets, a reply from another source port, CNAME chain, FORMERR on EDNS,
 # 70.10 RFC 8305 early family (one family never answered or late: connect on the other at ~50 ms; late family after the
@@ -11,6 +13,7 @@
 import base64, os, socket, struct, subprocess, sys, threading, time
 
 BIN, BASE = sys.argv[1], int(sys.argv[2])
+PRESET = ["--preset", "public"] if sys.argv[3:4] == ["preset"] else []
 P_A, P_B, P_C, P_D, BH, DNS, DEAD, P_E, ECHO6, ECHO = BASE, BASE + 1, BASE + 2, BASE + 3, BASE + 4, BASE + 5, BASE + 6, BASE + 7, BASE + 8, BASE + 9
 fails = 0
 def ok(c, m):
@@ -52,7 +55,8 @@ def answer(q, tcp):
         log.append((n, qt, "tcp" if tcp else "udp", edns))
     a = qt == 1
     good = reply(q, ans=[rr(P, 1, LOOP4)] if a else [])
-    if n in ("ok.test", "wiki.corp.internal"): return [(good, False)]
+    if n in ("ok.test", "okb.test", "wiki.corp.internal"): return [(good, False)]
+    if n.startswith("dead"): return []  # 60.58 names that never answer (the reserve case)
     if n == "afail.test": return [(reply(q, 2) if a else reply(q, ans=[rr(P, 28, LOOP6)]), False)]
     if n == "tc.test": return [(reply(q, tc=True) if not tcp else good, False)]
     if n == "servfail.test": return [(reply(q, 2), False)]
@@ -129,7 +133,7 @@ if V6:
 # ---- servers
 procs, errs = [], {}
 def serve(port, *args):
-    p = subprocess.Popen([BIN, str(port), "--allow-loopback", "--threads", "2", *args], stderr=subprocess.PIPE, text=True)
+    p = subprocess.Popen([BIN, str(port), *PRESET, "--allow-loopback", "--threads", "2", "--log-level", "debug", *args], stderr=subprocess.PIPE, text=True)
     procs.append(p); errs[port] = p
 serve(P_A, "--dns-server", f"127.0.0.1:{DNS}")
 serve(P_B, "--dns-server", f"127.0.0.1:{DEAD}", "--dns-server", f"127.0.0.1:{DNS}")
@@ -142,8 +146,8 @@ BWRAP = shutil.which("bwrap")
 if BWRAP:
     rc = tempfile.NamedTemporaryFile("w", prefix="fw-resolv-", suffix=".conf", delete=False)
     rc.write("nameserver 127.0.0.1\nsearch corp.internal\noptions ndots:5\n"); rc.close()
-    p = subprocess.Popen([BWRAP, "--die-with-parent", "--dev-bind", "/", "/", "--ro-bind", rc.name, "/etc/resolv.conf", BIN, str(P_E),
-                          "--allow-loopback", "--threads", "2", "--dns-own", "--dns-server", f"127.0.0.1:{DNS}",
+    p = subprocess.Popen([BWRAP, "--die-with-parent", "--dev-bind", "/", "/", "--ro-bind", rc.name, "/etc/resolv.conf", BIN, str(P_E), *PRESET,
+                          "--allow-loopback", "--threads", "2", "--log-level", "debug", "--dns-own", "--dns-server", f"127.0.0.1:{DNS}",
                           "--block-host", "wiki.corp.internal"], stderr=subprocess.PIPE, text=True, start_new_session=True)
     p.group = True  # terminate the whole group: a SIGTERM to bwrap alone leaves finalwisp running
     procs.append(p); errs[P_E] = p
@@ -316,6 +320,22 @@ if BWRAP:
     ok(r4 == ("close", 0x42) and asked == ["example.com", "wiki"], f"names asked: {asked} (no search-list completion, ndots:5 ignored)")
 else:
     print("SKIP no bwrap (absolute-name cases need a private /etc/resolv.conf)")
+# 60.58 --dns-reserve (in the preset). Connection A asks for a name that never answers; after 1 s A is slow. Then A
+# asks for 16 more: with the reserve the slow connection gets 12 of the 16 threads, and a new name of connection B
+# starts at once. Without it (plain --dns-own: arrival order) A's 17 names hold every thread until the first gives up
+# (4 s after its start), and B's name waits for that.
+wa, wb2 = Wisp(P_A), Wisp(P_A)
+wa.send(1, 1, struct.pack("<BH", 1, ECHO) + b"dead0.test.")
+time.sleep(1.3)
+for i in range(1, 17):
+    wa.send(1, 1 + i, struct.pack("<BH", 1, ECHO) + f"dead{i}.test.".encode())
+time.sleep(0.2)
+r, dt = wb2.attempt(1, "okb.test.", t=9)
+if PRESET:
+    ok(r == ("data", b"ping") and dt < 1.0, f"preset (dns-reserve): another connection's name starts at once while a slow one holds its threads ({r}, {dt*1000:.0f} ms)")
+else:
+    ok(r == ("data", b"ping") and dt > 1.5, f"no reserve: another connection's name waits for a thread ({r}, {dt*1000:.0f} ms)")
+wa.s.close(); wb2.s.close()
 for p in procs:
     if getattr(p, "group", False):
         os.killpg(p.pid, 15)
@@ -324,6 +344,8 @@ for p in procs:
 for port, p in errs.items():
     err = p.stderr.read()
     ok("DNS own resolver" in err, f"server :{port} capability line names the own resolver")
+    if PRESET:
+        ok("DNS share (reserve: 4 of 16 threads)" in err, f"server :{port} capability line names the reserve of the preset")
     ok("panicked" not in err, f"server :{port} stderr has no panic")
 print(f"dns_own: {fails} failures")
 sys.exit(1 if fails else 0)

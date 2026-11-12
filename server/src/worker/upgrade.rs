@@ -142,12 +142,16 @@ impl Worker {
         let Some(cip) = &self.cfg.clientip else { return true };
         let Some(p) = self.peers_of.get_mut(ci as usize).and_then(Option::as_mut) else { return true };
         if !cip.is_trusted(p.ip) {
-            return true; // headers from an untrusted peer are ignored; it was charged at accept
+            // headers from an untrusted peer are ignored; it was charged at accept (60.59: hint (a), out of line)
+            return self.untrusted_peer(ci);
         }
         let (ip, got) = cip.real_ip(p.ip, fwd);
         match got {
             Some(clientip::Got::Bad) => self.stats.realip_bad.bump(),
-            Some(clientip::Got::Missing) => self.stats.realip_missing.bump(),
+            Some(clientip::Got::Missing) => {
+                self.stats.realip_missing.bump();
+                crate::hints::realip_missing(p.ip, &cip.header); // 60.59 hint (b), cold
+            }
             _ => {}
         }
         if ip != p.ip {
@@ -163,7 +167,7 @@ impl Worker {
             return true;
         }
         let k = clientip::key(ip);
-        match t.charge(k, cip.max_conns, clientip::now_ms()) {
+        match Self::ip_charge(self.fd_mask, &self.fdg, self.idx, cip, t, k, ip) {
             clientip::Charge::Charged => {
                 // 60.31 (60.28 invariant) a trusted peer (a --trusted-proxy, the unix sentinel) is never charged at
                 // accept, so there is no earlier key that this overwrite would leak
@@ -171,10 +175,25 @@ impl Worker {
                 p.key = Some(k)
             }
             clientip::Charge::Untracked => self.stats.ip_untracked.bump(),
-            r @ (clientip::Charge::Refused | clientip::Charge::Rate) => {
+            r @ (clientip::Charge::Refused | clientip::Charge::Rate | clientip::Charge::Share) => {
                 self.ip_refused(r);
                 return false;
             }
+        }
+        true
+    }
+
+    /// 60.59 hint (a), for a peer that is not a trusted proxy, after its HTTP request was parsed: a loopback or private
+    /// peer may be a reverse proxy that --trusted-proxy does not list, so look for a forwarding header in the request
+    /// (hints::fwd_untrusted: counter and rate-limited line). Always true: a hint changes nothing. Out of line and cold:
+    /// client_ip is inlined into the frame loop's function (process_frames), which gets one call and no scan code.
+    #[cold]
+    #[inline(never)]
+    fn untrusted_peer(&mut self, ci: u32) -> bool {
+        let Some(ip) = self.peer(ci).map(|p| p.ip).filter(|&ip| crate::hints::local(ip)) else { return true };
+        if let Some(cip) = &self.cfg.clientip {
+            let c = self.clients.at(ci);
+            crate::hints::fwd_untrusted(ip, &c.rbuf[..c.rpos], &cip.header, &self.stats);
         }
         true
     }

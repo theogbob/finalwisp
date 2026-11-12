@@ -1136,6 +1136,88 @@ impl Log {
     }
 }
 
+/// 60.59 TcpExt TCPMemoryPressures and TCPMemoryPressuresChrono (ms) from the text of /proc/net/netstat: how often this
+/// network namespace's sockets took the host into TCP memory pressure since boot, and the time spent in it (added when
+/// a period ends). No allocation (the sampler reads it once a second).
+fn tcp_pressures(text: &[u8]) -> Option<(u64, u64)> {
+    let mut l = text.split(|&b| b == b'\n').filter(|l| l.starts_with(b"TcpExt:"));
+    let (names, values) = (std::str::from_utf8(l.next()?).ok()?, std::str::from_utf8(l.next()?).ok()?);
+    let (mut n, mut ms) = (None, None);
+    for (k, v) in names.split_whitespace().zip(values.split_whitespace()) {
+        match k {
+            "TCPMemoryPressures" => n = v.parse().ok(),
+            "TCPMemoryPressuresChrono" => ms = v.parse().ok(),
+            _ => {}
+        }
+    }
+    Some((n?, ms?))
+}
+
+/// 60.59 one log line when the host enters kernel TCP memory pressure: the first entry at once, then at most one line
+/// per PRESS_LOG_EVERY, which counts the entries since the last line (pressure can flap many times a second).
+struct PressLog {
+    file: Option<ProcFile>,
+    read_at: Option<Instant>, // the last read attempt, good or not (None: none yet)
+    seen: Option<u64>,        // TCPMemoryPressures at the last good read (None: none yet; the first value is the baseline)
+    pending: u64,             // entries not logged yet
+    logged_at: Option<Instant>,
+}
+
+const PRESS_READ_EVERY: Duration = Duration::from_secs(1);
+const PRESS_LOG_EVERY: Duration = Duration::from_secs(60);
+
+impl PressLog {
+    fn new() -> PressLog {
+        // (16 KiB: the file is about 3 KiB on Linux 6.x, the two TcpExt lines come first)
+        let file = std::fs::File::open("/proc/net/netstat").ok().map(|f| ProcFile(f, vec![0; 16 << 10]));
+        PressLog { file, read_at: None, seen: None, pending: 0, logged_at: None }
+    }
+
+    /// `count` = TCPMemoryPressures now. Some(n): log a line for n entries.
+    fn note(&mut self, count: u64, now: Instant) -> Option<u64> {
+        self.pending += count.saturating_sub(self.seen.unwrap_or(count)); // (a counter that went back: a new namespace; no entry)
+        self.seen = Some(count);
+        if self.pending == 0 || self.logged_at.is_some_and(|t| now.saturating_duration_since(t) < PRESS_LOG_EVERY) {
+            return None;
+        }
+        self.logged_at = Some(now);
+        Some(std::mem::take(&mut self.pending))
+    }
+
+    /// true at most once per PRESS_READ_EVERY: a read may go now. The gate is on attempts, good or not: a file without
+    /// the counters is not read again every sampler turn (review).
+    fn due(&mut self, now: Instant) -> bool {
+        if self.read_at.is_some_and(|t| now.saturating_duration_since(t) < PRESS_READ_EVERY) {
+            return false;
+        }
+        self.read_at = Some(now);
+        true
+    }
+
+    /// called every sampler turn; reads the file at most once per PRESS_READ_EVERY
+    fn poll(&mut self, log: &mut Log) {
+        let now = Instant::now();
+        if !self.due(now) {
+            return;
+        }
+        let Some((count, _)) = self.file.as_mut().and_then(|f| tcp_pressures(f.read())) else { return };
+        if let Some(n) = self.note(count, now) {
+            log.send(crate::logs::Level::Warn, press_text(n));
+        }
+    }
+}
+
+fn press_text(n: u64) -> String {
+    let times = if n == 1 { String::new() } else { format!(" {n} times since the last such line") };
+    format!(
+        "finalwisp: warning: the host entered kernel TCP memory pressure{times}: while it lasts the kernel throttles \
+         every TCP socket on this host, so all clients slow down. It comes from many streams with full socket buffers \
+         (downloads that slow clients do not read, bulk echo). What helps: fewer parallel streams per client \
+         (--max-streams-per-conn), --no-splice when the clients are far away, more RAM or a larger net.ipv4.tcp_mem \
+         (see the docs page memory.md, small hosts)"
+    )
+}
+
 // ---------------------------------------------------------------- 20.31 B3 host TCP memory adaptation
 
 /// 20.31 --tcpmem-adapt: the host's TCP memory (/proc/net/sockstat) against net.ipv4.tcp_mem (read once at startup;
@@ -1342,7 +1424,9 @@ fn sampler(budget: u64, src: Source, peers: Arc<Vec<Arc<Inbox>>>, tcp: Option<Tc
         *last
     };
     const KEPT: &str = "the last value is kept";
+    let mut press = PressLog::new(); // 60.59
     loop {
+        press.poll(&mut log);
         let mut host_pages = None;
         let used = if let Some(c) = cur.as_mut() {
             let raw = keep(field(c.read(), b""), &mut last_raw, &cur_name, KEPT, &mut log);
@@ -1532,6 +1616,41 @@ fn sampler(budget: u64, src: Source, peers: Arc<Vec<Arc<Inbox>>>, tcp: Option<Tc
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// 60.59 the TCP memory pressure line: the first entry at once, then at most one line per minute with the count
+    #[test]
+    fn tcp_pressure_line_is_rate_limited() {
+        let text = b"TcpExt: SyncookiesSent TCPMemoryPressures TCPMemoryPressuresChrono TCPAbortOnData\nTcpExt: 0 7 1234 9\nIpExt: InNoRoutes\nIpExt: 0\n";
+        assert_eq!(tcp_pressures(text), Some((7, 1234)));
+        assert_eq!(tcp_pressures(b"TcpExt: A B\nTcpExt: 1 2\n"), None, "a kernel without the counters");
+        assert_eq!(tcp_pressures(b""), None);
+        assert_eq!(tcp_pressures(b"TcpExt: TCPMemoryPressures TCPMemoryPressuresChrono\n"), None, "a cut read");
+        // the real file on this host parses (Linux 4.13+ has both counters)
+        let real = std::fs::read("/proc/net/netstat").unwrap();
+        assert!(real.len() < 16 << 10 && tcp_pressures(&real).is_some(), "{} bytes", real.len());
+        let t0 = Instant::now();
+        let at = |s: u64| t0 + Duration::from_secs(s);
+        let mut p = PressLog { file: None, read_at: None, seen: None, pending: 0, logged_at: None };
+        assert!(p.due(t0) && !p.due(t0) && !p.due(t0 + Duration::from_millis(999)), "one read a second, also before a good read");
+        assert!(p.due(at(1)) && !p.due(at(1)) && p.seen.is_none());
+        assert_eq!(p.note(7, at(0)), None, "the count at startup is the baseline, not an entry");
+        assert_eq!(p.note(7, at(1)), None);
+        assert_eq!(p.note(8, at(2)), Some(1), "the first entry: at once");
+        assert_eq!(p.note(11, at(3)), None, "inside the minute");
+        assert_eq!(p.note(12, at(30)), None);
+        assert_eq!(p.note(12, at(61)), None, "still inside the minute after the line at 2 s");
+        assert_eq!(p.note(12, at(62)), Some(4), "the entries since the last line, once the minute is over");
+        assert_eq!(p.note(12, at(200)), None, "no entry, no line");
+        assert_eq!(p.note(13, at(201)), Some(1));
+        assert_eq!(p.note(2, at(300)), None, "a counter that went back is no entry");
+        assert_eq!(p.note(3, at(301)), Some(1));
+        let one = press_text(1);
+        assert!(
+            one.starts_with("finalwisp: warning: the host entered kernel TCP memory pressure: while") && one.contains("net.ipv4.tcp_mem")
+        );
+        assert!(press_text(4).contains("pressure 4 times since the last such line: "));
+        assert!(!one.contains("  ") && !one.contains('\n'), "one line, single spaces (review): {one}");
+    }
 
     /// 60.29 a write never closes an episode before a time a reader already counted it up to (the reader's clock ran
     /// ahead of the sampler's: the interleaving of the review)

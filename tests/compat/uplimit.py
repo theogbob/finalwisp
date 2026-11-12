@@ -47,7 +47,7 @@ def srvlog(p):
 def start(*args, tls=False):
     log = open(os.path.join(D, "srv.log"), "w+")
     extra = ["--tls-cert", os.path.join(CERTS, "cert.pem"), "--tls-key", os.path.join(CERTS, "key.pem")] if tls else []
-    p = subprocess.Popen([BIN, str(BASE), "--allow-loopback", "--metrics-interval", "1", *extra, *args],
+    p = subprocess.Popen([BIN, str(BASE), "--allow-loopback", "--log-level", "debug", "--metrics-interval", "1", *extra, *args],
                          stdout=log, stderr=subprocess.STDOUT)
     p.logf = log
     for _ in range(100):

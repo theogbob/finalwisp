@@ -3,7 +3,7 @@
 # Reload certificates: systemctl reload finalwisp (SIGHUP). Stop: SIGTERM = graceful drain (60.12).
 [Unit]
 Description=finalwisp Wisp server
-Documentation=https://github.com/theogbob/finalwisp/blob/main/docs/deployment.md
+Documentation=https://github.com/theogbob/finalwisp/blob/main/docs/service.md
 After=network-online.target
 Wants=network-online.target
 
@@ -12,7 +12,10 @@ Type=exec
 # Plain ws:// behind a TLS proxy on this host. For built-in TLS (kTLS) add:
 #   --tls-cert /etc/finalwisp/fullchain.pem --tls-key /etc/finalwisp/privkey.pem
 # and load the kernel module once: echo tls > /etc/modules-load.d/tls.conf && modprobe tls
-ExecStart=/usr/local/bin/finalwisp --host 127.0.0.1 --port 6001 --drain-timeout 30
+# --preset public: the built-in settings for a server that anyone can reach (`finalwisp --print-preset public` prints
+# them). Options after it override it; remove it, or write `--preset none`, for a server with no limits.
+# Behind a reverse proxy on this host, add --trusted-proxy 127.0.0.1 and make the proxy send X-Forwarded-For.
+ExecStart=/usr/local/bin/finalwisp --preset public --host 127.0.0.1 --port 6001 --drain-timeout 30
 ExecReload=/bin/kill -HUP $MAINPID
 KillSignal=SIGTERM
 # > --drain-timeout + 2 s: after it systemd sends SIGKILL

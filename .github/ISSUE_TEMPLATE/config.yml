@@ -3,3 +3,6 @@ contact_links:
   - name: Security problem
     url: https://github.com/theogbob/finalwisp/security/advisories/new
     about: Report security problems privately, please, not as an issue.
+  - name: Documentation
+    url: https://github.com/theogbob/finalwisp/blob/main/docs/README.md
+    about: Setup, reverse proxies, limits, logs, memory and troubleshooting, by task.

@@ -247,8 +247,8 @@ pub fn parse_url(url: &str) -> Result<Upstream, String> {
 /// cli::check after parse_args (a --config line is checked alone by parse_args: 60.20 C8).
 pub fn check_trust(remote_dns: Option<bool>, trust_dns: bool) -> Result<(), String> {
     match (remote_dns, trust_dns) {
-        (Some(true), false) => Err("--upstream socks5h://: the proxy resolves names, so the loopback/private/own-address \
-checks cannot apply to names; add --upstream-trust-dns to accept that, or use socks5:// (wispurr resolved locally for socks5h too)"
+        (Some(true), false) => Err("--upstream socks5h://: the proxy resolves the names, so the address checks cannot see \
+                                    them; add --upstream-trust-dns, or use socks5://"
             .into()),
         (Some(false), true) | (None, true) => Err("--upstream-trust-dns: only with --upstream socks5h://...".into()),
         _ => Ok(()),

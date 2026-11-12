@@ -1,6 +1,6 @@
 [package]
 name = "finalwisp"
-version = "0.1.0"
+version = "1.3.0" # the release version: its ONE source (60.60); --version, BUILDINFO and bench/package.sh read it
 edition = "2021"
 license = "Apache-2.0"
 rust-version = "1.88" # 60.04 F10: slice::as_chunks_mut (1.88), is_multiple_of (1.87); the pinned toolchain is newer

@@ -274,6 +274,7 @@ impl Worker {
             t.fd = -1;
             // the next socket starts uncapped (won applies the caps again) and with no hangup / urgent state
             (t.capped, t.saved, t.moved, t.local, t.urg, t.rdhup) = (false, (0, 0), 0, 0, false, false);
+            self.fd_put_t(ti, 1); // 60.57 A2
             self.proxy_connect(ti);
             return;
         }
@@ -282,6 +283,8 @@ impl Worker {
             if !self.streamlog.is_empty() {
                 self.slog_why(ti, SWhy::UpstreamFail, "proxy"); // 60.35
             }
+        } else {
+            self.connect_failed(reason); // 60.57 A6 the proxy reported the target's refusal or timeout
         }
         self.fail_target(ti, reason); // close_target drops the side entry
     }

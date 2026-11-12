@@ -13,14 +13,29 @@ use std::time::{Duration, Instant};
 
 /// Named counters that are gauges, listed explicitly (test: every `_max` name, the line's max rule, is here). Every
 /// other named counter is a counter (`_total`).
-const GAUGES: &[&str] =
-    &["pool_chunks", "pool_dirty_kib", "streams", "ktls_starve_ms_max", "ktls_starve_conn_max", "ip_keys_max", "dest_keys_max"];
+const GAUGES: &[&str] = &[
+    "pool_chunks",
+    "pool_dirty_kib",
+    "streams",
+    "ktls_starve_ms_max",
+    "ktls_starve_conn_max",
+    "ip_keys_max",
+    "dest_keys_max",
+    "one_key_conns_max",
+    "dns_wait_ms_max",
+    "fds",
+    "tcpmem_unread", // 60.63
+    "port_dest_max",
+    "dest_dead",
+    "connecting",
+];
 
 #[derive(Clone, Copy)]
 enum Unit {
     Same,
     Kib, // x 1024 -> bytes
     Ms,  // / 1000 -> seconds
+    Us,  // / 1,000,000 -> seconds (60.58)
 }
 
 /// Base units (Prometheus naming, the unit last): (named counter, exported name without `finalwisp_` and `_total`,
@@ -36,6 +51,19 @@ const RENAMES: &[(&str, &str, Unit, &str)] = &[
     ),
     ("ktls_starve_read", "ktls_starve_read_bytes", Unit::Same, ""),
     ("ktls_starve_conn_max", "ktls_starve_conn_max_bytes", Unit::Same, ""),
+    (
+        "dns_wait_us",
+        "dns_wait_seconds",
+        Unit::Us,
+        "60.58 seconds DNS lookups waited for a resolver thread (until a thread took the lookup, it joined a running lookup of \
+         the same name, or it expired); the mean wait is this / dns_miss_total",
+    ),
+    (
+        "dns_wait_ms_max",
+        "dns_wait_max_seconds",
+        Unit::Ms,
+        "60.58 gauge (max over the threads): the longest wait of a DNS lookup for a resolver thread since the start, seconds",
+    ),
 ];
 
 /// 200 answers written in full (this thread is the only writer; a page shows the scrapes before it)
@@ -78,6 +106,9 @@ pub fn render(stats: &[Arc<Stats>], peers: &[Arc<Inbox>]) -> String {
         p.one("conns_reserved", "gauge", "60.20 C3a --max-conns reservations held (exact, unlike connections)", g.used());
         p.one("conns_max", "gauge", "60.20 C3a --max-conns", g.max);
     }
+    if let Some(g) = crate::fdgate::global() {
+        p.one("fd_limit", "gauge", "60.57 file descriptors connections and streams may hold in all (fds = held now)", g.limit());
+    }
     p.one("memory_level", "gauge", "20.26 memory pressure level (0-3)", crate::mem::LEVEL.load(Relaxed));
     if crate::mem::WORKER_BUDGET.load(Relaxed) > 0 {
         p.one("memory_used_bytes", "gauge", "20.26 memory the budget counts", crate::mem::USED.load(Relaxed));
@@ -109,6 +140,10 @@ pub fn render(stats: &[Arc<Stats>], peers: &[Arc<Inbox>]) -> String {
             secs(ms),
         );
     }
+    if let Some(n) = metrics::host_net() {
+        p.one("host_syn_retrans_total", "counter", "60.63 SYN retransmits sent by the host (since boot, this netns)", n.syn_retrans);
+        p.one("host_udp_out_total", "counter", "60.63 UDP datagrams sent by the host (since boot, this netns)", n.udp_out);
+    }
     let (sum, close) = metrics::sum(stats);
     for (i, (k, help)) in Stats::help().into_iter().enumerate() {
         let v = sum.get(i).map_or(0, |e| e.1);
@@ -122,6 +157,7 @@ pub fn render(stats: &[Arc<Stats>], peers: &[Arc<Inbox>]) -> String {
             Unit::Same => p.one(&name, kind, help, v),
             Unit::Kib => p.one(&name, kind, help, v.saturating_mul(1024)),
             Unit::Ms => p.one(&name, kind, help, secs(v)),
+            Unit::Us => p.one(&name, kind, help, v as f64 / 1e6),
         }
     }
     p.one(

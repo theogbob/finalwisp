@@ -152,7 +152,7 @@ def run(case, sink_port):
 ls = socket.socket(); ls.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 ls.bind(("127.0.0.1", 0)); ls.listen(16)
 threading.Thread(target=sink, args=(ls,), daemon=True).start()
-srv = subprocess.Popen([BIN, "--port", str(PORT), "--allow-loopback", "--threads", "2"],  # credit v2 is the default (60.13)
+srv = subprocess.Popen([BIN, "--port", str(PORT), "--allow-loopback", "--threads", "2", "--log-level", "debug"],  # credit v2 is the default (60.13)
                        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
 try:
     for _ in range(100):

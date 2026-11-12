@@ -17,14 +17,6 @@ impl Worker {
         if lfd < 0 {
             return; // 60.12 closed by shutdown_step (or no unix listener)
         }
-        if !self.st.admit {
-            // 20.26 hard memory pressure: leave connections in the listen backlog (the listener stays
-            // open; set_level drains the backlog when the pressure is gone: the EPOLLET edge is used up)
-            if !std::mem::replace(&mut self.accept_paused, true) {
-                self.stats.accept_paused.bump(); // 60.12
-            }
-            return;
-        }
         // 60.34 a PROXY listener: the header comes first (proxy.rs); the TCP peer must be in --proxy-protocol-from
         let proxy = if unix { self.cfg.proxy_unix } else { self.cfg.proxy_tcp };
         loop {
@@ -46,11 +38,39 @@ impl Worker {
                 if e == libc::EMFILE || e == libc::ENFILE || e == libc::ENOBUFS || e == libc::ENOMEM {
                     let fds = e == libc::EMFILE || e == libc::ENFILE; // 60.12
                     (if fds { &self.stats.accept_err_fd } else { &self.stats.accept_err_mem }).bump();
+                    if fds {
+                        self.accept_emfile(lfd); // 60.57 A3 reset what waits, through the spare fd (best effort)
+                    }
                     // edge-triggered: no new edge may come while the backlog is non-empty, so poll
                     self.accept_retry = true;
                     return;
                 }
                 continue; // ECONNABORTED etc.
+            }
+            // 60.57 A5 memory level 2+ (admission off): reset now. Before, such connections waited in the listen backlog
+            // with no answer until the level fell (20.26); the queue is always read to its end here, so the listener's
+            // edge is armed again and set_level has no backlog to drain.
+            if !self.st.admit {
+                net::linger_zero(fd);
+                unsafe { libc::close(fd) };
+                self.level_refused_conn(unix, &ss);
+                continue;
+            }
+            // 60.57 A2/A3 one fd of the worker's allowance, before anything else: no fd left under the limit = reset now
+            // (before: the accept failed with EMFILE later and the client hung in the backlog). Released by unload, or
+            // by fd_close on the refusals below; a --balance hand-over takes the unit along (route).
+            // C --fd-admission (from 7/8 of the usable fds every new connection is reset, open ones go on) is decided
+            // on the out-of-line side of the same test: no test of the flag here.
+            let short = self.fd_take_conn();
+            if short != fds::FD_OK {
+                net::linger_zero(fd);
+                unsafe { libc::close(fd) };
+                if short == fds::FD_MARK {
+                    self.mark_refused_conn(unix, &ss);
+                } else {
+                    self.fd_refused_conn(unix, &ss);
+                }
+                continue;
             }
             // 60.20 C3a --max-conns: reserve before anything else (a refusal costs this one close); RST, not a backlog
             // wait (that is memory level 3's choice: policy refuses fast). The reservation travels with a --balance
@@ -58,7 +78,7 @@ impl Worker {
             if let Some(g) = &self.cfg.conn_gate {
                 if !g.try_reserve() {
                     net::linger_zero(fd);
-                    unsafe { libc::close(fd) };
+                    self.fd_close(fd);
                     self.stats.refuse_conns.bump();
                     if self.cfg.log_conns {
                         let ip = if unix { Some(clientip::UNIX_PEER) } else { net::sockaddr_ip(&ss) }; // 60.31 ip=unix
@@ -79,7 +99,7 @@ impl Worker {
                     // 60.31 C7 a TCP peer at exactly the sentinel would pass as the unix proxy (100::/64 is discard-only,
                     // RFC 6666: not seen on a real network)
                     net::linger_zero(fd);
-                    unsafe { libc::close(fd) };
+                    self.fd_close(fd);
                     if let Some(g) = &self.cfg.conn_gate {
                         g.release(); // the C3a reservation taken just above
                     }
@@ -101,7 +121,7 @@ impl Worker {
             };
             if let Some(why) = refused {
                 net::linger_zero(fd);
-                unsafe { libc::close(fd) };
+                self.fd_close(fd);
                 if let Some(g) = &self.cfg.conn_gate {
                     g.release(); // the C3a reservation taken just above
                 }
@@ -131,13 +151,14 @@ impl Worker {
     // threads, and their extra sleep/wake cycles cost 10-25% req/s (20.06 doc).
     // 60.31 C7: always for unix clients: the shared listener has no kernel spread (EPOLLEXCLUSIVE wakes the first idle
     // worker in registration order: 40 of 40 accepts on one worker without this, 10/10/10/10 with it, 60.28).
-    fn route(&mut self, h: net::Handoff) {
+    pub(super) fn route(&mut self, h: net::Handoff) {
         if self.cfg.balance || h.kind & net::L_UNIX != 0 {
             let my = self.inbox.load.load(Relaxed);
             let (mi, ml) =
                 self.peers.iter().enumerate().map(|(i, p)| (i, p.load.load(Relaxed))).min_by_key(|&(_, l)| l).unwrap_or((self.idx, my));
             if mi != self.idx && ml < my {
                 self.peers[mi].load.fetch_add(1, Relaxed);
+                self.fd_send(); // 60.57 A2 its unit of the fd allowance goes with it (fd_recv in inbox_ready)
                 self.peers[mi].push_fd(h);
                 return;
             }
@@ -156,10 +177,10 @@ impl Worker {
         let Some(cip) = &self.cfg.clientip else { return true };
         if let (Some(t), Some(ip)) = (&cip.table, h.peer.filter(|ip| !cip.is_trusted(*ip))) {
             let k = clientip::key(ip);
-            match t.charge(k, cip.max_conns, clientip::now_ms()) {
+            match Self::ip_charge(self.fd_mask, &self.fdg, self.idx, cip, t, k, ip) {
                 clientip::Charge::Charged => h.key = Some(k),
                 clientip::Charge::Untracked => self.stats.ip_untracked.bump(),
-                r @ (clientip::Charge::Refused | clientip::Charge::Rate) => {
+                r @ (clientip::Charge::Refused | clientip::Charge::Rate | clientip::Charge::Share) => {
                     self.ip_refused(r);
                     return false;
                 }
@@ -168,29 +189,32 @@ impl Worker {
         true
     }
 
-    /// 60.20 C3b / 60.40 a per-IP refusal's counter: --max-conns-per-ip (refuse_ip_conns) or --conn-rate-per-ip
-    /// (refuse_ip_connrate). Out of line: the accept path keeps one call where it had one bump.
+    /// 60.20 C3b / 60.40 a per-IP refusal's counter: --max-conns-per-ip (refuse_ip_conns), --conn-rate-per-ip
+    /// (refuse_ip_connrate) or 60.57 C --conn-share (refuse_share_conns, with its warning). Out of line: the accept path
+    /// keeps one call where it had one bump.
     #[cold]
     #[inline(never)]
     pub(super) fn ip_refused(&self, r: clientip::Charge) {
         match r {
             clientip::Charge::Rate => self.stats.refuse_ip_connrate.bump(),
+            clientip::Charge::Share => self.share_refused(), // 60.57 C
             _ => self.stats.refuse_ip_conns.bump(),
         }
     }
 
-    /// 60.20 C3a one client fewer on this worker: `Inbox.load`, the --max-conns reservation and (C3b) the per-IP key it
-    /// charged, together, at each of the three places a counted client ends (adopt's two failure exits, close_client),
-    /// so no exit can drop one and keep another. `key`: Some only if that client charged it. (Fds still queued in an
+    /// 60.20 C3a one client fewer on this worker: `Inbox.load`, the --max-conns reservation, (C3b) the per-IP key it
+    /// charged and (60.57 A2) its socket's fd in the count, together, at each of the places a counted client ends
+    /// (adopt's two failure exits, close_client, a pending PROXY connection), so no exit can drop one and keep another. `key`: Some only if that client charged it. (Fds still queued in an
     /// inbox when the process exits are not released: the process is ending.)
     pub(super) fn unload(&mut self, key: Option<clientip::IpKey>) {
         self.inbox.load.fetch_sub(1, std::sync::atomic::Ordering::Release); // 60.25 C5: after the rx_bytes publish
+        self.fd_put(1); // 60.57 A2 the client socket (every caller closes it)
 
         if let Some(g) = &self.cfg.conn_gate {
             g.release();
         }
         if let (Some(k), Some(t)) = (key, self.cfg.clientip.as_ref().and_then(|c| c.table.as_ref())) {
-            t.release(k, clientip::now_ms());
+            t.release_share(k, clientip::now_ms(), self.idx); // (60.57 C: the worker's slot of the fd total)
         }
     }
 
@@ -421,6 +445,9 @@ impl Worker {
         if !self.sdone.is_empty() {
             self.slog_flush(); // 60.35 before unload: main may flush the log and exit once the last connection is gone
         }
+        if self.fd_mask & crate::fdgate::MARK_SHARE != 0 {
+            self.sfd_end(ci); // 60.57 C its published stream fds go back, before the key is released
+        }
         let peer = self.peers_of.get_mut(ci as usize).and_then(Option::take);
         if !self.connlog.is_empty() {
             self.log_close(ci, peer.as_ref().map(|p| p.ip)); // 60.24 before the socket closes (TCP_INFO)
@@ -439,9 +466,11 @@ impl Worker {
             tls::send_close_notify(c.fd); // 20.17: best effort, MSG_DONTWAIT (review r1: unless already sent)
         }
         unsafe { libc::close(c.fd) };
+        let mut pipes = 0; // 60.57 A2
         for p in c.pipe {
             if p >= 0 {
                 unsafe { libc::close(p) };
+                pipes += 1;
             }
         }
         c.pipe = [-1, -1];
@@ -452,6 +481,9 @@ impl Worker {
         if std::mem::take(&mut c.starve) >= 2 {
             self.stats.ktls_starve_end.bump(); // 50.02 a counted episode (starve_check drops the entry)
             self.stats.ktls_starve_ms_max.max(c.starve_since.elapsed().as_millis() as u64);
+        }
+        if pipes > 0 {
+            self.fd_put_cold(pipes);
         }
         self.dead.push(ci);
     }

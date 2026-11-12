@@ -31,7 +31,7 @@ threading.Thread(target=acc, daemon=True).start()
 D = tempfile.mkdtemp(prefix="fw-realip-")
 def start(*args):
     log = open(os.path.join(D, f"srv{time.monotonic_ns()}.log"), "w+")
-    p = subprocess.Popen([BIN, str(P), "--allow-loopback", "--threads", "4", "--metrics-interval", "1", *args],
+    p = subprocess.Popen([BIN, str(P), "--allow-loopback", "--log-level", "debug", "--threads", "4", "--metrics-interval", "1", *args],
                          stdout=log, stderr=subprocess.STDOUT)
     p.logf = log
     for _ in range(100):

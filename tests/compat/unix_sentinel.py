@@ -24,7 +24,7 @@ def up(src, port):
         s.close()
 def run(args, port):
     log = open(f"/tmp/fw{port}.log", "w+")
-    p = subprocess.Popen([BIN, "--host", "::", "--port", str(port), "--metrics-interval", "1", *args], stdout=log, stderr=subprocess.STDOUT)
+    p = subprocess.Popen([BIN, "--host", "::", "--port", str(port), "--log-level", "debug", "--metrics-interval", "1", *args], stdout=log, stderr=subprocess.STDOUT)
     for _ in range(100):
         if "capabilities:" in open(log.name).read(): break
         time.sleep(0.05)

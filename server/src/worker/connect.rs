@@ -4,6 +4,109 @@
 
 use super::*;
 
+/// 60.63 E2 try_connect, written once for its two forms (so that they cannot drift apart). The plain form is
+/// try_connect: its expansion is, token for token, the function as it was before 60.63 (with section E off it
+/// compiles to the same code: checked by disassembly). The gated form (try_connect_gated, cold: fd_short sends an
+/// attempt there while a destination holds a large part of the host's source ports) asks worker/bounds.rs about each
+/// address before it takes the fd (`$gate`: None = this address is not tried), connects with the socket option
+/// IP_LOCAL_PORT_RANGE where that says so, reports a connect error (`$failed`) and lets a refusal by a rule decide
+/// the CLOSE reason when no address is left (`$end`; `$park`: the same for a stream that waits for the other
+/// family's lookup). It never calls try_connect or fd_short (no recursion).
+macro_rules! try_connect_fn {
+    ($(#[$m:meta])* $name:ident, $take:ident, $short:ident, $connect:ident $(, $range:ident, $gate:ident, $failed:ident, $end:ident, $park:ident)?) => {
+        $(#[$m])*
+        pub(super) fn $name(&mut self, ti: u32) {
+        loop {
+            let tg = self.targets.gen(ti);
+            let tfo = self.cfg.tfo;
+            let t = self.targets.at(ti);
+            let Some(&ip) = t.addrs.get(t.attempt) else {
+                if t.conn.is_empty() && t.dns_more {
+                    $( self.$park(ti); )?
+                    self.unlist(ti); // 70.10 parked: the other family's answer is still due (dns_late)
+                } else if t.conn.is_empty() {
+                    let r = if t.err == 0 { CLOSE_UNREACHABLE } else { net::connect_reason(t.err) };
+                    $( if self.$end(ti) { return; } )?
+                    if self.cfg.upstream.is_some() {
+                        self.stats.upstream_fail.bump(); // 60.27 C6 no proxy address answered (close_target drops the side entry)
+                        if !self.streamlog.is_empty() {
+                            self.slog_why(ti, SWhy::UpstreamFail, "connect"); // 60.35
+                        }
+                    } else {
+                        self.connect_failed(r); // 60.57 A6
+                    }
+                    self.fail_target(ti, r);
+                }
+                return;
+            };
+            if self.cfg.upstream.is_some()
+                && self.proxy_hs.get(ti as usize).and_then(Option::as_ref).is_some_and(|h| Instant::now() >= h.deadline)
+            {
+                // 60.27 C6: run_timers starts the next address after an attempt's deadline; past the whole open's
+                // deadline (proxy connect + handshake + the proxy's connect + retries) no new proxy connection
+                self.stats.upstream_fail.bump();
+                if !self.streamlog.is_empty() {
+                    self.slog_why(ti, SWhy::UpstreamFail, "timeout"); // 60.35
+                }
+                self.fail_target(ti, CLOSE_TIMEOUT);
+                return;
+            }
+            // 60.57 A2/A4 every connect attempt holds one fd of the allowance: none left under the limit = no attempt
+            $( let Some($range) = self.$gate(ti, ip) else { continue }; )?
+            if !self.$take(ti) {
+                return self.$short(ti);
+            }
+            let t = self.targets.at(ti);
+            t.attempt += 1;
+            let res = {
+                // TFO only for an attempt no other attempt already carries SYN data for, and only with
+                // the bytes of a TLS ClientHello record: a duplicated SYN may deliver them twice, which
+                // is harmless for a hello but not for plain requests or TLS 1.3 0-RTT data behind it.
+                let syn = if tfo && t.tfo_fd < 0 { client_hello(&t.pend[t.phead..]) } else { None };
+                // 60.27 C6: with an upstream, t.addrs are the proxy's addresses (the target's wait in proxy_hs)
+                let port = self.cfg.upstream.as_deref().map_or(t.port, |u| u.port);
+                net::$connect(&SocketAddr::new(ip, port), syn $(, $range)?)
+            };
+            match res {
+                Ok((fd, done, sent)) => {
+                    if !ep_add(self.ep, fd, tok(K_TARGET, ti, tg), EV_TARGET) {
+                        t.err = libc::ENOMEM;
+                        self.fd_close_t(ti, fd);
+                        continue;
+                    }
+                    t.state = TState::Connecting;
+                    t.conn.push(fd);
+                    if sent > 0 {
+                        t.tfo_fd = fd;
+                        t.tfo_sent = sent;
+                    }
+                    if done {
+                        self.won(ti, fd, false);
+                        return;
+                    }
+                    let now = Instant::now();
+                    t.deadline = now + self.cfg.connect_timeout;
+                    if self.cfg.upstream.is_some() {
+                        t.deadline = t.deadline.min(self.proxy_hs[ti as usize].as_ref().expect("side entry").deadline);
+                    }
+                    t.next_try = now + HE_DELAY;
+                    if t.cidx == NOT_LISTED {
+                        t.cidx = self.connecting.len();
+                        self.connecting.push((ti, tg));
+                    }
+                    return;
+                }
+                Err(e) => {
+                    t.err = e;
+                    self.fd_put_t(ti, 1); // (no socket, or closed by net::connect)
+                    $( self.$failed(ti, ip, e); )?
+                }
+            }
+        }
+    }
+    };
+}
+
 impl Worker {
     /// Create a target and start resolving/connecting. Returns (index, generation) if it is still
     /// alive; None if it already failed synchronously (CLOSE has been queued).
@@ -73,7 +176,12 @@ impl Worker {
         self.stats.streams.set((self.targets.slots.len() - self.targets.free.len()) as u64);
         // 20.15: IP literals and cache hits start connecting at the end of this input batch, so DATA
         // that arrived in the same read is already in `pend` and can ride in the SYN (TFO).
-        if host.len() > MAX_HOST || host.is_empty() {
+        if !self.fd_room(ti) {
+            // 60.57 A4 no file descriptor left under the limit: refused before DNS with 0x49, counted and logged (before:
+            // 0x03 after the lookup, from the failed socket call, counted nowhere). Here and not in on_connect: that is
+            // inlined into on_message, the per-frame path.
+            self.fd_short(ti);
+        } else if host.len() > MAX_HOST || host.is_empty() {
             // review 20.23: no DNS name is longer; also keeps attacker-sized keys out of the DNS caches ("" = the root ".")
             self.fail_target(ti, CLOSE_UNREACHABLE);
         } else if let Ok(ip) = host.parse::<IpAddr>() {
@@ -126,7 +234,12 @@ impl Worker {
         if self.cfg.dns_own {
             self.inbox.dns_live.lock().unwrap().insert(token); // 70.09 before the send: the pool may check at once
         }
-        let req = DnsReq { host, token, inbox: self.inbox.clone(), at: Instant::now() };
+        // 60.58 who asks, for --dns-share (the pool reads both only then): the connection, and its address key when
+        // the peer is known (Config::want_peer) and is one client's address (net::shared_addr)
+        let (ci, cgen) = (self.targets.at(ti).client, self.targets.at(ti).cgen);
+        let conn = (self.idx as u32, ci, cgen);
+        let key = self.peer(ci).map(|p| p.ip).filter(|ip| !net::shared_addr(*ip)).map(clientip::key);
+        let req = DnsReq { host, token, inbox: self.inbox.clone(), at: Instant::now(), conn, key };
         if self.dns_tx.send(req).is_err() {
             self.stats.dns_fail.bump(); // 60.12
             self.fail_target(ti, CLOSE_UNREACHABLE); // close_target drops the token again
@@ -138,6 +251,7 @@ impl Worker {
     pub(super) fn inbox_ready(&mut self) {
         let (dns, fds) = self.inbox.drain();
         for h in fds {
+            self.fd_recv(); // 60.57 A2 the fd came with its unit of the sender's allowance
             self.take(h); // load (and the per-IP key, if any) was counted by the sender; 60.34 PROXY: wait for the header
         }
         let stop = self.inbox.stop.load(Relaxed);
@@ -292,100 +406,51 @@ impl Worker {
         }
     }
 
-    /// 20.14: start the next address (in parallel with attempts still in flight). Starts nothing and
-    /// fails the target only when no address is left and nothing is in flight.
-    pub(super) fn try_connect(&mut self, ti: u32) {
-        loop {
-            let tg = self.targets.gen(ti);
-            let tfo = self.cfg.tfo;
-            let t = self.targets.at(ti);
-            let Some(&ip) = t.addrs.get(t.attempt) else {
-                if t.conn.is_empty() && t.dns_more {
-                    self.unlist(ti); // 70.10 parked: the other family's answer is still due (dns_late)
-                } else if t.conn.is_empty() {
-                    let r = if t.err == 0 { CLOSE_UNREACHABLE } else { net::connect_reason(t.err) };
-                    if self.cfg.upstream.is_some() {
-                        self.stats.upstream_fail.bump(); // 60.27 C6 no proxy address answered (close_target drops the side entry)
-                        if !self.streamlog.is_empty() {
-                            self.slog_why(ti, SWhy::UpstreamFail, "connect"); // 60.35
-                        }
-                    }
-                    self.fail_target(ti, r);
-                }
-                return;
-            };
-            if self.cfg.upstream.is_some()
-                && self.proxy_hs.get(ti as usize).and_then(Option::as_ref).is_some_and(|h| Instant::now() >= h.deadline)
-            {
-                // 60.27 C6: run_timers starts the next address after an attempt's deadline; past the whole open's
-                // deadline (proxy connect + handshake + the proxy's connect + retries) no new proxy connection
-                self.stats.upstream_fail.bump();
-                if !self.streamlog.is_empty() {
-                    self.slog_why(ti, SWhy::UpstreamFail, "timeout"); // 60.35
-                }
-                self.fail_target(ti, CLOSE_TIMEOUT);
-                return;
-            }
-            let t = self.targets.at(ti);
-            t.attempt += 1;
-            let res = {
-                // TFO only for an attempt no other attempt already carries SYN data for, and only with
-                // the bytes of a TLS ClientHello record: a duplicated SYN may deliver them twice, which
-                // is harmless for a hello but not for plain requests or TLS 1.3 0-RTT data behind it.
-                let syn = if tfo && t.tfo_fd < 0 { client_hello(&t.pend[t.phead..]) } else { None };
-                // 60.27 C6: with an upstream, t.addrs are the proxy's addresses (the target's wait in proxy_hs)
-                let port = self.cfg.upstream.as_deref().map_or(t.port, |u| u.port);
-                net::connect(&SocketAddr::new(ip, port), syn)
-            };
-            match res {
-                Ok((fd, done, sent)) => {
-                    if !ep_add(self.ep, fd, tok(K_TARGET, ti, tg), EV_TARGET) {
-                        unsafe { libc::close(fd) };
-                        t.err = libc::ENOMEM;
-                        continue;
-                    }
-                    t.state = TState::Connecting;
-                    t.conn.push(fd);
-                    if sent > 0 {
-                        t.tfo_fd = fd;
-                        t.tfo_sent = sent;
-                    }
-                    if done {
-                        self.won(ti, fd, false);
-                        return;
-                    }
-                    let now = Instant::now();
-                    t.deadline = now + self.cfg.connect_timeout;
-                    if self.cfg.upstream.is_some() {
-                        t.deadline = t.deadline.min(self.proxy_hs[ti as usize].as_ref().expect("side entry").deadline);
-                    }
-                    t.next_try = now + HE_DELAY;
-                    if t.cidx == NOT_LISTED {
-                        t.cidx = self.connecting.len();
-                        self.connecting.push((ti, tg));
-                    }
-                    return;
-                }
-                Err(e) => t.err = e,
-            }
-        }
-    }
+    try_connect_fn!(
+        /// 20.14: start the next address (in parallel with attempts still in flight). Starts nothing and
+        /// fails the target only when no address is left and nothing is in flight.
+        try_connect,
+        fd_take_t,
+        fd_short,
+        connect
+    );
+
+    try_connect_fn!(
+        /// 60.63 E2 try_connect while a destination holds a large part of the host's source ports (the worker is in
+        /// hold mode: fd_grab_t stops each TCP attempt and fd_short sends it here)
+        #[cold]
+        #[inline(never)]
+        try_connect_gated,
+        fd_take_ranged,
+        fd_short_fd,
+        connect_ranged,
+        range,
+        bd_gate,
+        bd_connect_failed,
+        bd_end,
+        bd_park
+    );
 
     /// 20.14: a Connecting target got an event on one of its attempts (shared token): check them all.
     pub(super) fn connect_progress(&mut self, ti: u32) {
         let t = self.targets.at(ti);
         let mut i = 0;
+        let mut failed = 0; // 60.57 A2 attempts closed here
         while i < t.conn.len() {
             match net::connect_state(t.conn[i]) {
                 None => i += 1,
                 Some((0, closed)) => {
                     let fd = t.conn[i];
+                    if failed > 0 {
+                        self.fd_put_t(ti, failed);
+                    }
                     self.won(ti, fd, closed);
                     return;
                 }
                 Some((e, _)) => {
                     let fd = t.conn.swap_remove(i);
                     unsafe { libc::close(fd) };
+                    failed += 1;
                     if t.tfo_fd == fd {
                         (t.tfo_fd, t.tfo_sent) = (-1, 0);
                     }
@@ -393,8 +458,14 @@ impl Worker {
                 }
             }
         }
-        if t.conn.is_empty() {
+        let none_left = t.conn.is_empty();
+        if none_left {
             t.rdhup = false; // set by a failed attempt's event
+        }
+        if failed > 0 {
+            self.fd_put_t(ti, failed);
+        }
+        if none_left {
             self.try_connect(ti); // next address now, or fail
         }
     }
@@ -439,9 +510,11 @@ impl Worker {
             }
         }
         let t = self.targets.at(ti);
+        let mut lost = 0; // 60.57 A2 the attempts that lost the race
         for &o in &t.conn {
             if o != fd {
                 unsafe { libc::close(o) };
+                lost += 1;
             }
         }
         t.conn = Vec::new();
@@ -456,6 +529,9 @@ impl Worker {
         };
         (t.tfo_fd, t.tfo_sent) = (-1, 0);
         t.rdhup = peer_closed;
+        if lost > 0 {
+            self.fd_put_t(ti, lost);
+        }
         if self.st.sock_cap > 0 {
             if mem::LAZY.load(Relaxed) {
                 self.lazy_cap(ti, tfo); // (TFO may have moved LAZY_CAP already, and all of pend)

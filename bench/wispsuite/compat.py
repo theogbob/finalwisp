@@ -19,6 +19,10 @@ usage: wst compat --bin FINALWISP [--base-port 8300] [--out DIR] [--matrix] [--s
   wispjs-v2c    wispjs.mjs + adversarial.py (adv-v2c) with credit v2 (wisp-js sends inside its CONTINUE handler)  base+67
   limits        tests/compat/limits.py (60.20 C3a: --max-conns with/without --balance, --max-streams-per-conn;
                 60.39 --stream-rate-per-dest / -minute)                                           base+24..+27
+  fds           tests/compat/fds.py (60.57: the nofile raise, the fd count against /proc/PID/fd, resets and 0x49
+                at the fd limit, the warning lines; 60.57 C: --conn-share, --fd-admission)        base+52..+55
+  bounds        tests/compat/bounds.py (60.63 E: the four options off and on, honest streams, --dest-failfast end to
+                end against a destination that does not answer, answers again, refuses)             base+97, +98
   policy        tests/compat/policy.py (60.20 C1: port/host/dest rules, --no-direct-ip, --no-ipv6-targets, recursion)  base+28, +29
   realip        tests/compat/realip.py (60.20 C2/C3b: per-IP limits direct and behind a trusted proxy, XFF, rates)  base+8, +9
   logs          tests/compat/logs.py (60.24 --log-level, --log-conns lines, refusal flood, stalled stderr)  base+22, +23
@@ -189,8 +193,14 @@ def gate_finalwisp(a, g):
         g.step("v2ext", [sys.executable, os.path.join(COMPAT, "v2ext.py"), binp, str(B + 10)])
     if want("dns-own"):  # 70.09 own resolver against a fake DNS server (ports B+40..B+49)
         g.step("dns-own", [sys.executable, os.path.join(COMPAT, "dns_own.py"), binp, str(B + 40)], timeout=300)
+    if want("dns-preset"):  # 60.58 the same cases with --preset public (dns-own, dns-reserve); the same ports, after dns-own
+        g.step("dns-preset", [sys.executable, os.path.join(COMPAT, "dns_own.py"), binp, str(B + 40), "preset"], timeout=300)
     if want("limits"):  # 60.20 C3a --max-conns / --max-streams-per-conn (ports B+24..B+27)
         g.step("limits", [sys.executable, os.path.join(COMPAT, "limits.py"), binp, str(B + 24)], timeout=180)
+    if want("fds"):  # 60.57 fd count, fd limit, refusals at the limit (ports B+52..B+55)
+        g.step("fds", [sys.executable, os.path.join(COMPAT, "fds.py"), binp, str(B + 52)], timeout=300)
+    if want("bounds"):  # 60.63 E the bounds of section E (ports B+97, B+98)
+        g.step("bounds", [sys.executable, os.path.join(COMPAT, "bounds.py"), binp, str(B + 97)], timeout=300)
     if want("policy"):  # 60.20 C1 destination policy (ports B+28, B+29)
         g.step("policy", [sys.executable, os.path.join(COMPAT, "policy.py"), binp, str(B + 28)], timeout=180)
     if want("realip"):  # 60.20 C2 / C3b (ports B+8, B+9)

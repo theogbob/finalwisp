@@ -37,14 +37,38 @@ pub fn parse_url(url: &str) -> Result<Url, String> {
     Ok(Url { host, port, path, tls })
 }
 
+/// 60.67 --xff-keys N: the number of client addresses the connections rotate through (0 = no header).
+pub static XFF_KEYS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static XFF_NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The `X-Forwarded-For` line of the next connection, or nothing. Even k: IPv4 11.1.0.1 + k/2; odd k: one IPv6 /64 per k.
+fn xff_header() -> String {
+    use std::sync::atomic::Ordering::Relaxed;
+    let n = XFF_KEYS.load(Relaxed);
+    if n == 0 {
+        return String::new();
+    }
+    xff_line(XFF_NEXT.fetch_add(1, Relaxed) % n)
+}
+
+fn xff_line(k: u64) -> String {
+    let i = k / 2;
+    if k.is_multiple_of(2) {
+        let a = 0x0b01_0001u32.wrapping_add(i as u32);
+        format!("X-Forwarded-For: {}\r\n", std::net::Ipv4Addr::from(a))
+    } else {
+        format!("X-Forwarded-For: 2a10:77:{:x}:{:x}::1\r\n", (i >> 16) & 0xffff, i & 0xffff)
+    }
+}
+
 /// Connect + upgrade. Returns the socket and any bytes read past the HTTP response.
 pub async fn connect(url: &Url, tls: Option<&Arc<ClientConfig>>) -> std::io::Result<(Sock, BytesMut)> {
     let mut sock = Sock::connect(url.host.as_str(), url.port, tls).await?;
     // No Sec-WebSocket-Protocol header => Wisp v1.
     let req = format!(
         "GET {} HTTP/1.1\r\nHost: {}:{}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
-         Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
-        url.path, url.host, url.port
+         Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n{}\r\n",
+        url.path, url.host, url.port, xff_header()
     );
     sock.write_all(req.as_bytes()).await?;
     let mut buf = BytesMut::with_capacity(512 * 1024);
@@ -173,4 +197,15 @@ pub fn parse_hdr(b: &[u8]) -> Result<Option<FrameHdr>, &'static str> {
         None
     };
     Ok(Some(FrameHdr { fin, opcode, hdr_len: off, payload_len: len, mask }))
+}
+
+#[cfg(test)]
+mod xff_tests {
+    #[test]
+    fn xff_lines_are_public_addresses_one_key_each() {
+        assert_eq!(super::xff_line(0), "X-Forwarded-For: 11.1.0.1\r\n");
+        assert_eq!(super::xff_line(2), "X-Forwarded-For: 11.1.0.2\r\n");
+        assert_eq!(super::xff_line(1), "X-Forwarded-For: 2a10:77:0:0::1\r\n");
+        assert_eq!(super::xff_line(2 * 65536 + 7), "X-Forwarded-For: 2a10:77:1:3::1\r\n");
+    }
 }

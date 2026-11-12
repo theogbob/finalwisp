@@ -172,7 +172,9 @@ def start_server(name):
     s = SERVERS[name]
     gen = server_gen[name]
     unit = f"soak-{name}-{int(time.time())}"
-    argv = scoped([a.fw, "--port", str(s["port"])] + s["args"], unit)
+    # 60.60: the capabilities line (recorded below, read by analyze.py) is a debug line since v1.3.0; without
+    # --log-conns debug adds no line per connection
+    argv = scoped([a.fw, "--port", str(s["port"]), "--log-level", "debug"] + s["args"], unit)
     if a.metrics_interval > 0:
         argv += ["--metrics-interval", str(a.metrics_interval)]  # 30.14: counters + pool gauges (metrics.rs)
     s["log"] = os.path.join(RUN, f"server{name}.{gen}.log")

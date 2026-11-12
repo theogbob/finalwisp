@@ -17,6 +17,8 @@ Waits first for the conntrack table to drain (2 flows per idle connection, max 2
 --probe-rr / --probe-max (imply --fixed): a wbench rr 1x1, or N python connections doing sequential 64 B echoes that record
 the MAX latency, through the server during the idle window (70.23: a malloc_trim stall shows as one huge sample).
 Exit status 1 if the run failed (the JSON line still has "error").
+The JSON's "capabilities" is the server's detail line: finalwisp 1.3.0 and later print it only with --log-level debug
+(put it into --server; without --log-conns it adds no line per connection).
 """
 import argparse, asyncio, json, math, os, resource, signal, socket, struct, subprocess, sys, time
 

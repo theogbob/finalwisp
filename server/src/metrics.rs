@@ -36,6 +36,15 @@ impl Ctr {
     pub fn get(&self) -> u64 {
         self.0.load(Relaxed)
     }
+    /// 60.58 for a counter that threads other than the worker write (the DNS pool's; the worker never writes it): a
+    /// locked add, so no add is lost between them
+    pub fn add_shared(&self, n: u64) {
+        self.0.fetch_add(n, Relaxed);
+    }
+    /// 60.58 as add_shared, for a max gauge
+    pub fn max_shared(&self, v: u64) {
+        self.0.fetch_max(v, Relaxed);
+    }
 }
 
 /// The counters, listed once: field, log key and meaning come from the same line.
@@ -75,7 +84,8 @@ stats! {
     accept_err_fd,
     /// accept() failed for lack of kernel memory (ENOBUFS / ENOMEM)
     accept_err_mem,
-    /// accept paused by memory pressure (level 2+; once per pause)
+    /// episodes of memory pressure (level 2+) in which a new connection came and was refused (once per episode and
+    /// worker; since 1.3.0 such connections are reset and counted in refuse_level_conns, before they waited)
     accept_paused,
     /// CONNECTs admitted past the admission and stream limits (a target was created; it may still fail at once, e.g.
     /// a negative DNS entry: see the close_* counts)
@@ -230,6 +240,63 @@ stats! {
     /// 60.47 --park-rcvlock: lock, unlock or floor-raise syscalls that failed, or a raise that lowered a buffer (a failed
     /// lock leaves the stream unlocked, a failed unlock is tried again at the next unparked resume)
     rcvlock_errors,
+    /// 60.59 hint: requests with a forwarding header (X-Forwarded-For, Forwarded, X-Real-IP, CF-Connecting-IP) from a
+    /// loopback or private peer that is not a trusted proxy: probably a reverse proxy missing from --trusted-proxy
+    /// (counted only when the server keeps peer addresses: a per-IP limit, --conn-share, --trusted-proxy or
+    /// --listen-unix)
+    hint_fwd_untrusted,
+    /// 60.59 hint, gauge (max, not summed): the most connections one loopback or private address held while it held
+    /// more than half of all connections (a proxy, NAT or port forward in front of many users looks like this; 0: never
+    /// seen; only with a per-IP limit or --conn-share)
+    one_key_conns_max,
+    /// 60.58 microseconds DNS lookups waited for a resolver thread (from the request until a thread took it, it joined
+    /// a running lookup of the same name, or it expired); the mean wait is this / dns_miss
+    dns_wait_us,
+    /// 60.58 gauge (max, not summed): the longest such wait since the start, ms
+    dns_wait_ms_max,
+    /// 60.58 DNS lookups answered as failed without a query: they waited for a resolver thread longer than
+    /// --connect-timeout (also counted in dns_fail when the stream was still open)
+    dns_expired,
+    /// 60.57 gauge: file descriptors held for connections and streams (client sockets, target sockets and connect
+    /// attempts, UDP sockets, splice pipes); the listeners and the other fixed fds are not in it
+    fds,
+    /// 60.57 connections reset at accept: no file descriptor left under the limit (raise the open-file limit)
+    refuse_fd_conns,
+    /// 60.57 connections reset at accept: memory level 2 or 3 (before 1.3.0 they waited in the listen backlog)
+    refuse_level_conns,
+    /// 60.57 CONNECT refused with 0x49: no file descriptor left under the limit (raise the open-file limit)
+    refuse_fd,
+    /// 60.57 streams whose connect to the target failed (refused, unreachable, a network error; after every address)
+    connect_fail,
+    /// 60.57 streams whose connect to the target timed out (--connect-timeout, or the kernel's own timeout)
+    connect_timeout,
+    /// 60.57 --fd-admission: connections reset at accept because 7/8 of the usable file descriptors were handed out
+    refuse_mark_conns,
+    /// 60.57 --conn-share: connections refused (reset, or 429 behind a trusted proxy) because their address held more
+    /// than half of the usable file descriptors while other addresses held a real share
+    refuse_share_conns,
+    /// 60.63 --tcpmem-share: CONNECT refused with 0x49: the client address held more than half of all unread downloads
+    /// while the host's TCP memory was short and another client was connected
+    refuse_tcpmem_share,
+    /// 60.63 --tcpmem-share gauge: target sockets parked on their client's output (downloads the client does not read
+    /// as fast as they arrive), at the last count (each idle sweep; more often while a mark is set)
+    tcpmem_unread,
+    /// 60.63 --port-share: stream refused with 0x49: its client address held more than half of the sockets to the
+    /// destination (address and port), 3/4 of the host's source ports toward it were in use and another client held one
+    refuse_port_share,
+    /// 60.63 --port-share: stream refused with 0x49 for every client: the host had no source port left toward the
+    /// destination (the kernel's EADDRNOTAVAIL, and the 250 ms after it)
+    refuse_port_full,
+    /// 60.63 --port-share gauge (max, not summed): the most target sockets to one destination address and port, all
+    /// workers, as this worker saw it at its last count
+    port_dest_max,
+    /// 60.63 --dest-failfast: stream refused with 0x43 at once: its destination did not answer (8 or more connects with
+    /// no answer to 4 SYNs each, none that opened), it was not the probe, and another client was connected
+    refuse_dest_dead,
+    /// 60.63 --dest-failfast gauge: destinations that do not answer, as the workers hold them at their last count
+    dest_dead,
+    /// 60.63 --net-watch gauge: streams with a connect in flight, as the workers counted them at their last sweep
+    connecting,
 }
 
 impl Stats {
@@ -285,6 +352,10 @@ pub fn line(ev: &str, stats: &[Arc<Stats>], peers: &[Arc<Inbox>]) -> String {
     if let Some(g) = GATE.get() {
         s += &format!(" conns_reserved={} conns_max={}", g.used(), g.max); // 60.20 C3a (exact, unlike conns)
     }
+    if let Some(g) = crate::fdgate::global() {
+        // 60.57 A2 the fds connections and streams may hold in all (`fds` = held now), and what the workers took of it
+        s += &format!(" fd_limit={} fd_granted={}", g.limit(), g.granted());
+    }
     if crate::mem::TCP_ON.load(Relaxed) {
         // 20.31 B3: TCP level, host TCP pages, our share (per mille; na = not read yet, unknown = read failed), entries and seconds at TCP level 1
         let own = crate::mem::TCP_OWN_PM.load(Relaxed);
@@ -304,6 +375,10 @@ pub fn line(ev: &str, stats: &[Arc<Stats>], peers: &[Arc<Inbox>]) -> String {
     }
     if let Some((n, ms)) = kernel_tcp_pressure() {
         s += &format!(" host_tcp_pressures={n} host_tcp_pressure_ms={ms}"); // since boot (TcpExt), this netns
+    }
+    if let Some(n) = host_net() {
+        // 60.63 --net-watch: SYN retransmits and UDP datagrams sent by the host (since boot, this netns)
+        s += &format!(" host_syn_retrans={} host_udp_out={}", n.syn_retrans, n.udp_out);
     }
     let (changes, times) = crate::mem::level_times(now);
     s += &format!(" level_changes={changes}");
@@ -351,6 +426,12 @@ pub(crate) fn sum(stats: &[Arc<Stats>]) -> (Vec<(&'static str, u64)>, [u64; 256]
         }
     }
     (sum, close)
+}
+
+/// 60.63 --net-watch: the host's packet counters, only with the option (read by the metrics thread, the final line
+/// and the Prometheus page)
+pub(crate) fn host_net() -> Option<crate::bounds::Net> {
+    crate::bounds::global().filter(|b| b.opts & crate::bounds::OPT_WATCH != 0).and_then(|_| crate::bounds::net_read())
 }
 
 /// 20.31 TcpExt TCPMemoryPressures / TCPMemoryPressuresChrono (times the kernel entered TCP memory pressure, ms in it;

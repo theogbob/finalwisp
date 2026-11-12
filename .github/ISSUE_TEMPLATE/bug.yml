@@ -19,17 +19,23 @@ body:
     id: version
     attributes:
       label: finalwisp version
-      description: The release (e.g. v1.0.0) or the `git:` line of BUILDINFO.
+      description: The output of `finalwisp --version`. Before 1.3.0, the release (e.g. v1.2.1) or the `git:` line of BUILDINFO.
     validations:
       required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Settings in effect
+      description: The output of `finalwisp YOUR-OPTIONS --show-config` (1.3.0 and later). It checks the options, prints every setting with the layer that set it and what the host allows, and starts nothing. It hides the user name and the password of an `--upstream` URL.
+      render: text
   - type: textarea
     id: env
     attributes:
       label: Environment
-      description: Linux distribution and kernel (`uname -r`), and what sits in front (nginx, Caddy, Cloudflare, none).
+      description: Linux distribution and kernel (`uname -r`), how it runs (systemd, Docker, a shell), and what sits in front (nginx, Caddy, Cloudflare, none).
   - type: textarea
     id: logs
     attributes:
       label: Logs
-      description: finalwisp's stderr around the problem (the startup "capabilities" line helps).
+      description: finalwisp's stderr around the problem, with the lines it prints at startup.
       render: text

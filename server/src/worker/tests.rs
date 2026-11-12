@@ -59,6 +59,7 @@ fn dirty_client_closed_in_same_turn_is_skipped() {
     };
     let a = pair();
     w.inbox.load.fetch_add(1, Relaxed);
+    assert!(w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
     w.adopt(net::Handoff::bare(a[0]));
     let ci = 0;
     let g = w.clients.gen(ci);
@@ -72,6 +73,7 @@ fn dirty_client_closed_in_same_turn_is_skipped() {
     w.dirty.push((ci, g));
     let b = pair();
     w.inbox.load.fetch_add(1, Relaxed);
+    assert!(w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
     w.adopt(net::Handoff::bare(b[0]));
     let g2 = w.clients.gen(ci);
     assert_ne!(g2, g);
@@ -183,6 +185,7 @@ fn stalled_partial_frame_is_shed_at_level_2() {
         s.set_nonblocking(true).unwrap();
         let p = p.into_raw_fd();
         w.inbox.load.fetch_add(1, Relaxed);
+        assert!(w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
         w.adopt(net::Handoff::bare(s.into_raw_fd()));
         push(&mut w, ci, p, b"GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n");
         assert!(w.clients.at(ci).state == CState::Open);
@@ -275,6 +278,7 @@ fn early_dns_answer_and_late_family() {
     let (s, _) = l.accept().unwrap();
     s.set_nonblocking(true).unwrap();
     w.inbox.load.fetch_add(1, Relaxed);
+    assert!(w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
     w.adopt(net::Handoff::bare(s.into_raw_fd()));
     std::io::Write::write_all(&mut &peer, b"GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n").unwrap();
     for _ in 0..200 {
@@ -448,6 +452,7 @@ fn credit_v2_ping_after_continue_pong_retires_and_grants() {
     let mut fds = [0; 2];
     assert_eq!(unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_NONBLOCK, 0, fds.as_mut_ptr()) }, 0);
     w.inbox.load.fetch_add(1, Relaxed);
+    assert!(w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
     w.adopt(net::Handoff::bare(fds[0]));
     let ci = 0;
     w.clients.at(ci).state = CState::Open;
@@ -593,6 +598,7 @@ fn credit_v2_state_is_lazy() {
     let mut fds = [0; 2];
     assert_eq!(unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_NONBLOCK, 0, fds.as_mut_ptr()) }, 0);
     w.inbox.load.fetch_add(1, Relaxed);
+    assert!(w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
     w.adopt(net::Handoff::bare(fds[0]));
     let ci = 0;
     w.clients.at(ci).state = CState::Open;
@@ -746,6 +752,7 @@ fn starve_retry_keeps_flush_order() {
         assert_eq!(unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_NONBLOCK, 0, fds.as_mut_ptr()) }, 0);
         net::cap_bufs(fds[0], (4096, 4096)); // partial writes at many points
         w.inbox.load.fetch_add(1, Relaxed);
+        assert!(w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
         w.adopt(net::Handoff::bare(fds[0]));
         let mut peer = unsafe { <std::os::unix::net::UnixStream as std::os::fd::FromRawFd>::from_raw_fd(fds[1]) };
         let mut k = 0u32;
@@ -895,6 +902,7 @@ fn starved_client_reads_a_bounded_slice() {
     let mut fds = [0; 2];
     assert_eq!(unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_NONBLOCK, 0, fds.as_mut_ptr()) }, 0);
     w.inbox.load.fetch_add(1, Relaxed);
+    assert!(w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
     w.adopt(net::Handoff::bare(fds[0]));
     let ci = 0;
     w.clients.at(ci).state = CState::Open;
@@ -1097,6 +1105,7 @@ fn splice_length_steps(adaptive: bool) {
     let mut fds = [0; 2];
     assert_eq!(unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_NONBLOCK, 0, fds.as_mut_ptr()) }, 0);
     w.inbox.load.fetch_add(1, Relaxed);
+    assert!(w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
     w.adopt(net::Handoff::bare(fds[0]));
     let ci = 0;
     w.clients.at(ci).state = CState::Open;
@@ -1314,6 +1323,7 @@ fn tcp_level_caps_remote_sockets_only() {
     let mut fds = [0; 2];
     assert_eq!(unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_NONBLOCK, 0, fds.as_mut_ptr()) }, 0);
     w.inbox.load.fetch_add(1, Relaxed);
+    assert!(w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
     w.adopt(net::Handoff::bare(fds[0]));
     let ci = 0;
     w.clients.at(ci).state = CState::Open;
@@ -1426,6 +1436,7 @@ fn up_rig(n: u32, small: bool) -> (super::Worker, Vec<(u32, u32, std::net::TcpSt
     let mut fds = [0; 2];
     assert_eq!(unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_NONBLOCK, 0, fds.as_mut_ptr()) }, 0);
     w.inbox.load.fetch_add(1, Relaxed);
+    assert!(w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
     w.adopt(net::Handoff::bare(fds[0]));
     w.clients.at(0).state = CState::Open;
     let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1867,6 +1878,7 @@ fn honest_upload_over_pend_hard_pauses_instead_of_close() {
     let mut fds = [0; 2];
     assert_eq!(unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_NONBLOCK, 0, fds.as_mut_ptr()) }, 0);
     w.inbox.load.fetch_add(1, Relaxed);
+    assert!(w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
     w.adopt(net::Handoff::bare(fds[0]));
     let ci = 0;
     let cg = w.clients.gen(ci);
@@ -2332,6 +2344,7 @@ fn conn_gate_reserve_and_release_on_every_exit() {
     };
     let ours = ident(null).unwrap();
     w.inbox.load.fetch_add(1, Relaxed);
+    assert!(w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
     w.adopt(net::Handoff::bare(null));
     assert_eq!((gate.used(), load(&w)), (0, 0));
     assert_ne!(ident(null), Some(ours), "adopt closed the fd (its number may hold another file now)");
@@ -2354,6 +2367,7 @@ fn conn_gate_reserve_and_release_on_every_exit() {
     let afd = std::os::fd::IntoRawFd::into_raw_fd(a);
     assert!(gate.try_reserve());
     wt.inbox.load.fetch_add(1, Relaxed);
+    assert!(wt.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
     wt.adopt(net::Handoff::bare(afd));
     assert_eq!((gate.used(), load(&wt)), (0, 0));
     assert!(wt.clients.slots.iter().all(|s| s.1.is_none()), "no client was created");
@@ -2419,6 +2433,7 @@ fn streams_per_conn_cap_and_every_stream_end_frees_a_slot() {
     let (s, _) = l.accept().unwrap();
     s.set_nonblocking(true).unwrap();
     w.inbox.load.fetch_add(1, Relaxed);
+    assert!(w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
     w.adopt(net::Handoff::bare(s.into_raw_fd()));
     peer.write_all(b"GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n").unwrap();
     let feed = |w: &mut Worker| {
@@ -2631,6 +2646,7 @@ fn policy_refuses_before_the_cap_and_dns_and_filters_late_answers() {
         let (s, _) = l.accept().unwrap();
         s.set_nonblocking(true).unwrap();
         w.inbox.load.fetch_add(1, Relaxed);
+        assert!(w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
         w.adopt(net::Handoff::bare(s.into_raw_fd()));
         let req = format!("GET {path} HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n");
         peer.write_all(req.as_bytes()).unwrap();
@@ -2845,6 +2861,7 @@ fn per_ip_key_charged_at_accept_and_released_on_every_exit() {
     let null = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
     assert_eq!(tab.charge(k1, 2, 0), clientip::Charge::Charged);
     w.inbox.load.fetch_add(1, Relaxed);
+    assert!(w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
     w.adopt(net::Handoff { fd: null, peer: Some("127.0.0.1".parse().unwrap()), key: Some(k1), kind: 0 });
     assert_eq!((tab.conns(k1), tab.keys(), w.inbox.load.load(Relaxed)), (0, 0, 0));
     // adopt exit 2 (rustls refuses the config) with a charged key
@@ -2867,6 +2884,7 @@ fn per_ip_key_charged_at_accept_and_released_on_every_exit() {
     let (a, _b) = std::os::unix::net::UnixStream::pair().unwrap();
     assert_eq!(tabt.charge(k1, 2, 0), clientip::Charge::Charged);
     wt.inbox.load.fetch_add(1, Relaxed);
+    assert!(wt.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
     wt.adopt(net::Handoff { fd: std::os::fd::IntoRawFd::into_raw_fd(a), peer: Some("127.0.0.1".parse().unwrap()), key: Some(k1), kind: 0 });
     assert_eq!((tabt.conns(k1), tabt.keys(), wt.inbox.load.load(Relaxed)), (0, 0, 0));
     for fd in [w.ep, w.inbox.efd, wt.ep, wt.lfd, wt.inbox.efd] {
@@ -3349,6 +3367,7 @@ fn trailing_dot_shares_the_dns_cache_key() {
     let mut w = Worker::new(clientip_cfg(&[], 0, false, 1, None), tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
     let (a, _b) = std::os::unix::net::UnixStream::pair().unwrap();
     w.inbox.load.fetch_add(1, Relaxed);
+    assert!(w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
     w.adopt(net::Handoff::bare(std::os::fd::IntoRawFd::into_raw_fd(a)));
     let ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
     w.dns_cache.insert("cached.test".into(), (vec![ip], Instant::now()));
@@ -3730,6 +3749,7 @@ fn upstream_side_entry_released_on_every_exit() {
     let (s, _) = l.accept().unwrap();
     s.set_nonblocking(true).unwrap();
     w.inbox.load.fetch_add(1, Relaxed);
+    assert!(w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
     w.adopt(net::Handoff::bare(s.into_raw_fd()));
     peer.write_all(b"GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n").unwrap();
     let feed = |w: &mut Worker| {
@@ -3897,6 +3917,7 @@ fn upload_rate_pauses_and_resumes() {
     let mut fds = [0; 2];
     assert_eq!(unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_NONBLOCK, 0, fds.as_mut_ptr()) }, 0);
     w.inbox.load.fetch_add(1, Relaxed);
+    assert!(w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
     w.adopt(net::Handoff::bare(fds[0]));
     let ci = 0;
     w.clients.at(ci).state = CState::Open;
@@ -3955,6 +3976,7 @@ fn upload_limiter_pause_is_not_a_stall() {
     let p = std::net::TcpStream::connect(l.local_addr().unwrap()).unwrap();
     let (s, _) = l.accept().unwrap();
     w.inbox.load.fetch_add(1, Relaxed);
+    assert!(w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
     w.adopt(net::Handoff::bare(s.into_raw_fd()));
     let ci = 0;
     let rmax = w.rbuf_max;
@@ -3995,6 +4017,7 @@ fn upload_bootstrap_bytes_charged_to_the_key() {
     let mut fds = [0; 2];
     assert_eq!(unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_NONBLOCK, 0, fds.as_mut_ptr()) }, 0);
     w.inbox.load.fetch_add(1, Relaxed);
+    assert!(w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
     w.adopt(net::Handoff::bare(fds[0]));
     let ci = 0;
     w.clients.at(ci).state = CState::Open;
@@ -4048,6 +4071,7 @@ fn upload_lease_top_up_in_room() {
     let mut fds = [0; 2];
     assert_eq!(unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_NONBLOCK, 0, fds.as_mut_ptr()) }, 0);
     w.inbox.load.fetch_add(1, Relaxed);
+    assert!(w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
     w.adopt(net::Handoff::bare(fds[0]));
     let ci = 0;
     w.clients.at(ci).state = CState::Open;
@@ -4105,6 +4129,7 @@ fn stream_log_lines_name_the_reason() {
         let mut fds = [0; 2];
         assert_eq!(unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_NONBLOCK, 0, fds.as_mut_ptr()) }, 0);
         w.inbox.load.fetch_add(1, Relaxed);
+        assert!(w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
         w.adopt(net::Handoff::bare(fds[0]));
         let ci = 0;
         w.clients.at(ci).state = CState::Open;
@@ -4289,6 +4314,7 @@ fn dest_client(w: &mut super::Worker) -> std::net::TcpStream {
     let (s, _) = l.accept().unwrap();
     s.set_nonblocking(true).unwrap();
     w.inbox.load.fetch_add(1, Relaxed);
+    assert!(w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
     w.adopt(net::Handoff::bare(s.into_raw_fd()));
     peer.write_all(b"GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n").unwrap();
     std::thread::sleep(Duration::from_millis(10));
@@ -4518,6 +4544,7 @@ fn credit_pace_holds_grants_while_the_target_is_parked() {
         let mut fds = [0; 2];
         assert_eq!(unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_NONBLOCK, 0, fds.as_mut_ptr()) }, 0);
         w.inbox.load.fetch_add(1, Relaxed);
+        assert!(w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
         w.adopt(net::Handoff::bare(fds[0]));
         let ci = 0;
         w.clients.at(ci).state = CState::Open;
@@ -4687,6 +4714,7 @@ fn park_rcvlock_locks_parked_download_only_targets() {
         let mut fds = [0; 2];
         assert_eq!(unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_NONBLOCK, 0, fds.as_mut_ptr()) }, 0);
         w.inbox.load.fetch_add(1, Relaxed);
+        assert!(w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
         w.adopt(net::Handoff::bare(fds[0]));
         let ci = 0;
         w.clients.at(ci).state = CState::Open;
@@ -4800,3 +4828,99 @@ fn park_rcvlock_locks_parked_download_only_targets() {
         w.close_target(t2, None);
     }
 }
+
+/// 60.59 the proxy-chain hints count and change nothing. (a) a loopback peer that is not a trusted proxy and sends a
+/// forwarding header: hint_fwd_untrusted, its own address stays its key; without such a header, or from the trusted
+/// proxy: nothing. (b) the trusted proxy without the header: realip_missing (the line is hints::realip_missing).
+/// (c) one loopback address with at least 64 connections and more than half of all: one_key_conns_max, set by the
+/// idle sweep of the per-address table.
+#[test]
+fn proxy_chain_hints_count_and_change_nothing() {
+    use super::*;
+    use std::io::Write as _;
+    use std::os::fd::FromRawFd;
+    let cfg = clientip_cfg(&["127.0.0.1"], 0, false, 1, None);
+    let (tx, _rx) = mpsc::channel();
+    let mut w = Worker::new(cfg.clone(), tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
+    let tab = cfg.clientip.as_ref().unwrap().table.as_ref().unwrap();
+    let port = unsafe { std::net::TcpListener::from_raw_fd(libc::dup(w.lfd)) }.local_addr().unwrap().port();
+    let up = |h: &str| {
+        format!("GET / HTTP/1.1\r\nHost: x\r\n{h}Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n")
+    };
+    let k = |s: &str| clientip::key(s.parse().unwrap());
+    let reqs = [
+        ([127, 0, 0, 2], "X-Forwarded-For: 7.7.7.7\r\n"), // an untrusted proxy: hint (a)
+        ([127, 0, 0, 2], ""),                             // a local client: nothing
+        ([127, 0, 0, 2], "x-real-ip: 7.7.7.7\r\n"),       // hint (a), another header
+        ([127, 0, 0, 2], "X-Forwarded-Proto: https\r\n"), // not a client address: nothing
+        ([127, 0, 0, 1], "X-Forwarded-For: 9.9.9.9\r\n"), // the trusted proxy: nothing
+        ([127, 0, 0, 1], ""),                             // the trusted proxy without the header: (b)
+    ];
+    let mut socks = Vec::new();
+    for (src, h) in reqs {
+        let mut s = connect_from(src, port);
+        s.write_all(up(h).as_bytes()).unwrap();
+        socks.push(s);
+    }
+    std::thread::sleep(Duration::from_millis(20));
+    w.accept_all();
+    for i in 0..reqs.len() as u32 {
+        w.clients.at(i).readable = true;
+        w.read_client(i);
+    }
+    assert_eq!((w.stats.hint_fwd_untrusted.get(), w.stats.realip_missing.get(), w.stats.realip_bad.get()), (2, 1, 0));
+    // nothing changed: every connection is open (101), the untrusted peer keeps its own key, the header's client is charged
+    assert_eq!((tab.conns(k("127.0.0.2")), tab.conns(k("7.7.7.7")), tab.conns(k("9.9.9.9")), tab.keys()), (4, 0, 1, 2));
+    for i in 0..reqs.len() as u32 {
+        assert!(w.clients.at(i).state == CState::Open && !w.clients.at(i).dead, "client {i}");
+    }
+    assert_eq!(w.peer(0).map(|p| p.ip), Some("127.0.0.2".parse().unwrap()));
+    // (c): 4 of 6 connections on one loopback key is below the floor of 64
+    let mut t = Instant::now(); // (the sweeps of this test run on their own clock, one period apart)
+    let mut sweep_all = |w: &mut Worker| {
+        for _ in 0..clientip::SHARDS / clientip::SWEEP_SHARDS {
+            t += Duration::from_millis(IDLE_SWEEP_MS);
+            assert!(w.idle_sweep(t));
+        }
+    };
+    sweep_all(&mut w);
+    assert_eq!(w.stats.one_key_conns_max.get(), 0);
+    for _ in 0..crate::hints::ONE_KEY_MIN {
+        let mut s = connect_from([127, 0, 0, 2], port);
+        s.write_all(up("").as_bytes()).unwrap();
+        socks.push(s);
+    }
+    std::thread::sleep(Duration::from_millis(20));
+    w.accept_all();
+    for i in reqs.len() as u32..socks.len() as u32 {
+        w.clients.at(i).readable = true;
+        w.read_client(i);
+    }
+    sweep_all(&mut w);
+    assert_eq!((w.stats.one_key_conns_max.get(), w.inbox.load.load(Relaxed)), (68, 70), "68 of 70 connections on 127.0.0.2");
+    assert_eq!(tab.conns(k("127.0.0.2")), 68, "the hint changed nothing");
+    w.shutdown_step(net::STOP_CLOSE);
+    for _ in 0..6 {
+        w.reap_dead();
+    }
+    for i in 0..socks.len() as u32 {
+        if w.clients.get(i, w.clients.gen(i)).is_some_and(|c| !c.dead) {
+            w.close_client(i, Why::ServerClose);
+        }
+    }
+    w.reap_dead();
+    assert_eq!((tab.keys(), w.inbox.load.load(Relaxed)), (0, 0), "every charged key released");
+    for fd in [w.ep, w.inbox.efd] {
+        unsafe { libc::close(fd) };
+    }
+    drop(socks);
+    std::mem::forget(w);
+}
+
+// 60.57 the fd count and the refusals when fds are short (its own file)
+#[path = "fdtests.rs"]
+mod fd;
+
+// 60.63 section E (its own file)
+#[path = "bdtests.rs"]
+mod bd;

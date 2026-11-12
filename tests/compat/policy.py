@@ -40,7 +40,7 @@ threading.Thread(target=uecho, daemon=True).start()
 D = tempfile.mkdtemp(prefix="fw-policy-")
 def start(*args, host="127.0.0.1"):
     log = open(os.path.join(D, f"srv{time.monotonic_ns()}.log"), "w+")
-    p = subprocess.Popen([BIN, str(P), "--host", host, "--metrics-interval", "1", *args], stdout=log, stderr=subprocess.STDOUT)
+    p = subprocess.Popen([BIN, str(P), "--host", host, "--log-level", "debug", "--metrics-interval", "1", *args], stdout=log, stderr=subprocess.STDOUT)
     p.logf, p.host = log, host
     for _ in range(100):
         if "capabilities:" in srvlog(p) or p.poll() is not None: break
@@ -152,7 +152,7 @@ w.close(); stop(p)
 
 # 2. --no-direct-ip and an allow list (no --allow-loopback)
 p = start("--no-direct-ip", "--allow-host", "localhost")
-ok("hint: mail ports 25/465/587 are open to clients; --block-smtp closes them" in srvlog(p), "SMTP hint without --block-smtp")
+ok("hint: mail ports 25, 465 and 587 are open to clients. Fix: --block-smtp (part of --preset public)." in srvlog(p), "SMTP hint without --block-smtp")
 w = Wisp()
 for h in ["127.0.0.1", "127.1", "2130706433", "0x7f000001", "0177.0.0.1", "::ffff:127.0.0.1", "8.8.8.8", "::1%1", "::ffff:127.0.0.1%1"]:
     ok(reason(w, h)[1] == 0x48, f"--no-direct-ip: {h} -> 0x48")

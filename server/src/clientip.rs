@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::hash::{BuildHasher, RandomState};
 use std::net::IpAddr;
 use std::num::NonZeroU64;
-use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering::Relaxed};
 use std::sync::Mutex;
 
 /// The per-IP key: IPv4 as its IPv4-mapped form (/32), IPv6 as its /64 prefix (one subscriber normally holds a /64:
@@ -141,6 +141,10 @@ struct Entry {
     // an exact clamped refill composes, so one time for all buckets gives the same tokens; Entry stays 96 bytes)
     at: u64,
     ct: u32, // 60.40 --conn-rate-per-ip milli-tokens
+    // 60.57 C --conn-share: the fds of the key's streams (target sockets, connect attempts, splice pipes) as its
+    // connections' workers published them (add_fds): at most the real number. The key holds conns + sfds fds.
+    // (In the padding after `ct`: Entry stays 96 bytes.)
+    sfds: u32,
     ub: i64, // 60.25 C10b milli-bytes left in the key's --upload-rate-per-ip bucket (leased out by take_bytes / top_up_bytes; down to -burst)
     q: Upq,  // 60.25 C10b waiters for that bucket
 }
@@ -251,7 +255,14 @@ pub struct IpTable {
     rate: Option<(u32, u32)>,      // --stream-rate-per-ip (per second, burst; cli: R <= 1e6, B <= 2e6)
     up: Option<(u64, u64)>,        // 60.25 C10b --upload-rate-per-ip (bytes per second, burst; cli: R <= 2^40, B <= 2^42)
     conn_rate: Option<(u32, u32)>, // 60.40 --conn-rate-per-ip (per second, burst; as `rate`)
+    // 60.57 C --conn-share: the fds of all tracked keys (their conns + sfds), as one slot per worker, each on its own
+    // cache lines and written only by that worker (no shared write per connection); the sum of the slots is the
+    // total (one slot alone can be negative: a connection charged on one worker and released on another). Empty: off.
+    share: Box<[ShareSlot]>,
 }
+
+#[repr(align(128))]
+struct ShareSlot(AtomicI64);
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Charge {
@@ -262,6 +273,9 @@ pub enum Charge {
     Rate,
     /// the key's shard is full: not tracked, not limited (Q11)
     Untracked,
+    /// 60.57 C --conn-share: the key holds more than its part of the fds while other keys hold a real share (no token
+    /// was taken, the connection count is unchanged)
+    Share,
 }
 
 /// Milliseconds since process start. 60.45: u64, no wrap (the u32 clock wrapped after 49.7 days, and an entry that no
@@ -288,7 +302,31 @@ impl IpTable {
     /// (Tests use R = 0: nothing refills.)
     pub fn with_rates(rate: Option<(u32, u32)>, up: Option<(u64, u64)>, conn_rate: Option<(u32, u32)>) -> IpTable {
         let shards = (0..SHARDS).map(|_| Mutex::new(HashMap::with_hasher(RandomState::new()))).collect();
-        IpTable { shards, hash: RandomState::new(), keys: AtomicUsize::new(0), rate, up, conn_rate }
+        IpTable { shards, hash: RandomState::new(), keys: AtomicUsize::new(0), rate, up, conn_rate, share: Box::new([]) }
+    }
+
+    /// 60.57 C --conn-share is on: the table keeps the fds per key and their total (`workers` slots)
+    pub fn with_share(mut self, workers: usize) -> IpTable {
+        self.share = (0..workers.max(1)).map(|_| ShareSlot(AtomicI64::new(0))).collect();
+        self
+    }
+
+    /// 60.57 C `d` fds more (or fewer) held by tracked keys, noted in the calling worker's slot. Off, or a caller
+    /// without a slot (unit tests of the limits): nothing.
+    fn share_add(&self, slot: usize, d: i64) {
+        if let Some(s) = self.share.get(slot) {
+            s.0.fetch_add(d, Relaxed);
+        }
+    }
+
+    /// 60.57 C the fds all tracked keys hold: the sum of what the workers published.
+    /// deliberate: the slots are read one after the other, without a lock. Each published value is at most the real
+    /// one, but the sum is not one instant: fds that leave one worker's keys and come to another's while the slots are
+    /// read (some 100 ns for 80 workers) can be counted twice or not at all. It is used only for the share rule's floor
+    /// ("do other addresses hold a real share"), which is a coarse test; the gated key's own number is read under its
+    /// shard lock and is exact. An exact total would need a version count written at every publish (a shared write).
+    pub fn share_total(&self) -> u64 {
+        self.share.iter().map(|s| s.0.load(Relaxed)).sum::<i64>().max(0) as u64
     }
 
     fn shard(&self, k: IpKey) -> &Mutex<HashMap<IpKey, Entry, RandomState>> {
@@ -325,11 +363,29 @@ impl IpTable {
 
     /// One connection more for `k`; `max` 0 = no connection limit (the key is still tracked for the rates). Checked in
     /// order: --max-conns-per-ip (Refused), then 60.40 --conn-rate-per-ip (Rate); a refused connection takes no token.
+    #[cfg(test)]
     pub fn charge(&self, k: IpKey, max: u32, now: u64) -> Charge {
+        self.charge_share(k, max, now, usize::MAX, None)
+    }
+
+    /// `charge` for a worker (60.57 C): `slot` = the worker's index (the fds of tracked keys are summed per worker);
+    /// `rule` = Some((key, floor)) while the share mark is set and the key is not exempt: a key that holds more than
+    /// `key` fds while the other tracked keys together hold at least `floor` gets Share (after --max-conns-per-ip,
+    /// before the rate: no token is taken). The key's number is what its connections published, read under the shard
+    /// lock: never above what they hold, so a key at or under the limit is never refused and the rule can only act
+    /// late. The others' number is the workers' sum (share_total: not one instant). A key not yet in the table holds
+    /// nothing: never Share.
+    pub fn charge_share(&self, k: IpKey, max: u32, now: u64, slot: usize, rule: Option<(u32, u32)>) -> Charge {
         let mut m = self.shard(k).lock().unwrap();
         if let Some(e) = m.get_mut(&k) {
             if max > 0 && e.conns >= max {
                 return Charge::Refused;
+            }
+            if let Some((key, floor)) = rule {
+                let held = u64::from(e.conns) + u64::from(e.sfds);
+                if held > u64::from(key) && self.share_total().saturating_sub(held) >= u64::from(floor) {
+                    return Charge::Share;
+                }
             }
             self.refill(e, now);
             if self.conn_rate.is_some() {
@@ -339,6 +395,7 @@ impl IpTable {
                 e.ct -= MILLI as u32;
             }
             e.conns += 1;
+            self.share_add(slot, 1);
             return Charge::Charged;
         }
         if m.len() >= SHARD_CAP {
@@ -347,26 +404,52 @@ impl IpTable {
         let tokens = self.rate.map_or(0, |(_, b)| b * MILLI as u32); // (milli-units: <= 2e9, cli)
         let ub = self.up.map_or(0, |(_, b)| (b * MILLI) as i64);
         let ct = self.conn_rate.map_or(0, |(_, b)| (b - 1) * MILLI as u32); // (burst >= 1: cli)
-        m.insert(k, Entry { conns: 1, tokens, at: now, ct, ub, q: Upq::default() });
+        m.insert(k, Entry { conns: 1, tokens, at: now, ct, sfds: 0, ub, q: Upq::default() });
         self.keys.fetch_add(1, Relaxed);
+        self.share_add(slot, 1);
         Charge::Charged
     }
 
     /// One connection fewer for a key that was charged. The entry goes once nothing is left to remember (no
     /// connection, a full bucket); else the sweep removes it after the refill.
+    #[cfg(test)]
     pub fn release(&self, k: IpKey, now: u64) {
+        self.release_share(k, now, usize::MAX)
+    }
+
+    /// `release` for a worker (60.57 C; `slot` as in charge_share). The connection's published stream fds went before
+    /// it (add_fds), so a key without connections holds nothing.
+    pub fn release_share(&self, k: IpKey, now: u64, slot: usize) {
         let mut m = self.shard(k).lock().unwrap();
         let Some(e) = m.get_mut(&k) else {
             debug_assert!(false, "release of an uncharged key");
             return;
         };
         debug_assert!(e.conns > 0, "per-IP release underflow");
+        if e.conns > 0 {
+            self.share_add(slot, -1);
+        }
         e.conns = e.conns.saturating_sub(1);
+        debug_assert!(e.conns > 0 || e.sfds == 0, "60.57 a key without connections holds stream fds");
         self.refill(e, now);
         if self.idle(e) {
             m.remove(&k);
             self.keys.fetch_sub(1, Relaxed);
         }
+    }
+
+    /// 60.57 C --conn-share: one connection of `k` publishes `d` more (or fewer) stream fds. The caller keeps what it
+    /// published (per connection) and takes it back before the release; it never publishes more than it holds.
+    pub fn add_fds(&self, k: IpKey, d: i64, slot: usize) {
+        let mut m = self.shard(k).lock().unwrap();
+        let Some(e) = m.get_mut(&k) else {
+            debug_assert!(false, "fds of an uncharged key");
+            return;
+        };
+        let to = (i64::from(e.sfds) + d).clamp(0, i64::from(u32::MAX));
+        debug_assert!(to == i64::from(e.sfds) + d, "60.57 per-key fd count out of range");
+        self.share_add(slot, to - i64::from(e.sfds));
+        e.sfds = to as u32;
     }
 
     /// --stream-rate-per-ip: take one token. An untracked key is not limited (fail open).
@@ -558,6 +641,18 @@ impl IpTable {
     #[cfg(test)]
     pub fn conns(&self, k: IpKey) -> u32 {
         self.shard(k).lock().unwrap().get(&k).map_or(0, |e| e.conns)
+    }
+
+    /// 60.59 read only: the key with the most connections in one shard, and how many (the idle sweep asks, for the
+    /// one-address hint: hints::one_key)
+    pub fn top_conns(&self, shard: usize) -> Option<(IpKey, u32)> {
+        self.shards[shard % SHARDS].lock().unwrap().iter().map(|(k, e)| (*k, e.conns)).max_by_key(|x| x.1)
+    }
+
+    /// 60.57 C the fds key `k` holds as published: (connections, stream fds)
+    #[cfg(test)]
+    pub fn held(&self, k: IpKey) -> (u32, u32) {
+        self.shard(k).lock().unwrap().get(&k).map_or((0, 0), |e| (e.conns, e.sfds))
     }
 }
 
@@ -1000,6 +1095,117 @@ mod tests {
         }
         let n = (0..100_001).take_while(|_| t.charge(k, 0, 1000) == Charge::Charged).count();
         assert_eq!(n, 100_000, "1000 refills of 1 ms = one token: the bucket is full again");
+    }
+
+    /// 60.57 C the share rule on the table, with the numbers main gives it (fdgate::share_rule): F = 65536 usable fds, so
+    /// a key above 32768 fds is gated while the other tracked keys hold 1024 or more. (i) One probe connection, or one
+    /// connection with a few streams, from a second address does not arm it. (ii) A small site (30 users on other
+    /// addresses, a page's worth of streams each) is protected from the big key: the big key gets no new connections,
+    /// everyone else does. Without the rule (the mark is not set, or the key is exempt) nothing is refused.
+    #[test]
+    fn share_rule_big_key_and_others() {
+        let rule = Some(crate::fdgate::share_rule(65_536));
+        assert_eq!(rule, Some((32_768, 1024)));
+        let t = IpTable::new(None).with_share(2);
+        let big = key(ip("203.0.113.1"));
+        // a key not yet in the table holds nothing
+        assert_eq!(t.charge_share(big, 0, 0, 0, rule), Charge::Charged);
+        // alone: 40000 fds, nobody else: not gated (it does not keep room for keys that come later)
+        t.add_fds(big, 39_999, 0);
+        assert_eq!((t.held(big), t.share_total()), ((1, 39_999), 40_000));
+        assert_eq!(t.charge_share(big, 0, 0, 0, rule), Charge::Charged);
+        // (i) a probe: one connection from a second address
+        let probe = key(ip("198.51.100.7"));
+        assert_eq!(t.charge_share(probe, 0, 0, 1, rule), Charge::Charged);
+        assert_eq!(t.charge_share(big, 0, 0, 0, rule), Charge::Charged, "one probe connection does not arm the rule");
+        // ... and with a few streams
+        t.add_fds(probe, 6, 1);
+        assert_eq!(t.charge_share(big, 0, 0, 0, rule), Charge::Charged, "one connection with a few streams does not arm it");
+        // one fd below the floor: still not armed; at the floor: armed
+        t.add_fds(probe, 1023 - 7, 1);
+        assert_eq!(t.share_total() - 40_003, 1023);
+        assert_eq!(t.charge_share(big, 0, 0, 0, rule), Charge::Charged);
+        t.add_fds(probe, 1, 1);
+        assert_eq!(t.charge_share(big, 0, 0, 0, rule), Charge::Share);
+        t.add_fds(probe, -1017, 1);
+        t.release_share(probe, 0, 1);
+        // (ii) a small site: 30 users, each one connection and 40 stream fds = 1230 fds on other addresses
+        let users: Vec<IpKey> = (0..30u32).map(|i| key(IpAddr::V4(std::net::Ipv4Addr::from(0xc633_6400 + i)))).collect();
+        for &u in &users {
+            assert_eq!(t.charge_share(u, 0, 0, 1, rule), Charge::Charged);
+            t.add_fds(u, 40, 1);
+        }
+        let before = t.held(big);
+        assert_eq!(t.charge_share(big, 0, 0, 0, rule), Charge::Share, "the big key gets no new connection");
+        assert_eq!(t.held(big), before, "a refusal changes nothing");
+        assert_eq!(t.charge_share(users[0], 0, 0, 1, rule), Charge::Charged, "a small key goes on");
+        assert_eq!(t.charge_share(key(ip("192.0.2.200")), 0, 0, 1, rule), Charge::Charged, "and so does a new one");
+        // the mark is not set, or the key is exempt (loopback, private, a trusted proxy): no rule, no refusal
+        assert_eq!(t.charge_share(big, 0, 0, 0, None), Charge::Charged);
+        // the big key at exactly half of F is not "more than half"
+        t.add_fds(big, 32_768 - i64::from(t.held(big).0) - i64::from(t.held(big).1), 0);
+        assert_eq!(t.charge_share(big, 0, 0, 0, rule), Charge::Charged);
+        assert_eq!(t.charge_share(big, 0, 0, 0, rule), Charge::Share, "one more fd: over half");
+    }
+
+    /// 60.57 C two keys of equal size: neither holds more than half, so neither is gated (only the host mark applies);
+    /// --max-conns-per-ip is checked first and the share refusal takes no --conn-rate-per-ip token
+    #[test]
+    fn share_rule_equal_keys_and_order() {
+        let rule = Some(crate::fdgate::share_rule(4096));
+        assert_eq!(rule, Some((2048, 256)));
+        let t = IpTable::with_rates(None, None, Some((0, 3))).with_share(1);
+        let (a, b) = (key(ip("203.0.113.1")), key(ip("203.0.113.2")));
+        for k in [a, b] {
+            assert_eq!(t.charge_share(k, 0, 0, 0, rule), Charge::Charged);
+            t.add_fds(k, 2047, 0);
+        }
+        assert_eq!(t.share_total(), 4096);
+        assert_eq!((t.charge_share(a, 0, 0, 0, rule), t.charge_share(b, 0, 0, 0, rule)), (Charge::Charged, Charge::Charged));
+        // both are over half now (2049 each: more than F is held; the count is what it is): both are gated
+        assert_eq!((t.charge_share(a, 0, 0, 0, rule), t.charge_share(b, 0, 0, 0, rule)), (Charge::Share, Charge::Share));
+        // order: the connection limit first; a Share refusal takes no token (burst 3: 2 taken above, 1 left)
+        assert_eq!(t.charge_share(a, 2, 0, 0, rule), Charge::Refused);
+        assert_eq!(t.charge_share(a, 0, 0, 0, None), Charge::Charged, "the third token is still there");
+        assert_eq!(t.charge_share(a, 0, 0, 0, None), Charge::Rate);
+    }
+
+    /// 60.57 C the total is a sum of per-worker slots: a connection charged on one worker and released on another
+    /// (--balance), fds published and taken back; a table without --conn-share, or a caller without a slot, counts
+    /// nothing; an untracked key (its shard is full) is in no key's count and not in the total: never gated
+    #[test]
+    fn share_total_slots_and_untracked() {
+        let t = IpTable::new(None).with_share(3);
+        let k = key(ip("203.0.113.1"));
+        assert_eq!(t.charge_share(k, 0, 0, 0, None), Charge::Charged);
+        t.add_fds(k, 16, 2);
+        assert_eq!((t.share_total(), t.held(k)), (17, (1, 16)));
+        t.add_fds(k, -16, 2);
+        t.release_share(k, 0, 1);
+        assert_eq!((t.share_total(), t.keys()), (0, 0));
+        assert_eq!(t.charge(k, 0, 0), Charge::Charged); // (no slot: the limits' own unit tests)
+        assert_eq!(t.share_total(), 0);
+        t.release(k, 0);
+        let off = IpTable::new(None);
+        assert_eq!(off.charge_share(k, 0, 0, 0, None), Charge::Charged);
+        assert_eq!(off.share_total(), 0);
+        // a full shard
+        let t = IpTable::new(None).with_share(1);
+        let rule = Some((0, 0)); // (the strictest rule there can be: any key that holds something, any others)
+        let mut n = 0u32;
+        let untracked = loop {
+            let k = key(IpAddr::V4(std::net::Ipv4Addr::from(0x0b00_0000 + n)));
+            n += 1;
+            if t.charge_share(k, 0, 0, 0, None) == Charge::Untracked {
+                break k;
+            }
+        };
+        let total = t.share_total();
+        assert_eq!(total, u64::from(n) - 1);
+        for _ in 0..3 {
+            assert_eq!(t.charge_share(untracked, 0, 0, 0, rule), Charge::Untracked, "never gated");
+        }
+        assert_eq!(t.share_total(), total);
     }
 
     /// 60.40 the per-entry size the conn bucket costs (the table exists only with a per-IP limit on: main build_clientip)

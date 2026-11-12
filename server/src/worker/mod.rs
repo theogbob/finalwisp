@@ -23,10 +23,12 @@ use std::time::{Duration, Instant};
 
 // 60.16 #10 split by concern (pure move; worker.rs at base-4-rc1 had all of it): the event loop, the Worker state and
 // the tuning constants stay here; each module below adds `impl Worker` methods (and its own types) for one concern.
+mod bounds; // 60.63
 mod client;
 mod conn;
 mod connect;
 mod connlog;
+mod fds; // 60.57
 mod input;
 mod ktls;
 mod levels;
@@ -471,6 +473,24 @@ pub struct Worker {
     rcvlock: Vec<rcvlock::LockSt>,           // 60.47 --park-rcvlock per target slot (empty when off: Target unchanged)
     now: Instant,                            // 60.47 the loop turn's time (read once after epoll_wait; idle_sweep uses it)
     splice_far: Vec<bool>, // 60.51 --adaptive-splice per client slot: min RTT at accept >= SPLICE_FAR_RTT_US (empty when off)
+    /// 60.57 A2 the process-wide fd count, this worker's allowance from it (its own count is Stats::fds) and the block
+    /// it takes or returns at once (worker/fds.rs)
+    fdg: Arc<crate::fdgate::FdGate>,
+    fd_have: u32,
+    fd_block: u32,
+    /// 60.57 A3 an fd this worker can close when accept fails for lack of fds (EMFILE / ENFILE), to accept and reset what
+    /// waits on its listener; -1 = could not be opened again yet
+    spare: RawFd,
+    /// 60.57 C the marks in use (fdgate MARK_*; 0 = --fd-admission and --conn-share off), and with --conn-share per
+    /// client slot the stream fds it holds and the number it published to its key (empty when off)
+    fd_mask: u8,
+    sfds: Vec<[u32; 2]>,
+    /// 60.57 C with --conn-share or --fd-admission the allowance this worker does not use (fd_have is then exactly its
+    /// count, so that A's inline tests fail for every take and put: worker/fds.rs); 0 when both are off
+    fd_pool: u32,
+    /// 60.63 section E (crate::bounds): None = no option of it is on. Beside the fd fields: its code runs only on the
+    /// out-of-line side of the fd count (worker/bounds.rs)
+    bd: Option<Box<bounds::Wb>>,
 }
 
 #[must_use]
@@ -530,6 +550,7 @@ impl Worker {
         // 60.09 M4a workers sweep at different times (spread over one period), not all at once
         let first_sweep = Duration::from_millis(IDLE_SWEEP_MS + IDLE_SWEEP_MS * idx as u64 / cfg.threads.max(1) as u64);
         let meter = cfg.upload_rate.is_some() || cfg.clientip.as_ref().and_then(|c| c.table.as_ref()).is_some_and(|t| t.has_upload());
+        let fdg = crate::fdgate::for_worker(); // 60.57 A2
         Ok(Worker {
             cfg,
             ep,
@@ -609,11 +630,20 @@ impl Worker {
             rcvlock: Vec::new(),
             now: Instant::now(),
             splice_far: Vec::new(),
+            fd_block: fdg.block(),
+            fdg,
+            fd_have: 0,
+            spare: fds::spare_fd(),
+            fd_mask: 0,
+            sfds: Vec::new(),
+            fd_pool: 0,
+            bd: crate::bounds::global().map(bounds::Wb::new),
         })
     }
 
     pub fn run(mut self) -> ! {
         mem::cache_pause(self.lvl >= 2); // 60.09 M2 (a worker can start at a level set_level never saw)
+        self.fd_setup(); // 60.57 A2, C (main sets the limit, the block and the marks once every worker is built)
         let mut evs: Vec<libc::epoll_event> = vec![libc::epoll_event { events: 0, u64: 0 }; 1024];
         loop {
             // 70.25 wake rule: timeout 0 while the pool has release work left (mem::release_backlog: false without it)
@@ -702,6 +732,8 @@ impl Worker {
         for ci in self.dead.drain(..) {
             self.clients.remove(ci);
         }
+        #[cfg(test)]
+        assert_eq!(self.stats.fds.get(), self.fds_held(), "60.57 A2 the fd count is not what the connections and streams hold");
         if !self.sdone.is_empty() {
             self.slog_flush(); // 60.35
         }
@@ -797,7 +829,7 @@ impl Worker {
     /// STOP_CLOSE: 1001 to all, handshakes closed.
     fn shutdown_step(&mut self, stop: u8) {
         if self.lfd >= 0 {
-            self.accept_all(); // deliberate: at memory levels 2-3 (admission off) nothing is accepted; those are reset
+            self.accept_all(); // (at memory levels 2-3, admission off, what is queued is reset: 60.57 A5)
             unsafe { libc::close(self.lfd) }; // also leaves the epoll set
             self.lfd = -1;
             if self.ufd >= 0 {
@@ -857,14 +889,21 @@ impl Worker {
                 continue;
             }
             if t.deadline <= now {
+                let timed_out = t.conn.len() as u32; // 60.57 A2
                 for fd in t.conn.drain(..) {
                     unsafe { libc::close(fd) };
                 }
                 (t.tfo_fd, t.tfo_sent) = (-1, 0);
                 t.rdhup = false;
-                if t.attempt >= t.addrs.len() {
-                    if t.dns_more {
-                        t.err = libc::ETIMEDOUT; // 70.10 parked; 0x43 if the final answer brings nothing new
+                let (last, parked) = (t.attempt >= t.addrs.len(), t.dns_more);
+                if last && parked {
+                    t.err = libc::ETIMEDOUT; // 70.10 parked; 0x43 if the final answer brings nothing new
+                }
+                if timed_out > 0 {
+                    self.fd_put_t(ti, timed_out);
+                }
+                if last {
+                    if parked {
                         self.unlist(ti);
                     } else {
                         if self.cfg.upstream.is_some() {
@@ -875,6 +914,8 @@ impl Worker {
                                 self.slog_why(ti, SWhy::UpstreamFail, "timeout");
                                 // 60.35
                             }
+                        } else {
+                            self.connect_failed(CLOSE_TIMEOUT); // 60.57 A6
                         }
                         self.fail_target(ti, CLOSE_TIMEOUT);
                     }

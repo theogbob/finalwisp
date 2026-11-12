@@ -6,8 +6,8 @@ report security problems privately, not in a public issue.
 ## Reporting
 
 Use GitHub's private reporting: **Security** tab of this repository, then **Report a vulnerability**. Include the
-finalwisp version (`BUILDINFO` in the release, or the commit), the command line or config (without secrets), and
-the steps or the client that triggers it.
+finalwisp version (`finalwisp --version`, `BUILDINFO` in the release, or the commit), the command line or config
+(without secrets), and the steps or the client that triggers it.
 
 You will get an answer within a few days. Fixes ship as a new release; the advisory names you unless you prefer not.
 

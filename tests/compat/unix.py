@@ -43,7 +43,7 @@ ECHO, BL = serve(echo), serve(blast)
 class Srv:
     def __init__(self, *args, wrap=()):
         self.logf = open(os.path.join(D, f"srv{time.monotonic_ns()}.log"), "w+")
-        self.p = subprocess.Popen([*wrap, BIN, str(BASE), "--allow-loopback", *args], stdout=self.logf, stderr=subprocess.STDOUT)
+        self.p = subprocess.Popen([*wrap, BIN, str(BASE), "--allow-loopback", "--log-level", "debug", *args], stdout=self.logf, stderr=subprocess.STDOUT)
         for _ in range(200):
             if "capabilities:" in self.log() or self.p.poll() is not None: break
             time.sleep(0.05)

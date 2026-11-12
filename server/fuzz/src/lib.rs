@@ -2,6 +2,8 @@
 //! server's own files (#[path]), unchanged; worker/mod.rs adds `fuzz_hooks` under --cfg fuzzing only.
 #![allow(dead_code, unused_imports, clippy::all)]
 #![feature(linkage)] // 70.27 weak LSan symbols (pool.rs lsan, lsan_pool_check)
+#[path = "../../src/bounds.rs"]
+pub mod bounds; // 60.63
 #[path = "../../src/cli.rs"]
 pub mod cli;
 #[path = "../../src/clientip.rs"]
@@ -14,6 +16,10 @@ pub mod destrate; // 60.39
 pub mod dns;
 #[path = "../../src/ext.rs"]
 pub mod ext;
+#[path = "../../src/fdgate.rs"]
+pub mod fdgate; // 60.57
+#[path = "../../src/hints.rs"]
+pub mod hints; // 60.59
 #[path = "../../src/http.rs"]
 pub mod http;
 #[path = "../../src/logs.rs"]
@@ -32,6 +38,8 @@ pub mod pool;
 pub mod proxyproto; // 60.34
 #[path = "../../src/tls.rs"]
 pub mod tls;
+#[path = "../../src/ui.rs"]
+pub mod ui; // 60.60 (VERSION is this crate's here: the server's is checked by its own tests)
 #[path = "../../src/upstream.rs"]
 pub mod upstream; // 60.32 C6
 #[path = "../../src/worker/mod.rs"]

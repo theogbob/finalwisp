@@ -160,7 +160,8 @@ def start():
             fail_start(f"target {port} did not start")
     for n, s in SERVERS.items():
         argv = ["systemd-run", "--user", "--scope", "--quiet", f"--unit=cycle-{n}-{int(time.time())}", "-p",
-                "MemoryMax=1G", "-p", "MemorySwapMax=0", a.fw, "--port", str(s["port"]), "--metrics-interval", "5"]
+                "MemoryMax=1G", "-p", "MemorySwapMax=0", a.fw, "--port", str(s["port"]), "--metrics-interval", "5",
+                "--log-level", "debug"]  # 60.60: the capabilities line (recorded below) is a debug line since v1.3.0
         s["log"] = os.path.join(RUN, f"server{n}.log"); s["off"] = 0; s["m"] = {}
         # 30.16: log through a pipe to this process: its page cache is not charged to the server's scope
         s["proc"] = common.spawn_logged(argv + s["args"], s["log"], start_new_session=True, cwd=HERE)

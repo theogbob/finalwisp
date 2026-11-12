@@ -421,53 +421,72 @@ pub fn listen(addr: &SocketAddr, keepalive: bool, pacing: u32) -> io::Result<Raw
 
 static TFO_OFF: AtomicBool = AtomicBool::new(false);
 
-/// Start a non-blocking TCP connect. Ok((fd, done_immediately, bytes_in_syn)).
-/// 20.15: with `syn_data`, try TCP Fast Open (sendto MSG_FASTOPEN): with a cached cookie the SYN
-/// carries up to one MSS of it (bytes_in_syn > 0, still connecting); without one the kernel sends a
-/// cookie-request SYN and takes nothing (EINPROGRESS, bytes_in_syn = 0). The caller keeps the bytes
-/// until this socket wins. TFO unsupported (EOPNOTSUPP) => disabled for the process, plain connect.
-pub fn connect(addr: &SocketAddr, syn_data: Option<&[u8]>) -> Result<(RawFd, bool, usize), i32> {
-    unsafe {
-        let dom = if addr.is_ipv4() { libc::AF_INET } else { libc::AF_INET6 };
-        let fd = libc::socket(dom, libc::SOCK_STREAM | libc::SOCK_NONBLOCK | libc::SOCK_CLOEXEC, 0);
-        if fd < 0 {
-            return Err(errno());
-        }
-        set_nodelay(fd);
-        let (ss, len) = sockaddr(addr);
-        if let Some(d) = syn_data.filter(|d| !d.is_empty() && !TFO_OFF.load(Relaxed)) {
-            let n = libc::sendto(
-                fd,
-                d.as_ptr() as *const _,
-                d.len(),
-                libc::MSG_FASTOPEN | libc::MSG_NOSIGNAL,
-                &ss as *const _ as *const _,
-                len,
-            );
-            if n >= 0 {
-                return Ok((fd, false, n as usize));
+/// 60.63 E2 `connect`, written once for its two forms. The plain form's expansion is, token for token, the function
+/// as it was before 60.63. The ranged form sets the socket's own local port range (IP_LOCAL_PORT_RANGE, low | high
+/// << 16; 0 = not set) before the connect picks a port; a kernel that refuses the option connects as without it.
+macro_rules! connect_fn {
+    ($(#[$m:meta])* $name:ident $(, $range:ident)?) => {
+        $(#[$m])*
+        pub fn $name(addr: &SocketAddr, syn_data: Option<&[u8]> $(, $range: u32)?) -> Result<(RawFd, bool, usize), i32> {
+        unsafe {
+            let dom = if addr.is_ipv4() { libc::AF_INET } else { libc::AF_INET6 };
+            let fd = libc::socket(dom, libc::SOCK_STREAM | libc::SOCK_NONBLOCK | libc::SOCK_CLOEXEC, 0);
+            if fd < 0 {
+                return Err(errno());
             }
-            match errno() {
-                libc::EINPROGRESS => return Ok((fd, false, 0)),
-                libc::EOPNOTSUPP | libc::EPROTONOSUPPORT => TFO_OFF.store(true, Relaxed), // fall through
-                e => {
-                    libc::close(fd);
-                    return Err(e);
+            $( if $range != 0 { crate::bounds::set_port_range(fd, $range); } )?
+            set_nodelay(fd);
+            let (ss, len) = sockaddr(addr);
+            if let Some(d) = syn_data.filter(|d| !d.is_empty() && !TFO_OFF.load(Relaxed)) {
+                let n = libc::sendto(
+                    fd,
+                    d.as_ptr() as *const _,
+                    d.len(),
+                    libc::MSG_FASTOPEN | libc::MSG_NOSIGNAL,
+                    &ss as *const _ as *const _,
+                    len,
+                );
+                if n >= 0 {
+                    return Ok((fd, false, n as usize));
+                }
+                match errno() {
+                    libc::EINPROGRESS => return Ok((fd, false, 0)),
+                    libc::EOPNOTSUPP | libc::EPROTONOSUPPORT => TFO_OFF.store(true, Relaxed), // fall through
+                    e => {
+                        libc::close(fd);
+                        return Err(e);
+                    }
                 }
             }
-        }
-        if libc::connect(fd, &ss as *const _ as *const _, len) == 0 {
-            return Ok((fd, true, 0));
-        }
-        let e = errno();
-        if e == libc::EINPROGRESS {
-            Ok((fd, false, 0))
-        } else {
-            libc::close(fd);
-            Err(e)
+            if libc::connect(fd, &ss as *const _ as *const _, len) == 0 {
+                return Ok((fd, true, 0));
+            }
+            let e = errno();
+            if e == libc::EINPROGRESS {
+                Ok((fd, false, 0))
+            } else {
+                libc::close(fd);
+                Err(e)
+            }
         }
     }
+    };
 }
+
+connect_fn!(
+    /// Start a non-blocking TCP connect. Ok((fd, done_immediately, bytes_in_syn)).
+    /// 20.15: with `syn_data`, try TCP Fast Open (sendto MSG_FASTOPEN): with a cached cookie the SYN
+    /// carries up to one MSS of it (bytes_in_syn > 0, still connecting); without one the kernel sends a
+    /// cookie-request SYN and takes nothing (EINPROGRESS, bytes_in_syn = 0). The caller keeps the bytes
+    /// until this socket wins. TFO unsupported (EOPNOTSUPP) => disabled for the process, plain connect.
+    connect
+);
+connect_fn!(
+    /// `connect` with the socket option IP_LOCAL_PORT_RANGE (60.63 E2: a destination that holds a large part of the
+    /// host's source ports)
+    connect_ranged,
+    range
+);
 
 /// 20.14: state of a connecting socket, without blocking (one poll). None = in progress,
 /// Some((0, peer_closed)) = connected, Some((errno, _)) = failed.
@@ -824,6 +843,19 @@ fn class(ip: IpAddr) -> u8 {
     }
 }
 
+/// 60.58 a client address that is a proxy or a bridge in front of many users, not one client: loopback, private,
+/// CGNAT, link-local and the other reserved ranges, and the unix-socket peer (100::). For --dns-share such an address
+/// is no group: its connections count one by one (60.57 C, the same rule: the server cannot tell the users behind it apart).
+pub fn shared_addr(ip: IpAddr) -> bool {
+    class(crate::clientip::canon(ip)) & (LOOP | PRIV) != 0
+}
+
+/// 60.57 C a client address that is loopback, private, link-local, CGNAT or otherwise not a public unicast address
+/// (the classes the SSRF guard knows): a proxy or a bridge in front of many users, never gated by --conn-share
+pub fn local_peer(ip: IpAddr) -> bool {
+    class(ip) & (LOOP | PRIV) != 0
+}
+
 impl Filter {
     /// The base-4 flags only; the C1 parts at their defaults (classes blocked, IPv6 on, no lists, no own addresses).
     pub fn new(allow_loopback: bool, allow_private: bool) -> Filter {
@@ -981,7 +1013,13 @@ pub struct DnsReq {
     pub inbox: Arc<Inbox>,
     /// 70.09 admission time: the own resolver's deadline counts from here (time in the queue too)
     pub at: std::time::Instant,
+    /// 60.58 who asks (read only with --dns-share): the connection, and its per-address key (None: no peer address known)
+    pub conn: DnsConn,
+    pub key: Option<crate::clientip::IpKey>,
 }
+
+/// 60.58 a client connection as the DNS pool sees it: worker index, client slot, slot generation
+pub type DnsConn = (u32, u32, u32);
 
 pub struct DnsResp {
     pub host: String,
@@ -1298,7 +1336,426 @@ pub fn sockaddr_ip(ss: &libc::sockaddr_storage) -> Option<IpAddr> {
 
 /// 20.19 names being resolved right now -> the requests waiting for the same answer, and (70.10) the early answer
 /// already handed out, for requests that join later.
-type InFlight = Mutex<std::collections::HashMap<String, (Vec<(u64, Arc<Inbox>)>, Option<Vec<IpAddr>>)>>;
+type Waiters = (Vec<(u64, Arc<Inbox>)>, Option<Vec<IpAddr>>);
+type InFlight = Mutex<std::collections::HashMap<String, Waiters>>;
+
+/// 60.58 A6 `req` left the queue (a thread took it, it joined a running lookup of its name, or it expired): its time
+/// since the send goes to its worker's wait counters. The pool threads are the only writers of these counters (the
+/// worker never touches them, so its event loop keeps its code); a pool without the workers' Stats (tests) counts nothing.
+fn waited(req: &DnsReq, cfg: &DnsSched) -> Option<()> {
+    let st = cfg.stats.get(req.conn.0 as usize)?;
+    let us = req.at.elapsed().as_micros().min(u64::MAX as u128) as u64;
+    st.dns_wait_us.add_shared(us);
+    st.dns_wait_ms_max.max_shared(us / 1000);
+    Some(())
+}
+
+/// 20.19 `req` joins the lookup of its name that already runs (`e`: the in-flight entry): it gets the early answer if
+/// one was handed out, and the final one from the thread that runs the lookup.
+fn join(e: &mut Waiters, req: DnsReq, cfg: &DnsSched) {
+    waited(&req, cfg);
+    if let Some(a) = &e.1 {
+        req.inbox.q.lock().unwrap().push(DnsResp { host: req.host, token: req.token, addrs: a.clone(), nx: false, more: true });
+        req.inbox.wake();
+    }
+    e.0.push((req.token, req.inbox));
+}
+
+/// 60.58 a lookup that waited for a thread longer than `expire` (the connect timeout) is answered as failed without a
+/// query. Before, on the getaddrinfo path (which has no deadline: the own resolver's counts from the send) a
+/// request stayed queued, and counted against its worker's DNS_INFLIGHT_MAX, until a thread reached it: names that
+/// never resolve at more than threads / 10 s filled the 1,024 of a worker within minutes, and from then on every
+/// client of that worker got 0x49 for each new name.
+fn expired(req: DnsReq, cfg: &DnsSched) {
+    waited(&req, cfg);
+    if let Some(st) = cfg.stats.get(req.conn.0 as usize) {
+        st.dns_expired.add_shared(1);
+    }
+    req.inbox.q.lock().unwrap().push(DnsResp { host: req.host, token: req.token, addrs: Vec::new(), nx: false, more: false });
+    req.inbox.wake();
+}
+
+/// 60.58 what the pool gets besides the resolver: the workers' Stats, the expiry of queued requests (see expired),
+/// --dns-share (DnsShare decides the order; off = arrival order), and --dns-reserve (the reserve of DnsShare; main
+/// sets `share` with it).
+#[derive(Clone)]
+pub struct DnsSched {
+    /// the workers' Stats, by worker index (DnsReq::conn.0), for the wait counters (empty: not counted)
+    pub stats: Arc<Vec<Arc<crate::metrics::Stats>>>,
+    pub expire: std::time::Duration,
+    pub share: bool,
+    pub reserve: bool,
+}
+
+/// 60.58 who the rule counts as one: all connections of a public client address (DnsReq::key Some: clientip::key, an
+/// IPv4 address or an IPv6 /64), or a connection alone (key None: no peer address, or a loopback / private /
+/// link-local / unix peer, which is a proxy or a bridge in front of many users).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+enum Group {
+    Addr(crate::clientip::IpKey),
+    Conn(DnsConn),
+}
+
+/// 60.58 --dns-reserve: a lookup that runs this long makes its group slow, and the group stays slow for
+/// DNS_RESERVE_HOLD after the lookup is back
+const DNS_RESERVE_AGE: std::time::Duration = std::time::Duration::from_secs(1);
+const DNS_RESERVE_HOLD: std::time::Duration = std::time::Duration::from_secs(60);
+
+struct ShareConn {
+    /// waiting lookups in arrival order, with their arrival number
+    q: std::collections::VecDeque<(u64, DnsReq)>,
+    /// start times of the running lookups charged to this connection
+    run: Vec<std::time::Instant>,
+    group: Group,
+}
+
+#[derive(Default)]
+struct ShareGroup {
+    /// (arrival number, connection) of the oldest waiting lookup of each of its connections that has one
+    heads: std::collections::BTreeSet<(u64, DnsConn)>,
+    run: Vec<std::time::Instant>,
+    /// the reserve: slow (see DnsShare; always false without --dns-reserve) ...
+    slow: bool,
+    /// ... and at least until then, by a slow lookup that is back
+    slow_until: Option<std::time::Instant>,
+}
+
+/// 60.58 --dns-share: the lookups that wait for a pool thread, and what the running ones are charged to. Rule: a
+/// free thread takes the waiting lookup of the group (Group: a public client address, or a connection alone behind a
+/// local address) that runs the fewest lookups, inside it of the connection that runs the fewest, and the oldest
+/// among equals. Without the reserve there are no caps: a connection or an address alone takes every thread, and no
+/// thread stays free while a lookup waits. So a new client waits for one thread to come back, however many lookups
+/// others have queued; it does not wait less than that.
+/// A running lookup is charged to the request the thread took (the first asker) until the thread is back, also when
+/// that stream is gone by then. Requests that join it use no thread and are charged nothing.
+/// --dns-reserve (cfg.reserve): a group is slow while one of its lookups has run for DNS_RESERVE_AGE and for
+/// DNS_RESERVE_HOLD after such a lookup is back. All slow groups together run on at most slow_cap threads; the rest of
+/// the pool is only for groups that are not slow, also when it is free and slow ones wait.
+/// Only pool threads touch this (the workers send through the channel). Lock order: receiver -> DnsShare -> InFlight.
+/// A pick costs O(log n) plus the groups and connections with a running lookup (at most one per thread): every group
+/// keeps its connections' oldest lookups in order, and `oldest` keeps the groups in order, the slow ones apart, so a
+/// pick never walks the groups it may not take.
+struct DnsShare {
+    seq: u64,
+    waiting: usize,
+    conns: std::collections::HashMap<DnsConn, ShareConn>,
+    groups: std::collections::HashMap<Group, ShareGroup>,
+    /// (the first of ShareGroup::heads, group) of every group that has a waiting lookup: [not slow, slow]
+    oldest: [std::collections::BTreeSet<(u64, Group)>; 2],
+    cfg: DnsSched,
+    /// the reserve: the threads all slow groups may hold together (the pool less a quarter, at least 1)
+    slow_cap: usize,
+    /// the connections with a running lookup (at most one per thread)
+    busy: Vec<DnsConn>,
+    /// the reserve: when each ShareGroup::slow_until ends, in time order
+    marks: std::collections::VecDeque<(std::time::Instant, Group)>,
+    /// the reserve: the lookups started in the last DNS_RESERVE_AGE, in time order (the group is slow when one of
+    /// them still runs after that time)
+    started: std::collections::VecDeque<(std::time::Instant, Group)>,
+}
+
+/// 60.58 the threads that all slow groups may hold together with --dns-reserve: a quarter of the pool (at least one
+/// thread) is kept from them, and they keep at least one. So 1 thread has no reserve.
+pub fn dns_slow_cap(threads: usize) -> usize {
+    threads.saturating_sub((threads / 4).max(1)).max(1)
+}
+
+impl DnsShare {
+    fn new(threads: usize, cfg: DnsSched) -> DnsShare {
+        DnsShare {
+            seq: 0,
+            waiting: 0,
+            conns: Default::default(),
+            groups: Default::default(),
+            oldest: Default::default(),
+            cfg,
+            slow_cap: dns_slow_cap(threads),
+            busy: Vec::new(),
+            marks: Default::default(),
+            started: Default::default(),
+        }
+    }
+
+    /// `f` changes group `g` (its heads, its slow state); `oldest` follows, and a group with nothing waiting, nothing
+    /// running and no slow state goes.
+    fn group(&mut self, g: Group, f: impl FnOnce(&mut ShareGroup)) {
+        let e = self.groups.entry(g).or_default();
+        let before = (e.heads.first().map(|h| h.0), e.slow);
+        f(e);
+        let after = (e.heads.first().map(|h| h.0), e.slow);
+        if before != after {
+            if let Some(s) = before.0 {
+                self.oldest[before.1 as usize].remove(&(s, g));
+            }
+            if let Some(s) = after.0 {
+                self.oldest[after.1 as usize].insert((s, g));
+            }
+        }
+        if e.heads.is_empty() && e.run.is_empty() && !e.slow {
+            self.groups.remove(&g);
+        }
+    }
+
+    /// A request from the channel: it joins the lookup of its name if one runs, else it waits.
+    fn admit(&mut self, req: DnsReq, inflight: &InFlight) {
+        // (review: as in arrival order, the expiry comes before the join; a request can sit in the channel for a whole
+        // lookup time when every thread is in a lookup)
+        if req.at.elapsed() >= self.cfg.expire {
+            return expired(req, &self.cfg);
+        }
+        {
+            let mut m = inflight.lock().unwrap();
+            if let Some(e) = m.get_mut(&req.host) {
+                return join(e, req, &self.cfg);
+            }
+        }
+        self.seq += 1;
+        self.waiting += 1;
+        let (seq, conn) = (self.seq, req.conn);
+        let c = self.conns.entry(conn).or_insert_with(|| ShareConn::of(&req));
+        let (first, g) = (c.q.is_empty(), c.group);
+        c.q.push_back((seq, req));
+        if first {
+            self.group(g, |e| {
+                e.heads.insert((seq, conn));
+            });
+        }
+    }
+
+    /// The oldest waiting lookup of connection `conn` leaves the queue.
+    fn pop(&mut self, conn: DnsConn) -> DnsReq {
+        let c = self.conns.get_mut(&conn).expect("a head without its connection");
+        let (seq, req) = c.q.pop_front().expect("a head without a lookup");
+        let (next, g) = (c.q.front().map(|n| n.0), c.group);
+        if c.q.is_empty() && c.run.is_empty() {
+            self.conns.remove(&conn);
+        }
+        self.waiting -= 1;
+        self.group(g, |e| {
+            e.heads.remove(&(seq, conn));
+            if let Some(n) = next {
+                e.heads.insert((n, conn));
+            }
+        });
+        req
+    }
+
+    /// The oldest waiting lookup of all: (the connection, when the request was made)
+    fn first(&self) -> Option<(DnsConn, std::time::Instant)> {
+        let (_, g) = self.oldest.iter().filter_map(|s| s.first()).min()?;
+        let conn = self.groups[g].heads.first().expect("a group in `oldest` has a head").1;
+        Some((conn, self.conns[&conn].q[0].1.at))
+    }
+
+    /// The reserve: do the slow groups together hold slow_cap threads? Then a slow group gets no further thread.
+    fn lane_full(&self) -> bool {
+        let held = |c: &DnsConn| {
+            let c = &self.conns[c];
+            if self.groups[&c.group].slow {
+                c.run.len()
+            } else {
+                0
+            }
+        };
+        self.cfg.reserve && self.busy.iter().map(held).sum::<usize>() >= self.slow_cap
+    }
+
+    /// The connection whose oldest waiting lookup a free thread takes now (the rule: see DnsShare; the slow state is
+    /// that of the last `slow_now`). None: nothing waits, or (the reserve) only slow groups wait and their threads
+    /// are in use.
+    /// Cost: the groups and connections with a running lookup (at most one per thread) are looked at one by one; the
+    /// others are found through the ordered sets.
+    fn pick(&self) -> Option<DnsConn> {
+        let full = self.lane_full();
+        // 1. a group that runs nothing: the oldest lookup of such a group (in a full lane: of one that is not slow)
+        let idle = |set: &std::collections::BTreeSet<(u64, Group)>| set.iter().find(|(_, g)| self.groups[g].run.is_empty()).copied();
+        let sets = if full { &self.oldest[..1] } else { &self.oldest[..] };
+        if let Some((_, g)) = sets.iter().filter_map(idle).min() {
+            return self.groups[&g].heads.first().map(|h| h.1);
+        }
+        // 2. every waiting lookup's group runs something: the groups of the running connections, one by one
+        // (lookups its group runs, lookups it runs, arrival) of the best waiting lookup so far
+        let mut best: Option<((usize, usize, u64), DnsConn)> = None;
+        let mut offer = |rank: (usize, usize, u64), conn: DnsConn| {
+            if best.is_none_or(|b| rank < b.0) {
+                best = Some((rank, conn));
+            }
+        };
+        for (i, bc) in self.busy.iter().enumerate() {
+            let c = &self.conns[bc];
+            let (g, e) = (c.group, &self.groups[&c.group]);
+            if full && e.slow {
+                continue;
+            }
+            if let Some(head) = c.q.front() {
+                offer((e.run.len(), c.run.len(), head.0), *bc);
+            }
+            // a connection of the same group with nothing running (once per group)
+            if !self.busy[..i].iter().any(|o| self.conns[o].group == g) {
+                if let Some(&(seq, conn)) = e.heads.iter().find(|(_, conn)| self.conns[conn].run.is_empty()) {
+                    offer((e.run.len(), 0, seq), conn);
+                }
+            }
+        }
+        best.map(|b| b.1)
+    }
+
+    /// The next lookup for a free thread, charged to its connection and group (its start time: `now`). On the way,
+    /// requests that waited longer than `expire` are answered as failed, and a picked request whose name runs by now
+    /// joins that lookup (no thread).
+    fn next(&mut self, inflight: &InFlight, now: std::time::Instant) -> Option<DnsReq> {
+        self.slow_now(now);
+        while let Some((conn, _)) = self.first().filter(|f| now.saturating_duration_since(f.1) >= self.cfg.expire) {
+            let req = self.pop(conn);
+            expired(req, &self.cfg);
+        }
+        while let Some(conn) = self.pick() {
+            let req = self.pop(conn);
+            // (review: the sweep above goes by arrival at the pool; workers stamp their requests before the send, so a
+            // request a little older than the one in front of it can be past the expiry here)
+            if now.saturating_duration_since(req.at) >= self.cfg.expire {
+                expired(req, &self.cfg);
+                continue;
+            }
+            let mut m = inflight.lock().unwrap();
+            if let Some(e) = m.get_mut(&req.host) {
+                join(e, req, &self.cfg);
+                continue;
+            }
+            m.insert(req.host.clone(), (Vec::new(), None));
+            drop(m);
+            let c = self.conns.entry(conn).or_insert_with(|| ShareConn::of(&req));
+            if c.run.is_empty() {
+                self.busy.push(conn);
+            }
+            c.run.push(now);
+            let g = c.group;
+            if self.cfg.reserve {
+                self.started.push_back((now, g));
+            }
+            self.group(g, |e| e.run.push(now));
+            return Some(req);
+        }
+        None
+    }
+
+    /// The thread that ran a lookup of `conn` since `start` is back (at `now`).
+    fn done(&mut self, conn: DnsConn, start: std::time::Instant, now: std::time::Instant) {
+        let Some(c) = self.conns.get_mut(&conn) else { return };
+        if let Some(i) = c.run.iter().position(|s| *s == start) {
+            c.run.swap_remove(i);
+        }
+        if c.run.is_empty() {
+            self.busy.retain(|b| *b != conn);
+        }
+        let g = c.group;
+        if c.q.is_empty() && c.run.is_empty() {
+            self.conns.remove(&conn);
+        }
+        // the reserve: the lookup was slow: its group stays slow for DNS_RESERVE_HOLD
+        let mark = (self.cfg.reserve && now.saturating_duration_since(start) >= DNS_RESERVE_AGE).then(|| now + DNS_RESERVE_HOLD);
+        if let Some(until) = mark {
+            self.marks.push_back((until, g));
+        }
+        self.group(g, |e| {
+            if let Some(i) = e.run.iter().position(|s| *s == start) {
+                e.run.swap_remove(i);
+            }
+            if mark.is_some() {
+                (e.slow, e.slow_until) = (true, mark);
+            }
+        });
+    }
+
+    /// The reserve: the slow state of every group as of `now` (nothing to do without it: both lists are empty). A
+    /// group whose slow_until ended is slow no more, unless a lookup of it runs that long; a group with a lookup that
+    /// has run for DNS_RESERVE_AGE is slow.
+    fn slow_now(&mut self, now: std::time::Instant) {
+        let old = |s: &std::time::Instant| now.saturating_duration_since(*s) >= DNS_RESERVE_AGE;
+        while self.marks.front().is_some_and(|m| m.0 <= now) {
+            let (_, g) = self.marks.pop_front().expect("checked");
+            // (a later slow lookup of the group moved slow_until on: its own entry follows)
+            if self.groups.get(&g).is_some_and(|e| e.slow_until.is_some_and(|u| u <= now)) {
+                self.group(g, |e| (e.slow, e.slow_until) = (e.run.iter().any(old), None));
+            }
+        }
+        while self.started.front().is_some_and(|s| old(&s.0)) {
+            let (start, g) = self.started.pop_front().expect("checked");
+            if self.groups.get(&g).is_some_and(|e| !e.slow && e.run.contains(&start)) {
+                self.group(g, |e| e.slow = true);
+            }
+        }
+    }
+
+    /// The reserve: lookups wait though this thread is free (only slow groups wait, and their threads are in use).
+    /// When to look again if no thread comes back and no request arrives before: a slow_until ends, or the oldest
+    /// waiting lookup expires; and not later than DNS_RESERVE_HOLD from `now` (review: a thread that comes back while
+    /// this one sleeps can set a slow_until, and none that is set after `now` ends before that). None: nothing waits.
+    fn wake(&self, now: std::time::Instant) -> Option<std::time::Instant> {
+        let expires = self.first()?.1.checked_add(self.cfg.expire);
+        self.marks.front().map(|m| m.0).into_iter().chain(expires).chain([now + DNS_RESERVE_HOLD]).min()
+    }
+}
+
+impl ShareConn {
+    fn of(req: &DnsReq) -> ShareConn {
+        ShareConn { q: Default::default(), run: Vec::new(), group: req.key.map_or(Group::Conn(req.conn), Group::Addr) }
+    }
+}
+
+/// 60.58 the next request for a pool thread with --dns-share. `back`: the lookup this thread just finished.
+/// Idle threads queue on the receiver lock; its holder blocks in recv, so a request that arrives is seen at once, and
+/// a thread that comes back from a lookup picks without that lock (it only empties the channel if nobody holds it).
+/// None: every sender is gone.
+fn share_next(
+    rx: &Mutex<mpsc::Receiver<DnsReq>>,
+    share: &Mutex<DnsShare>,
+    inflight: &InFlight,
+    back: Option<(DnsConn, std::time::Instant)>,
+) -> Option<(DnsReq, std::time::Instant)> {
+    {
+        let chan = rx.try_lock(); // (not held: a receiver in recv is emptying the channel)
+        let mut sh = share.lock().unwrap();
+        if let Some((conn, start)) = back {
+            sh.done(conn, start, std::time::Instant::now());
+        }
+        if let Ok(chan) = &chan {
+            while let Ok(r) = chan.try_recv() {
+                sh.admit(r, inflight);
+            }
+        }
+        let now = std::time::Instant::now();
+        if let Some(r) = sh.next(inflight, now) {
+            return Some((r, now));
+        }
+    }
+    let chan = rx.lock().unwrap();
+    loop {
+        let wake = {
+            let mut sh = share.lock().unwrap();
+            while let Ok(r) = chan.try_recv() {
+                sh.admit(r, inflight);
+            }
+            let now = std::time::Instant::now();
+            if let Some(r) = sh.next(inflight, now) {
+                return Some((r, now));
+            }
+            sh.wake(now) // (Some only with the reserve: without it nothing waits while a thread is free)
+        };
+        let got = match wake {
+            // a thread that comes back picks on its own; this one looks again when the wait can end without one
+            Some(at) => match chan.recv_timeout(at.saturating_duration_since(std::time::Instant::now())) {
+                Ok(r) => Some(r),
+                Err(mpsc::RecvTimeoutError::Timeout) => None,
+                Err(mpsc::RecvTimeoutError::Disconnected) => return None,
+            },
+            None => Some(chan.recv().ok()?),
+        };
+        if let Some(r) = got {
+            share.lock().unwrap().admit(r, inflight);
+        }
+    }
+}
 
 /// `threads` getaddrinfo workers shared by all event loops. Identical names in flight share one lookup
 /// (20.19; always on since 60.18, --no-dns-coalesce removed): a page load opens several streams to one host before the first
@@ -1308,10 +1765,18 @@ type InFlight = Mutex<std::collections::HashMap<String, (Vec<(u64, Arc<Inbox>)>,
 /// busy threads, 22 ms coalesced). Every waiter gets its own DnsResp (also for failures).
 /// 70.09 `own`: resolve with dns.rs instead of getaddrinfo (deadline from admission, cancellable).
 /// 60.27 C6 `early_on` false (an upstream proxy): no early answers (connects go to the proxy, not to an address family)
-pub fn start_dns_pool(threads: usize, own: Option<Arc<crate::dns::Resolver>>, v4_only: bool, early_on: bool) -> mpsc::Sender<DnsReq> {
+/// 60.58 `sched`: the expiry of queued requests, and --dns-share (DnsShare; off: arrival order, as before)
+pub fn start_dns_pool(
+    threads: usize,
+    own: Option<Arc<crate::dns::Resolver>>,
+    v4_only: bool,
+    early_on: bool,
+    sched: DnsSched,
+) -> mpsc::Sender<DnsReq> {
     let (tx, rx) = mpsc::channel::<DnsReq>();
     let rx = Arc::new(Mutex::new(rx));
     let inflight: Arc<InFlight> = Default::default();
+    let share = sched.share.then(|| Arc::new(Mutex::new(DnsShare::new(threads, sched.clone()))));
     // 60.18 #16 getaddrinfo gets absolute names (gai_name), and glibc matches no `name.` against /etc/hosts: hosts names
     // (Docker --add-host, Kubernetes hostAliases, local aliases) are looked up here first, as glibc's files-then-dns did
     let hosts = own.is_none().then(|| Arc::new(crate::dns::Resolver::new(Vec::new())));
@@ -1320,93 +1785,103 @@ pub fn start_dns_pool(threads: usize, own: Option<Arc<crate::dns::Resolver>>, v4
         let inflight = inflight.clone();
         let own = own.clone();
         let hosts = hosts.clone();
+        let share = share.clone();
+        let sched = sched.clone();
         std::thread::Builder::new()
             .name(format!("dns-{i}"))
-            .spawn(move || loop {
-                let req = match rx.lock().unwrap().recv() {
-                    Ok(r) => r,
-                    Err(_) => return,
-                };
-                {
-                    // (block: the in-flight lock is released before the lookup)
-                    let mut m = inflight.lock().unwrap();
-                    if let Some((waiters, early)) = m.get_mut(&req.host) {
-                        if let Some(a) = early {
-                            req.inbox.q.lock().unwrap().push(DnsResp {
-                                host: req.host.clone(),
-                                token: req.token,
-                                addrs: a.clone(),
-                                nx: false,
-                                more: true,
-                            });
-                            req.inbox.wake();
+            .spawn(move || {
+                let mut back: Option<(DnsConn, std::time::Instant)> = None; // 60.58 the charge of the lookup just finished
+                loop {
+                    let req = match &share {
+                        Some(sh) => {
+                            // 60.58 --dns-share: the request is out of the queue, in `inflight` and charged
+                            let Some((req, start)) = share_next(&rx, sh, &inflight, back.take()) else { return };
+                            back = Some((req.conn, start));
+                            req
                         }
-                        waiters.push((req.token, req.inbox));
-                        continue; // the thread already resolving this name delivers to us too
-                    }
-                    m.insert(req.host.clone(), (Vec::new(), None));
-                }
-                // 70.09 cancel: every waiter's token has left its inbox's dns_live set. The check and
-                // the removal of the in-flight entry are one critical section, so a request arriving later starts
-                // a fresh lookup instead of joining one that is giving up.
-                let mut taken: Option<Vec<(u64, Arc<Inbox>)>> = None;
-                let res = match &own {
-                    None => {
-                        // an entry with no address of the asked family left falls through to DNS, as glibc's files
-                        // backend reports NOTFOUND for that family (review)
-                        let from_hosts = hosts.as_ref().and_then(|h| h.hosts_entry(&req.host)).map(|a| hosts_family(a, v4_only));
-                        match from_hosts {
-                            Some(a) if !a.is_empty() => Ok(a),
-                            _ => lookup(&req.host, v4_only),
-                        }
-                    }
-                    Some(r) => r.lookup(
-                        &req.host,
-                        req.at,
-                        &mut || {
-                            let live = |t: &u64, ib: &Inbox| ib.dns_live.lock().unwrap().contains(t);
-                            if live(&req.token, &req.inbox) {
-                                return false;
+                        None => {
+                            let req = match rx.lock().unwrap().recv() {
+                                Ok(r) => r,
+                                Err(_) => return,
+                            };
+                            if req.at.elapsed() >= sched.expire {
+                                expired(req, &sched); // 60.58
+                                continue;
                             }
+                            // (block: the in-flight lock is released before the lookup)
                             let mut m = inflight.lock().unwrap();
-                            if m.get(&req.host).is_some_and(|w| w.0.iter().any(|(t, ib)| live(t, ib))) {
-                                return false;
+                            if let Some(e) = m.get_mut(&req.host) {
+                                join(e, req, &sched);
+                                continue; // the thread already resolving this name delivers to us too
                             }
-                            taken = Some(m.remove(&req.host).unwrap_or_default().0);
-                            true
-                        },
-                        &mut |a: &[IpAddr]| {
-                            if !early_on {
-                                return;
+                            m.insert(req.host.clone(), (Vec::new(), None));
+                            req
+                        }
+                    };
+                    // 60.58 A6
+                    waited(&req, &sched);
+                    // 70.09 cancel: every waiter's token has left its inbox's dns_live set. The check and
+                    // the removal of the in-flight entry are one critical section, so a request arriving later starts
+                    // a fresh lookup instead of joining one that is giving up.
+                    let mut taken: Option<Vec<(u64, Arc<Inbox>)>> = None;
+                    let res = match &own {
+                        None => {
+                            // an entry with no address of the asked family left falls through to DNS, as glibc's files
+                            // backend reports NOTFOUND for that family (review)
+                            let from_hosts = hosts.as_ref().and_then(|h| h.hosts_entry(&req.host)).map(|a| hosts_family(a, v4_only));
+                            match from_hosts {
+                                Some(a) if !a.is_empty() => Ok(a),
+                                _ => lookup(&req.host, v4_only),
                             }
-                            // 70.10 early answer: to this request and every waiter so far; later joiners get it on joining
-                            let early = |token| DnsResp { host: req.host.clone(), token, addrs: a.to_vec(), nx: false, more: true };
-                            req.inbox.q.lock().unwrap().push(early(req.token));
-                            req.inbox.wake();
-                            if let Some((waiters, e)) = inflight.lock().unwrap().get_mut(&req.host) {
-                                *e = Some(a.to_vec());
-                                for (token, inbox) in waiters.iter() {
-                                    inbox.q.lock().unwrap().push(early(*token));
-                                    inbox.wake();
+                        }
+                        Some(r) => r.lookup(
+                            &req.host,
+                            req.at,
+                            &mut || {
+                                let live = |t: &u64, ib: &Inbox| ib.dns_live.lock().unwrap().contains(t);
+                                if live(&req.token, &req.inbox) {
+                                    return false;
                                 }
-                            }
-                        },
-                    ),
-                };
-                let (addrs, nx) = match res {
-                    Ok(a) => (a, false),
-                    Err(nx) => (Vec::new(), nx),
-                };
-                let waiters = match taken {
-                    Some(w) => w,
-                    None => inflight.lock().unwrap().remove(&req.host).unwrap_or_default().0,
-                };
-                for (token, inbox) in waiters {
-                    inbox.q.lock().unwrap().push(DnsResp { host: req.host.clone(), token, addrs: addrs.clone(), nx, more: false });
-                    inbox.wake();
+                                let mut m = inflight.lock().unwrap();
+                                if m.get(&req.host).is_some_and(|w| w.0.iter().any(|(t, ib)| live(t, ib))) {
+                                    return false;
+                                }
+                                taken = Some(m.remove(&req.host).unwrap_or_default().0);
+                                true
+                            },
+                            &mut |a: &[IpAddr]| {
+                                if !early_on {
+                                    return;
+                                }
+                                // 70.10 early answer: to this request and every waiter so far; later joiners get it on joining
+                                let early = |token| DnsResp { host: req.host.clone(), token, addrs: a.to_vec(), nx: false, more: true };
+                                req.inbox.q.lock().unwrap().push(early(req.token));
+                                req.inbox.wake();
+                                if let Some((waiters, e)) = inflight.lock().unwrap().get_mut(&req.host) {
+                                    *e = Some(a.to_vec());
+                                    for (token, inbox) in waiters.iter() {
+                                        inbox.q.lock().unwrap().push(early(*token));
+                                        inbox.wake();
+                                    }
+                                }
+                            },
+                        ),
+                    };
+                    let (addrs, nx) = match res {
+                        Ok(a) => (a, false),
+                        Err(nx) => (Vec::new(), nx),
+                    };
+                    let waiters = match taken {
+                        Some(w) => w,
+                        None => inflight.lock().unwrap().remove(&req.host).unwrap_or_default().0,
+                    };
+                    for (token, inbox) in waiters {
+                        inbox.q.lock().unwrap().push(DnsResp { host: req.host.clone(), token, addrs: addrs.clone(), nx, more: false });
+                        inbox.wake();
+                    }
+                    req.inbox.q.lock().unwrap().push(DnsResp { host: req.host, token: req.token, addrs, nx, more: false });
+                    req.inbox.wake();
                 }
-                req.inbox.q.lock().unwrap().push(DnsResp { host: req.host, token: req.token, addrs, nx, more: false });
-                req.inbox.wake();
             })
             .expect("spawn dns thread");
     }
@@ -1466,6 +1941,11 @@ mod tests {
     /// flight cause one query per family at the server, and every requester gets its own final answer
     #[test]
     fn dns_pool_coalesces_identical_names() {
+        // 60.58 with the queue in arrival order and with --dns-share
+        dns_pool_coalesces_identical_names_with(false);
+        dns_pool_coalesces_identical_names_with(true);
+    }
+    fn dns_pool_coalesces_identical_names_with(share: bool) {
         use std::net::UdpSocket;
         use std::sync::atomic::{AtomicUsize, Ordering};
         let u = UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -1498,11 +1978,18 @@ mod tests {
         std::fs::write(dir.join("resolv.conf"), "options timeout:2 attempts:1\n").unwrap();
         std::fs::write(dir.join("hosts"), "").unwrap();
         let own = Arc::new(crate::dns::Resolver::with_paths(vec![srv], dir.join("resolv.conf"), dir.join("hosts")));
-        let tx = start_dns_pool(3, Some(own), false, true);
+        let tx = start_dns_pool(3, Some(own), false, true, pool_mode(share));
         let inbox = Inbox::new();
         for token in 1..=3u64 {
             inbox.dns_live.lock().unwrap().insert(token); // the worker's side of the 70.09 cancel contract
-            let req = DnsReq { host: "co.test".into(), token, inbox: inbox.clone(), at: std::time::Instant::now() };
+            let req = DnsReq {
+                host: "co.test".into(),
+                token,
+                inbox: inbox.clone(),
+                at: std::time::Instant::now(),
+                conn: who(token).0,
+                key: who(token).1,
+            };
             tx.send(req).unwrap();
         }
         let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -1709,15 +2196,29 @@ mod tests {
     }
     #[test]
     fn dns_coalescing_answers_every_waiter() {
+        // 60.58 with the queue in arrival order and with --dns-share
+        dns_coalescing_answers_every_waiter_with(false);
+        dns_coalescing_answers_every_waiter_with(true);
+    }
+    fn dns_coalescing_answers_every_waiter_with(share: bool) {
         // 20.19: many requests for one name in flight -> one lookup, one DnsResp per request (also failures)
-        let tx = start_dns_pool(2, None, false, true);
+        let tx = start_dns_pool(2, None, false, true, pool_mode(share));
         let inbox = Inbox::new();
         for t in 0..20u64 {
-            tx.send(DnsReq { host: "localhost".into(), token: t, inbox: inbox.clone(), at: std::time::Instant::now() }).unwrap();
+            let (conn, key) = who(t);
+            tx.send(DnsReq { host: "localhost".into(), token: t, inbox: inbox.clone(), at: std::time::Instant::now(), conn, key }).unwrap();
         }
         for t in 100..105u64 {
-            tx.send(DnsReq { host: "does-not-exist.invalid".into(), token: t, inbox: inbox.clone(), at: std::time::Instant::now() })
-                .unwrap();
+            let (conn, key) = who(t);
+            tx.send(DnsReq {
+                host: "does-not-exist.invalid".into(),
+                token: t,
+                inbox: inbox.clone(),
+                at: std::time::Instant::now(),
+                conn,
+                key,
+            })
+            .unwrap();
         }
         let mut got = Vec::new();
         for _ in 0..400 {
@@ -1739,6 +2240,11 @@ mod tests {
     }
     #[test]
     fn own_dns_early_answer_reaches_every_waiter_once() {
+        // 60.58 with the queue in arrival order and with --dns-share
+        own_dns_early_answer_reaches_every_waiter_once_with(false);
+        own_dns_early_answer_reaches_every_waiter_once_with(true);
+    }
+    fn own_dns_early_answer_reaches_every_waiter_once_with(share: bool) {
         // 70.10: A answered at once, AAAA never: every waiter gets one early answer (a joiner after it was sent gets it on
         // joining) and then exactly one final answer at the deadline (1 server x 1 s)
         use std::time::{Duration, Instant};
@@ -1766,11 +2272,12 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("r"), "options timeout:1 attempts:1\n").unwrap();
         let own = Arc::new(crate::dns::Resolver::with_paths(vec![addr], dir.join("r"), dir.join("h")));
-        let tx = start_dns_pool(2, Some(own), false, true);
+        let tx = start_dns_pool(2, Some(own), false, true, pool_mode(share));
         let (a, b) = (Inbox::new(), Inbox::new());
         let send = |t: u64, ib: &Arc<Inbox>| {
             ib.dns_live.lock().unwrap().insert(t);
-            tx.send(DnsReq { host: "v4.test".into(), token: t, inbox: ib.clone(), at: Instant::now() }).unwrap();
+            let (conn, key) = who(t);
+            tx.send(DnsReq { host: "v4.test".into(), token: t, inbox: ib.clone(), at: Instant::now(), conn, key }).unwrap();
         };
         let t0 = Instant::now();
         send(1, &a);
@@ -1803,6 +2310,11 @@ mod tests {
     }
     #[test]
     fn own_dns_lookup_stops_when_every_waiter_cancelled() {
+        // 60.58 with the queue in arrival order and with --dns-share
+        own_dns_lookup_stops_when_every_waiter_cancelled_with(false);
+        own_dns_lookup_stops_when_every_waiter_cancelled_with(true);
+    }
+    fn own_dns_lookup_stops_when_every_waiter_cancelled_with(share: bool) {
         // 70.09: two silent servers, window 1 s x 2 tries: a lookup runs 2 s unless its waiters cancel
         use std::time::{Duration, Instant};
         let silent: Vec<_> = (0..2).map(|_| std::net::UdpSocket::bind("127.0.0.1:0").unwrap()).collect();
@@ -1811,11 +2323,12 @@ mod tests {
         std::fs::write(dir.join("r"), "options timeout:1 attempts:1\n").unwrap();
         let servers = silent.iter().map(|s| s.local_addr().unwrap()).collect();
         let own = Arc::new(crate::dns::Resolver::with_paths(servers, dir.join("r"), dir.join("h")));
-        let tx = start_dns_pool(2, Some(own), false, true);
+        let tx = start_dns_pool(2, Some(own), false, true, pool_mode(share));
         let (a, b) = (Inbox::new(), Inbox::new());
         let send = |host: &str, t: u64, ib: &Arc<Inbox>| {
             ib.dns_live.lock().unwrap().insert(t);
-            tx.send(DnsReq { host: host.into(), token: t, inbox: ib.clone(), at: Instant::now() }).unwrap();
+            let (conn, key) = who(t);
+            tx.send(DnsReq { host: host.into(), token: t, inbox: ib.clone(), at: Instant::now(), conn, key }).unwrap();
         };
         let wait = |ib: &Arc<Inbox>, n: usize| {
             let mut got = Vec::new();
@@ -2138,5 +2651,829 @@ mod tests {
         d.sort();
         d.dedup();
         assert_eq!(d.len(), a.len());
+    }
+
+    // ---- 60.58 --dns-share
+    type KeyId = Option<crate::clientip::IpKey>;
+    const K1: KeyId = Some(1 << 64);
+    const K2: KeyId = Some(2 << 64);
+    const G1: Group = Group::Addr(1 << 64);
+    const G2: Group = Group::Addr(2 << 64);
+    /// nothing waits, nothing runs, nothing is slow
+    fn empty(sh: &DnsShare) -> bool {
+        sh.conns.is_empty() && sh.groups.is_empty() && sh.oldest.iter().all(|o| o.is_empty()) && sh.marks.is_empty() && sh.waiting == 0
+    }
+    /// The pool's settings in a test: no expiry, the queue in arrival order or shared
+    fn pool_mode(share: bool) -> DnsSched {
+        DnsSched { stats: test_stats(), expire: std::time::Duration::from_secs(3600), share, reserve: false }
+    }
+    /// A test request's connection and address: one of each per token
+    fn who(token: u64) -> (DnsConn, KeyId) {
+        ((0, token as u32, 1), Some((token as u128 + 100) << 64))
+    }
+    fn sched(reserve: bool) -> DnsSched {
+        DnsSched { stats: test_stats(), expire: std::time::Duration::from_secs(3600), share: true, reserve }
+    }
+    /// Stats for 4 workers (the tests' connections name workers 0 to 3)
+    fn test_stats() -> Arc<Vec<Arc<crate::metrics::Stats>>> {
+        Arc::new((0..4).map(|_| Arc::new(crate::metrics::Stats::new())).collect())
+    }
+    fn ask(sh: &mut DnsShare, fl: &InFlight, ib: &Arc<Inbox>, host: &str, conn: DnsConn, key: KeyId) {
+        let req = DnsReq { host: host.into(), token: 0, inbox: ib.clone(), at: std::time::Instant::now(), conn, key };
+        sh.admit(req, fl);
+    }
+    /// The lookup a free thread takes now: (name, connection)
+    fn take(sh: &mut DnsShare, fl: &InFlight, now: std::time::Instant) -> Option<(String, DnsConn)> {
+        sh.next(fl, now).map(|r| (r.host, r.conn))
+    }
+    /// The thread that ran `host` for `conn` since `start` is back
+    fn back(sh: &mut DnsShare, fl: &InFlight, host: &str, conn: DnsConn, start: std::time::Instant) {
+        fl.lock().unwrap().remove(host);
+        sh.done(conn, start, start);
+    }
+    fn names(sh: &mut DnsShare, fl: &InFlight, now: std::time::Instant, n: usize) -> Vec<String> {
+        (0..n).map(|_| take(sh, fl, now).expect("a lookup waits").0).collect()
+    }
+
+    /// 60.58 --dns-threads 1, 2 and 3. With 1 thread nothing runs when the thread is free, so the order is arrival
+    /// order; with 2 and 3 a second connection gets the next free thread.
+    #[test]
+    fn dns_share_small_pools() {
+        let (ib, now) = (Inbox::new(), std::time::Instant::now());
+        let (a, b) = ((0, 1, 1), (0, 2, 1));
+        for t in [0usize, 1, 2, 3] {
+            let mut sh = DnsShare::new(t, sched(false));
+            let fl = InFlight::default();
+            for i in 0..4 {
+                ask(&mut sh, &fl, &ib, &format!("a{i}"), a, K1);
+            }
+            // the pool's threads take what they can, then B asks, then one thread comes back at a time
+            let free = t.max(1);
+            let mut order = names(&mut sh, &fl, now, free);
+            ask(&mut sh, &fl, &ib, "b0", b, K2);
+            let mut running: Vec<String> = order.clone();
+            while sh.waiting > 0 {
+                let h = running.remove(0);
+                back(&mut sh, &fl, &h, if h.starts_with('a') { a } else { b }, now);
+                let n = take(&mut sh, &fl, now).unwrap().0;
+                running.push(n.clone());
+                order.push(n);
+            }
+            let want: &[&str] = match free {
+                1 => &["a0", "a1", "a2", "a3", "b0"],
+                2 => &["a0", "a1", "b0", "a2", "a3"],
+                _ => &["a0", "a1", "a2", "b0", "a3"],
+            };
+            assert_eq!(order, want, "{t} threads");
+        }
+    }
+
+    /// 60.58 identical names: a request whose name runs joins that lookup at once and is charged nothing; a waiting
+    /// request joins when it is picked, if its name runs by then (no thread). The lookup is charged to the request the
+    /// thread took, until `done`.
+    #[test]
+    fn dns_share_coalesce_and_charge() {
+        let (ia, ibx, now) = (Inbox::new(), Inbox::new(), std::time::Instant::now());
+        let fl = InFlight::default();
+        let mut sh = DnsShare::new(2, sched(false));
+        let (a, b) = ((0, 1, 1), (0, 2, 1));
+        ask(&mut sh, &fl, &ia, "x", a, K1);
+        assert_eq!(take(&mut sh, &fl, now), Some(("x".into(), a)));
+        ask(&mut sh, &fl, &ibx, "x", b, K2);
+        assert_eq!(sh.waiting, 0, "B joined the running lookup");
+        assert_eq!(fl.lock().unwrap()["x"].0.len(), 1);
+        assert!(!sh.conns.contains_key(&b) && sh.conns[&a].run.len() == 1 && sh.groups[&G1].run.len() == 1, "charged to A alone");
+        // y waits twice (both threads busy: x and s); then B's y runs, and A's y joins it when it is picked
+        ask(&mut sh, &fl, &ia, "s", a, K1);
+        assert_eq!(take(&mut sh, &fl, now), Some(("s".into(), a)));
+        ask(&mut sh, &fl, &ia, "y", a, K1);
+        ask(&mut sh, &fl, &ibx, "y", b, K2);
+        back(&mut sh, &fl, "x", a, now);
+        assert_eq!(take(&mut sh, &fl, now), Some(("y".into(), b)), "A runs s, B nothing: B's y");
+        back(&mut sh, &fl, "s", a, now);
+        assert_eq!(take(&mut sh, &fl, now), None, "A's y joined B's lookup: the thread stays free");
+        assert_eq!((sh.waiting, fl.lock().unwrap()["y"].0.len()), (0, 1));
+        assert!(!sh.conns.contains_key(&a), "nothing charged to A");
+        back(&mut sh, &fl, "y", b, now);
+        assert!(empty(&sh));
+        // a join with an early answer handed out gets it at once (70.10)
+        fl.lock().unwrap().insert("e".into(), (Vec::new(), Some(vec![IpAddr::from([192, 0, 2, 1])])));
+        ibx.q.lock().unwrap().clear();
+        ask(&mut sh, &fl, &ibx, "e", b, K2);
+        let q = ibx.q.lock().unwrap();
+        assert!(q.len() == 1 && q[0].more && q[0].addrs == [IpAddr::from([192, 0, 2, 1])]);
+    }
+
+    /// 60.58 a request that waited longer than `expire` is answered as failed, without a thread, when a thread next
+    /// looks at the queue; younger ones stay.
+    #[test]
+    fn dns_share_expires_old_requests() {
+        let (ib, fl, now) = (Inbox::new(), InFlight::default(), std::time::Instant::now());
+        let st = test_stats();
+        let ten = DnsSched { stats: st.clone(), expire: std::time::Duration::from_secs(10), share: true, reserve: false };
+        let mut sh = DnsShare::new(4, ten);
+        for (i, age) in [12u64, 11, 3].into_iter().enumerate() {
+            let at = now - std::time::Duration::from_secs(age);
+            sh.admit(DnsReq { host: format!("h{i}"), token: i as u64, inbox: ib.clone(), at, conn: (0, i as u32, 1), key: K1 }, &fl);
+        }
+        assert_eq!(take(&mut sh, &fl, now).map(|r| r.0), Some("h2".into()));
+        let q = ib.q.lock().unwrap();
+        assert_eq!(
+            q.iter().map(|r| (r.token, r.addrs.len(), r.nx, r.more)).collect::<Vec<_>>(),
+            [(0, 0, false, false), (1, 0, false, false)]
+        );
+        assert_eq!(st[0].dns_expired.get(), 2);
+        assert!(st[0].dns_wait_ms_max.get() >= 12_000 && st[0].dns_wait_us.get() >= 23_000_000, "the two expired ones");
+        assert_eq!(st[1].dns_wait_us.get(), 0, "counted for the worker that asked");
+        drop(q);
+
+        // (review) requests that expire while they wait in the queue: the sweep takes them when a thread looks, and a
+        // request that is older than the one that arrived before it (stamped by another worker) is caught at the pick
+        let st = test_stats();
+        let ten = DnsSched { stats: st.clone(), expire: std::time::Duration::from_secs(10), share: true, reserve: false };
+        let mut sh = DnsShare::new(4, ten);
+        let ago = |s: u64| now - std::time::Duration::from_secs(s);
+        let later = now + std::time::Duration::from_secs(2);
+        sh.admit(DnsReq { host: "young".into(), token: 10, inbox: ib.clone(), at: ago(5), conn: (1, 1, 1), key: K1 }, &fl);
+        sh.admit(DnsReq { host: "old".into(), token: 11, inbox: ib.clone(), at: ago(9), conn: (1, 2, 1), key: K2 }, &fl);
+        sh.admit(DnsReq { host: "mid".into(), token: 12, inbox: ib.clone(), at: ago(6), conn: (1, 3, 1), key: K2 }, &fl);
+        assert_eq!(sh.waiting, 3, "none is past the expiry at admission");
+        assert_eq!(names(&mut sh, &fl, later, 2), ["young", "mid"], "at +2 s: 7 s, 11 s (expired, behind a younger one), 8 s");
+        assert_eq!((sh.waiting, take(&mut sh, &fl, later)), (0, None));
+        assert_eq!(st[1].dns_expired.get(), 1);
+        assert_eq!(ib.q.lock().unwrap().iter().filter(|r| r.token >= 10).map(|r| r.token).collect::<Vec<_>>(), [11]);
+        // a request past the expiry never joins a running lookup of its name (as in arrival order)
+        sh.admit(DnsReq { host: "young".into(), token: 13, inbox: ib.clone(), at: ago(11), conn: (1, 4, 1), key: K2 }, &fl);
+        assert_eq!((sh.waiting, st[1].dns_expired.get(), fl.lock().unwrap()["young"].0.len()), (0, 2, 0));
+        back(&mut sh, &fl, "young", (1, 1, 1), later);
+        back(&mut sh, &fl, "mid", (1, 3, 1), later);
+        assert!(empty(&sh), "nothing left behind");
+    }
+
+    /// 60.58 --dns-reserve, 16 threads: 12 for slow groups, 4 only for others.
+    /// A group with a lookup that has run for DNS_RESERVE_AGE is slow, and stays so for DNS_RESERVE_HOLD after that
+    /// lookup is back: a public address with all its connections, also a new one. The slow ones together get no
+    /// thread past 12, also when threads are free and only they wait. Behind a local address only the connection is
+    /// slow. A group with fast lookups is never held.
+    #[test]
+    fn dns_share_reserve() {
+        let (ib, t0) = (Inbox::new(), std::time::Instant::now());
+        let sec = |n: u64| t0 + std::time::Duration::from_secs(n);
+        let fl = InFlight::default();
+        let mut sh = DnsShare::new(16, sched(true));
+        assert_eq!([1usize, 2, 3, 4, 8, 16, 32].map(|t| DnsShare::new(t, sched(true)).slow_cap), [1, 1, 2, 3, 6, 12, 24]);
+        let (a, a2, b) = ((0, 1, 1), (0, 9, 1), (0, 2, 1));
+        for i in 0..20 {
+            ask(&mut sh, &fl, &ib, &format!("a{i}"), a, K1);
+        }
+        assert_eq!(names(&mut sh, &fl, t0, 16).len(), 16, "nothing is slow in the first second: every thread");
+        assert_eq!((take(&mut sh, &fl, sec(1)), sh.waiting), (None, 4), "a lookup of A has run 1 s: A is slow and holds 16 >= 12");
+        ask(&mut sh, &fl, &ib, "b0", b, K2);
+        assert_eq!(take(&mut sh, &fl, sec(1)), Some(("b0".into(), b)), "B is not slow");
+        sh.done(b, sec(1), sec(1)); // B's lookup was fast: no mark
+        fl.lock().unwrap().remove("b0");
+        assert!(!sh.conns.contains_key(&b) && !sh.groups.contains_key(&G2));
+        // A's 16 come back after 4 s: A is marked. It gets 12 threads and no more, though 4 are free and only A waits
+        for i in 0..16 {
+            fl.lock().unwrap().remove(&format!("a{i}"));
+            sh.done(a, t0, sec(4));
+        }
+        for i in 20..32 {
+            ask(&mut sh, &fl, &ib, &format!("a{i}"), a, K1);
+        }
+        assert_eq!(names(&mut sh, &fl, sec(4), 12).len(), 12);
+        assert_eq!((take(&mut sh, &fl, sec(4)), sh.waiting), (None, 4), "young lookups, but the mark holds: 4 threads stay free");
+        // a new connection of A's address is slow from its first lookup; a connection of another address is not
+        ask(&mut sh, &fl, &ib, "c0", a2, K1);
+        assert_eq!(take(&mut sh, &fl, sec(4)), None, "the address is marked");
+        for i in 0..6 {
+            ask(&mut sh, &fl, &ib, &format!("b1{i}"), b, K2);
+        }
+        assert_eq!(names(&mut sh, &fl, sec(4), 6), ["b10", "b11", "b12", "b13", "b14", "b15"], "not slow: never held");
+        // one of A's threads comes back: the slow ones share it by the rule (the connection that runs nothing first)
+        fl.lock().unwrap().remove("a16");
+        sh.done(a, sec(4), sec(4));
+        assert_eq!(take(&mut sh, &fl, sec(4)), Some(("c0".into(), a2)));
+        assert_eq!(take(&mut sh, &fl, sec(4)), None);
+        // all back fast; the mark holds until 60 s after the last slow lookup came back (4 s), then A is free again
+        for h in (17..28).map(|i| format!("a{i}")).chain(["c0".to_string()]) {
+            fl.lock().unwrap().remove(&h);
+            sh.done(if h.starts_with('a') { a } else { a2 }, sec(4), sec(4));
+        }
+        for i in 0..6 {
+            fl.lock().unwrap().remove(&format!("b1{i}"));
+            sh.done(b, sec(4), sec(4));
+        }
+        for i in 40..56 {
+            ask(&mut sh, &fl, &ib, &format!("a{i}"), a, K1);
+        }
+        assert_eq!(names(&mut sh, &fl, sec(63), 12).len(), 12, "A had 4 waiting + 16 new");
+        assert_eq!(take(&mut sh, &fl, sec(63)), None, "the mark (set at 4 s) still holds at 63 s");
+        for i in 28..40 {
+            let h = if i < 32 { format!("a{i}") } else { format!("a{}", i + 8) };
+            fl.lock().unwrap().remove(&h);
+            sh.done(a, sec(63), sec(63));
+        }
+        assert_eq!(names(&mut sh, &fl, sec(65), 8).len(), 8, "the mark is over and A's lookups were fast: every thread again");
+
+        // behind a local address (key None) only the connection is marked: 3 slow connections hold the 12 threads,
+        // a new connection behind the same address is not slow
+        let mut sh = DnsShare::new(16, sched(true));
+        let fl = InFlight::default();
+        for n in 0..3u32 {
+            for i in 0..6 {
+                ask(&mut sh, &fl, &ib, &format!("l{n}{i}"), (1, n, 1), None);
+            }
+        }
+        assert_eq!(names(&mut sh, &fl, t0, 12).len(), 12);
+        assert_eq!((take(&mut sh, &fl, sec(2)), sh.waiting), (None, 6), "all three are slow: 12 threads together");
+        ask(&mut sh, &fl, &ib, "n0", (1, 7, 1), None);
+        assert_eq!(take(&mut sh, &fl, sec(2)), Some(("n0".into(), (1, 7, 1))));
+        // slow connections of 4 addresses stop at 12 together, and a connection that is not slow gets a thread at once
+        let mut sh = DnsShare::new(16, sched(true));
+        let fl = InFlight::default();
+        for n in 0..4u32 {
+            for i in 0..6 {
+                ask(&mut sh, &fl, &ib, &format!("m{n}{i}"), (2, n, 1), Some((50 + n as u128) << 64));
+            }
+        }
+        assert_eq!(names(&mut sh, &fl, t0, 16).len(), 16, "nothing is slow in the first second");
+        for n in 0..4u32 {
+            for i in 0..4 {
+                fl.lock().unwrap().remove(&format!("m{n}{i}"));
+                sh.done((2, n, 1), t0, sec(4)); // all 16 come back slow: 4 marked addresses, 2 lookups wait for each
+            }
+        }
+        assert_eq!(names(&mut sh, &fl, sec(4), 8).len(), 8);
+        for n in 0..4u32 {
+            for i in 0..4 {
+                ask(&mut sh, &fl, &ib, &format!("q{n}{i}"), (2, n, 1), Some((50 + n as u128) << 64));
+            }
+        }
+        assert_eq!(names(&mut sh, &fl, sec(4), 4).len(), 4, "12 threads for the slow ones together");
+        assert!((0..4).all(|n| sh.conns[&(2, n, 1)].run.len() == 3), "3 each: the rule shares them");
+        assert_eq!((take(&mut sh, &fl, sec(4)), sh.waiting), (None, 12), "4 threads stay free");
+        ask(&mut sh, &fl, &ib, "b1", b, K2);
+        assert_eq!(take(&mut sh, &fl, sec(4)), Some(("b1".into(), b)));
+        // marks end and leave nothing behind
+        let mut sh = DnsShare::new(16, sched(true));
+        let fl = InFlight::default();
+        ask(&mut sh, &fl, &ib, "x", a, K1);
+        assert!(take(&mut sh, &fl, t0).is_some());
+        fl.lock().unwrap().remove("x");
+        sh.done(a, t0, sec(2));
+        assert!(sh.conns.is_empty() && sh.groups[&G1].slow && sh.groups[&G1].slow_until == Some(sec(62)), "kept by the mark");
+        assert_eq!(take(&mut sh, &fl, sec(61)), None);
+        assert!(sh.groups[&G1].slow);
+        assert_eq!(take(&mut sh, &fl, sec(62)), None);
+        assert!(empty(&sh));
+    }
+
+    /// 60.58 --dns-reserve with many slow addresses waiting (an attacker with an address per connection): they stand
+    /// in their own ordered set, so a pick for the reserve does not walk them, and a thread of theirs that comes back
+    /// takes their oldest.
+    #[test]
+    fn dns_reserve_many_slow_groups() {
+        let (ib, t0) = (Inbox::new(), std::time::Instant::now());
+        let sec = |n: u64| t0 + std::time::Duration::from_secs(n);
+        let fl = InFlight::default();
+        let mut sh = DnsShare::new(16, sched(true));
+        let who = |i: u32| ((0, i, 1), Some((i as u128 + 10) << 64));
+        // 2,000 addresses, one lookup each that took 2 s: all slow until 62 s
+        for i in 0..2000 {
+            let (c, k) = who(i);
+            ask(&mut sh, &fl, &ib, &format!("s{i}"), c, k);
+            assert!(take(&mut sh, &fl, t0).is_some());
+            fl.lock().unwrap().remove(&format!("s{i}"));
+            sh.done(c, t0, sec(2));
+        }
+        assert_eq!((sh.groups.len(), sh.marks.len(), sh.conns.len(), sh.started.len()), (2000, 2000, 0, 2000));
+        for i in 0..2000 {
+            let (c, k) = who(i);
+            ask(&mut sh, &fl, &ib, &format!("t{i}"), c, k);
+        }
+        assert_eq!(names(&mut sh, &fl, sec(2), 12), (0..12).map(|i| format!("t{i}")).collect::<Vec<_>>(), "the oldest 12");
+        assert!(sh.started.len() == 12, "the lookups of the first second are forgotten");
+        assert_eq!((take(&mut sh, &fl, sec(2)), sh.waiting), (None, 1988));
+        assert_eq!((sh.oldest[0].len(), sh.oldest[1].len()), (0, 1988), "the slow ones wait apart");
+        ask(&mut sh, &fl, &ib, "b0", (1, 1, 1), K2);
+        assert_eq!((sh.oldest[0].len(), sh.pick()), (1, Some((1, 1, 1))));
+        assert_eq!(take(&mut sh, &fl, sec(2)), Some(("b0".into(), (1, 1, 1))));
+        back(&mut sh, &fl, "b0", (1, 1, 1), sec(2));
+        fl.lock().unwrap().remove("t5");
+        sh.done(who(5).0, sec(2), sec(2));
+        assert_eq!(take(&mut sh, &fl, sec(2)).map(|t| t.0), Some("t12".into()), "a thread of the slow ones is back: their oldest");
+        // the marks end at 62 s: nothing is slow, and every thread is theirs again
+        assert_eq!(names(&mut sh, &fl, sec(62), 4).len(), 4);
+        assert_eq!((sh.oldest[0].len(), sh.oldest[1].len(), sh.marks.len()), (1983, 0, 0));
+    }
+
+    /// 60.58 --dns-reserve: when a free thread has to look again while slow lookups wait (no thread comes back, no
+    /// request arrives): at the end of the first slow_until, or when the oldest waiting lookup expires.
+    #[test]
+    fn dns_reserve_wake() {
+        let (ib, t0) = (Inbox::new(), std::time::Instant::now());
+        let ms = |n: u64| t0 + std::time::Duration::from_millis(n);
+        let fl = InFlight::default();
+        let a = (0, 1, 1);
+        let mut sh = DnsShare::new(2, sched(true)); // 2 threads: 1 for the slow ones
+        assert_eq!(sh.wake(t0), None, "nothing waits");
+        ask(&mut sh, &fl, &ib, "a0", a, K1);
+        assert!(take(&mut sh, &fl, t0).is_some() && sh.wake(t0).is_none());
+        fl.lock().unwrap().remove("a0");
+        sh.done(a, t0, ms(2000)); // slow until 62 s
+        assert_eq!(sh.wake(ms(2000)), None, "a slow group, but nothing waits");
+        ask(&mut sh, &fl, &ib, "a1", a, K1);
+        ask(&mut sh, &fl, &ib, "a2", a, K1);
+        assert_eq!(take(&mut sh, &fl, ms(61_500)).map(|t| t.0), Some("a1".into()));
+        assert_eq!((take(&mut sh, &fl, ms(61_500)), sh.waiting), (None, 1), "a2 is held: the second thread is the reserve");
+        assert_eq!(sh.wake(ms(61_500)), Some(ms(62_000)), "the end of slow_until comes first (the expiry: an hour)");
+        assert_eq!(take(&mut sh, &fl, ms(61_999)), None);
+        assert_eq!(take(&mut sh, &fl, ms(62_000)).map(|t| t.0), Some("a2".into()), "a1 has run for half a second: not slow");
+        assert_eq!(sh.wake(ms(62_000)), None);
+        // a lookup that runs for a second makes the group slow again, without a mark
+        ask(&mut sh, &fl, &ib, "a3", a, K1);
+        assert_eq!((take(&mut sh, &fl, ms(62_500)), sh.wake(ms(62_500))), (None, Some(ms(122_500))), "a1 has run 1 s: slow, 2 >= 1");
+        fl.lock().unwrap().remove("a1");
+        sh.done(a, ms(61_500), ms(62_600));
+        assert_eq!((take(&mut sh, &fl, ms(62_600)), sh.groups[&G1].slow_until), (None, Some(ms(122_600))), "a2 holds the one thread");
+        fl.lock().unwrap().remove("a2");
+        sh.done(a, ms(62_000), ms(62_700));
+        assert_eq!(take(&mut sh, &fl, ms(62_700)).map(|t| t.0), Some("a3".into()));
+        // slow_until ends while a lookup of the group has run for a second or more: the group stays slow
+        ask(&mut sh, &fl, &ib, "a4", a, K1);
+        assert_eq!((take(&mut sh, &fl, ms(64_000)), sh.wake(ms(64_000))), (None, Some(ms(122_600))));
+        assert_eq!((take(&mut sh, &fl, ms(122_600)), sh.waiting), (None, 1), "a3 has run for a minute");
+        assert_eq!((sh.groups[&G1].slow, sh.groups[&G1].slow_until, sh.marks.len()), (true, None, 0));
+        fl.lock().unwrap().remove("a3");
+        sh.done(a, ms(62_700), ms(122_700));
+        assert_eq!(take(&mut sh, &fl, ms(122_700)).map(|t| t.0), Some("a4".into()));
+        // no slow_until: the expiry of the oldest waiting lookup
+        let ten = std::time::Duration::from_secs(10);
+        let mut sh = DnsShare::new(2, DnsSched { expire: ten, ..sched(true) });
+        let fl = InFlight::default();
+        ask(&mut sh, &fl, &ib, "b0", a, K1);
+        assert!(take(&mut sh, &fl, t0).is_some());
+        ask(&mut sh, &fl, &ib, "b1", a, K1);
+        let asked = sh.conns[&a].q[0].1.at;
+        assert_eq!(
+            (take(&mut sh, &fl, ms(1000)), sh.wake(ms(1000))),
+            (None, Some(asked + ten)),
+            "b0 has run 1 s: b1 is held until it expires"
+        );
+        // no slow_until and a late expiry: not later than DNS_RESERVE_HOLD from now. A thread that comes back while this
+        // one sleeps sets a slow_until that this one did not see; it ends after that time at the earliest.
+        let mut sh = DnsShare::new(2, sched(true));
+        let fl = InFlight::default();
+        ask(&mut sh, &fl, &ib, "c0", a, K1);
+        assert!(take(&mut sh, &fl, t0).is_some());
+        ask(&mut sh, &fl, &ib, "c1", a, K1);
+        assert_eq!((take(&mut sh, &fl, ms(1000)), sh.wake(ms(1000))), (None, Some(ms(61_000))), "the expiry is an hour away");
+        fl.lock().unwrap().remove("c0");
+        sh.done(a, t0, ms(1500)); // the other thread: c0 is back, slow until 61.5 s; it takes c1
+        assert_eq!(take(&mut sh, &fl, ms(1500)).map(|t| t.0), Some("c1".into()));
+        ask(&mut sh, &fl, &ib, "c2", a, K1);
+        fl.lock().unwrap().remove("c1");
+        sh.done(a, ms(1500), ms(1600)); // c1 was fast; c2 waits, held by slow_until alone
+        assert_eq!(take(&mut sh, &fl, ms(1600)).map(|t| t.0), Some("c2".into()), "1 thread is theirs");
+    }
+
+    /// 60.58 --dns-reserve in the pool end to end, 4 threads (3 for slow connections), against a server the test
+    /// answers by hand. A's four lookups run for a second: A is slow. A thread that comes back goes to B, and then
+    /// stays free though A's fifth lookup waits; B's next lookup starts at once. A's fifth expires on time, with no
+    /// thread coming back and no request arriving (the free thread wakes for it).
+    #[test]
+    fn dns_pool_reserve_end_to_end() {
+        let (mut srv, own) = HandDns::new();
+        let st = test_stats();
+        let sched = DnsSched { stats: st.clone(), expire: std::time::Duration::from_secs(2), share: true, reserve: true };
+        let tx = start_dns_pool(4, Some(own), true, true, sched);
+        let (a, b) = (Inbox::new(), Inbox::new());
+        let send = |host: &str, t: u64, ib: &Arc<Inbox>, conn: DnsConn, key: KeyId| {
+            ib.dns_live.lock().unwrap().insert(t);
+            tx.send(DnsReq { host: host.into(), token: t, inbox: ib.clone(), at: std::time::Instant::now(), conn, key }).unwrap();
+        };
+        let (ca, cb) = ((0, 1, 1), (1, 1, 1));
+        let t0 = std::time::Instant::now();
+        for t in 1..=5 {
+            send(&format!("a{t}.test"), t, &a, ca, K1);
+        }
+        let mut first: Vec<String> = (0..4).map(|_| srv.next(3000).unwrap()).collect();
+        first.sort();
+        assert_eq!(first, ["a1", "a2", "a3", "a4"], "nothing is slow in the first second: every thread");
+        std::thread::sleep(std::time::Duration::from_millis(1150).saturating_sub(t0.elapsed()));
+        send("b1.test", 11, &b, cb, K2);
+        assert_eq!(srv.next(100), None, "every thread is busy");
+        srv.answer("a1");
+        assert_eq!(srv.next(3000).as_deref(), Some("b1"), "B is not slow");
+        srv.answer("b1");
+        assert_eq!(finals(&b, 1), [(11, 1)]);
+        assert_eq!(srv.next(300), None, "a thread is free and a5 waits: A is slow and holds its 3 threads");
+        send("b2.test", 12, &b, cb, K2);
+        assert_eq!(srv.next(3000).as_deref(), Some("b2"), "the reserve");
+        srv.answer("b2");
+        // a5 was asked at 0 s and expires at 2 s; A's other lookups run until 6 s
+        assert_eq!(finals(&a, 2), [(1, 1), (5, 0)]);
+        let took = t0.elapsed();
+        assert!(took >= std::time::Duration::from_millis(1900) && took < std::time::Duration::from_millis(3500), "{took:?}");
+        assert_eq!((st[0].dns_expired.get(), st[1].dns_expired.get()), (1, 0));
+        // These lookups were asked at 0 s and the resolver's first attempt ends at 2 s (timeout:2), which is now: an
+        // answer can cross the retry and be lost. So answer until all are in (the latest query of each name).
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while a.q.lock().unwrap().iter().filter(|r| !r.more).count() < 5 && std::time::Instant::now() < end {
+            for n in ["a2", "a3", "a4"] {
+                srv.answer(n);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert_eq!((finals(&a, 5), finals(&b, 2)), (vec![(1, 1), (2, 1), (3, 1), (4, 1), (5, 0)], vec![(11, 1), (12, 1)]));
+    }
+
+    /// 60.58 the rule on the queue alone, 16 threads: the free thread goes to the address that runs the fewest
+    /// lookups, inside it to the connection that runs the fewest, the oldest among equals. An address alone takes
+    /// every thread; a newcomer gets the next free thread, however many addresses hold the pool; two addresses with a
+    /// backlog end at half the pool each; a local address is no group (its connections count one by one).
+    #[test]
+    fn dns_share_rule() {
+        let (ib, now) = (Inbox::new(), std::time::Instant::now());
+        let fair = sched(false);
+        let fl = InFlight::default();
+        let mut sh = DnsShare::new(16, fair.clone());
+        let (a, b) = ((0, 1, 1), (0, 2, 1));
+        for i in 0..40 {
+            ask(&mut sh, &fl, &ib, &format!("a{i}"), a, K1);
+        }
+        assert_eq!(names(&mut sh, &fl, now, 16), (0..16).map(|i| format!("a{i}")).collect::<Vec<_>>(), "alone: every thread");
+        for i in 0..12 {
+            ask(&mut sh, &fl, &ib, &format!("b{i}"), b, K2);
+        }
+        // A runs 16, B 0: the next 8 free threads are B's (15:1, 14:2, .. 8:8); then each thread that A gives back is A's
+        let mut got = Vec::new();
+        for i in 0..11 {
+            back(&mut sh, &fl, &format!("a{i}"), a, now);
+            got.push(take(&mut sh, &fl, now).unwrap().0);
+        }
+        assert_eq!(got, ["b0", "b1", "b2", "b3", "b4", "b5", "b6", "b7", "a16", "a17", "a18"]);
+        assert_eq!((sh.groups[&G1].run.len(), sh.groups[&G2].run.len()), (8, 8));
+        back(&mut sh, &fl, "b0", b, now);
+        assert_eq!(take(&mut sh, &fl, now), Some(("b8".into(), b)), "and each one B gives back is B's");
+
+        // 4 addresses hold the pool (4 threads each) and have a backlog; a newcomer gets the next free thread
+        let mut sh = DnsShare::new(16, fair.clone());
+        let fl = InFlight::default();
+        let addr = |n: u32| Some((50 + n as u128) << 64);
+        for i in 0..8 {
+            for n in 0..4u32 {
+                ask(&mut sh, &fl, &ib, &format!("m{n}x{i}"), (2, n, 1), addr(n));
+            }
+        }
+        assert_eq!(names(&mut sh, &fl, now, 16).len(), 16);
+        assert!((0..4).all(|n| sh.groups[&Group::Addr(addr(n).unwrap())].run.len() == 4), "4 each");
+        ask(&mut sh, &fl, &ib, "b0", b, K2);
+        back(&mut sh, &fl, "m0x0", (2, 0, 1), now);
+        assert_eq!(take(&mut sh, &fl, now), Some(("b0".into(), b)));
+
+        // inside an address the connection that runs the fewest; between addresses the address that runs the fewest
+        let mut sh = DnsShare::new(16, fair.clone());
+        let fl = InFlight::default();
+        let (a1, a2, c) = ((0, 5, 1), (0, 6, 1), (1, 1, 1));
+        for i in 0..3 {
+            ask(&mut sh, &fl, &ib, &format!("x{i}"), a1, K1);
+        }
+        for i in 0..5 {
+            ask(&mut sh, &fl, &ib, &format!("c{i}"), c, K2);
+        }
+        assert_eq!(names(&mut sh, &fl, now, 8).len(), 8); // K1 runs 3 (all a1), K2 runs 5
+        ask(&mut sh, &fl, &ib, "c5", c, K2);
+        ask(&mut sh, &fl, &ib, "x3", a1, K1);
+        ask(&mut sh, &fl, &ib, "y0", a2, K1);
+        assert_eq!(names(&mut sh, &fl, now, 3), ["y0", "x3", "c5"], "K1 (3) before K2 (5); in K1 a2 (0) before a1 (3)");
+
+        // a local address is no group: its connections count one by one
+        let mut sh = DnsShare::new(16, fair.clone());
+        let fl = InFlight::default();
+        let (p1, p2) = ((3, 1, 1), (3, 2, 1));
+        for i in 0..4 {
+            ask(&mut sh, &fl, &ib, &format!("p{i}"), p1, None);
+            ask(&mut sh, &fl, &ib, &format!("k{i}"), a, K1);
+        }
+        assert_eq!(names(&mut sh, &fl, now, 8).len(), 8);
+        ask(&mut sh, &fl, &ib, "k4", a, K1);
+        ask(&mut sh, &fl, &ib, "p4", p1, None);
+        ask(&mut sh, &fl, &ib, "q0", p2, None);
+        back(&mut sh, &fl, "p0", p1, now); // p1 runs 3, K1 runs 4, p2 runs 0
+        assert_eq!(names(&mut sh, &fl, now, 3), ["q0", "p4", "k4"]);
+        assert!(sh.oldest.iter().all(|o| o.is_empty()) && sh.waiting == 0);
+        assert!(sh.started.is_empty() && sh.marks.is_empty() && sh.oldest[1].is_empty(), "no slow state without --dns-reserve");
+    }
+
+    /// A DNS server a test drives by hand (A queries only: the resolver is IPv4-only): `next` is the next name asked
+    /// that was not asked before, `answer` replies 192.0.2.1 to the latest query for a name.
+    struct HandDns {
+        sock: std::net::UdpSocket,
+        asked: Vec<(String, Vec<u8>, SocketAddr)>,
+    }
+    impl HandDns {
+        fn new() -> (HandDns, Arc<crate::dns::Resolver>) {
+            let sock = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+            let dir = std::env::temp_dir().join(format!("fw-pool-hand-{}-{}", std::process::id(), sock.local_addr().unwrap().port()));
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("r"), "options timeout:2 attempts:3\n").unwrap(); // 6 s for a lookup: no test waits that long
+            let own = crate::dns::Resolver::with_paths(vec![sock.local_addr().unwrap()], dir.join("r"), dir.join("h")).ipv4_only(true);
+            (HandDns { sock, asked: Vec::new() }, Arc::new(own))
+        }
+        fn next(&mut self, wait_ms: u64) -> Option<String> {
+            let end = std::time::Instant::now() + std::time::Duration::from_millis(wait_ms);
+            let mut b = [0u8; 1500];
+            loop {
+                let left = end.saturating_duration_since(std::time::Instant::now());
+                if left.is_zero() {
+                    return None;
+                }
+                self.sock.set_read_timeout(Some(left)).unwrap();
+                let Ok((n, from)) = self.sock.recv_from(&mut b) else { return None };
+                let name = String::from_utf8_lossy(&b[13..13 + b[12] as usize]).to_string();
+                let again = self.asked.iter_mut().find(|a| a.0 == name);
+                let new = again.is_none();
+                match again {
+                    Some(a) => (a.1, a.2) = (b[..n].to_vec(), from), // a retry: answer that one
+                    None => self.asked.push((name.clone(), b[..n].to_vec(), from)),
+                }
+                if new {
+                    return Some(name);
+                }
+            }
+        }
+        fn answer(&mut self, name: &str) {
+            while self.next(1).is_some() {} // (retries that are already here)
+            let (_, q, from) = self.asked.iter().find(|a| a.0 == name).expect("asked");
+            let e = 12 + q[12..].iter().position(|&x| x == 0).unwrap();
+            let mut r = q[..2].to_vec();
+            r.extend_from_slice(&[0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0]);
+            r.extend_from_slice(&q[12..e + 5]);
+            r.extend_from_slice(&[0xC0, 12, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 192, 0, 2, 1]);
+            self.sock.send_to(&r, from).unwrap();
+        }
+    }
+    /// The final answers in `ib` once it holds `n` (or after 5 s): (token, addresses) sorted
+    fn finals(ib: &Arc<Inbox>, n: usize) -> Vec<(u64, usize)> {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let get = || ib.q.lock().unwrap().iter().filter(|r| !r.more).map(|r| (r.token, r.addrs.len())).collect::<Vec<_>>();
+        while get().len() < n && std::time::Instant::now() < end {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let mut v = get();
+        v.sort();
+        v
+    }
+
+    /// 60.58 the pool end to end, 2 threads, against a server the test answers by hand. A's two lookups hold both
+    /// threads, A's third and then B's first wait. Off: the freed thread takes A's third (arrival order, as before).
+    /// --dns-share: it takes B's (A still runs one, B nothing), and A's third after that. Every request gets exactly one
+    /// final answer, and the wait is counted for its worker.
+    #[test]
+    fn dns_pool_share_end_to_end() {
+        for share in [false, true] {
+            let (mut srv, own) = HandDns::new();
+            let mode = pool_mode(share);
+            let st = mode.stats.clone();
+            let tx = start_dns_pool(2, Some(own), true, true, mode);
+            let (a, b) = (Inbox::new(), Inbox::new());
+            let send = |host: &str, t: u64, ib: &Arc<Inbox>, conn: DnsConn, key: KeyId| {
+                ib.dns_live.lock().unwrap().insert(t);
+                tx.send(DnsReq { host: host.into(), token: t, inbox: ib.clone(), at: std::time::Instant::now(), conn, key }).unwrap();
+            };
+            let (ca, cb) = ((0, 1, 1), (1, 1, 1));
+            send("a1.test", 1, &a, ca, K1);
+            send("a2.test", 2, &a, ca, K1);
+            let mut first = [srv.next(3000).unwrap(), srv.next(3000).unwrap()];
+            first.sort();
+            assert_eq!(first, ["a1", "a2"]);
+            send("a3.test", 3, &a, ca, K1);
+            send("b1.test", 4, &b, cb, K2);
+            assert_eq!(srv.next(150), None, "both threads are busy");
+            srv.answer("a1");
+            let (second, third) = if share { ("b1", "a3") } else { ("a3", "b1") };
+            assert_eq!(srv.next(3000).as_deref(), Some(second), "share {share}");
+            srv.answer(second);
+            assert_eq!(srv.next(3000).as_deref(), Some(third), "share {share}");
+            srv.answer(third);
+            srv.answer("a2");
+            assert_eq!((finals(&a, 3), finals(&b, 1)), (vec![(1, 1), (2, 1), (3, 1)], vec![(4, 1)]), "share {share}");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            assert_eq!((a.q.lock().unwrap().len(), b.q.lock().unwrap().len()), (3, 1), "one answer each, nothing after it");
+            // (A is worker 0, B worker 1) B's one lookup waited while A's ran; A's third waited at least as long
+            assert!(st[1].dns_wait_us.get() > 0 && st[0].dns_wait_us.get() >= st[1].dns_wait_us.get() / 2);
+            assert_eq!(st[0].dns_expired.get() + st[1].dns_expired.get(), 0);
+        }
+    }
+
+    /// 60.58 a request that waited for a thread longer than the expiry (the connect timeout) is answered as failed
+    /// without a query, in arrival order and with --dns-share; the lookup that runs is not touched.
+    #[test]
+    fn dns_pool_expires_queued_requests() {
+        for share in [false, true] {
+            let (mut srv, own) = HandDns::new();
+            let st = test_stats();
+            let sched = DnsSched { stats: st.clone(), expire: std::time::Duration::from_millis(300), share, reserve: false };
+            let tx = start_dns_pool(1, Some(own), true, true, sched);
+            let (a, b) = (Inbox::new(), Inbox::new());
+            let send = |host: &str, t: u64, ib: &Arc<Inbox>, conn: DnsConn, key: KeyId| {
+                ib.dns_live.lock().unwrap().insert(t);
+                tx.send(DnsReq { host: host.into(), token: t, inbox: ib.clone(), at: std::time::Instant::now(), conn, key }).unwrap();
+            };
+            send("e1.test", 1, &a, (0, 1, 1), K1);
+            assert_eq!(srv.next(3000).as_deref(), Some("e1"));
+            send("e2.test", 2, &a, (0, 1, 1), K1);
+            send("e3.test", 3, &b, (1, 1, 1), K2);
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            srv.answer("e1");
+            assert_eq!((finals(&a, 2), finals(&b, 1)), (vec![(1, 1), (2, 0)], vec![(3, 0)]), "share {share}");
+            assert!(a.q.lock().unwrap().iter().chain(b.q.lock().unwrap().iter()).all(|r| !r.nx), "a failure, not a cacheable NXDOMAIN");
+            assert_eq!(srv.next(150), None, "no query for an expired request");
+            assert_eq!((st[0].dns_expired.get(), st[1].dns_expired.get()), (1, 1), "share {share}");
+            assert!(st[1].dns_wait_ms_max.get() >= 300);
+            // the pool still works: a new request runs
+            send("e4.test", 4, &b, (1, 1, 1), K2);
+            assert_eq!(srv.next(3000).as_deref(), Some("e4"));
+            srv.answer("e4");
+            assert_eq!(finals(&b, 2), [(3, 0), (4, 1)]);
+        }
+    }
+
+    /// 60.58 many connections and addresses, few names, 4 threads, a server that answers at once: every request gets
+    /// exactly one final answer with --dns-share (joins at admission and at the pick, picks from every tier).
+    #[test]
+    fn dns_pool_share_answers_every_request_once() {
+        let sock = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let addr = sock.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let mut b = [0u8; 1500];
+            while let Ok((n, from)) = sock.recv_from(&mut b) {
+                let q = &b[..n];
+                let e = 12 + q[12..].iter().position(|&x| x == 0).unwrap();
+                let mut r = q[..2].to_vec();
+                r.extend_from_slice(&[0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0]);
+                r.extend_from_slice(&q[12..e + 5]);
+                r.extend_from_slice(&[0xC0, 12, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 192, 0, 2, 1]);
+                let _ = sock.send_to(&r, from);
+            }
+        });
+        let dir = std::env::temp_dir().join(format!("fw-pool-once-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("r"), "options timeout:2 attempts:3\n").unwrap();
+        let own = Arc::new(crate::dns::Resolver::with_paths(vec![addr], dir.join("r"), dir.join("h")).ipv4_only(true));
+        let tx = start_dns_pool(4, Some(own), true, true, pool_mode(true));
+        let boxes: Vec<Arc<Inbox>> = (0..3).map(|_| Inbox::new()).collect();
+        const N: u64 = 3000;
+        for t in 0..N {
+            let ib = &boxes[(t % 3) as usize];
+            ib.dns_live.lock().unwrap().insert(t);
+            // 12 connections on 5 addresses (one of them local: no key), 40 names
+            let c = (t * 7 % 12) as u32;
+            let key = (!c.is_multiple_of(5)).then_some((c as u128 % 5) << 64);
+            let host = format!("n{}.test", t * 13 % 40);
+            tx.send(DnsReq { host, token: t, inbox: ib.clone(), at: std::time::Instant::now(), conn: ((t % 3) as u32, c, 1), key })
+                .unwrap();
+        }
+        let mut got: Vec<(u64, usize)> = boxes.iter().flat_map(|ib| finals(ib, N as usize / 3)).collect();
+        got.sort();
+        assert_eq!(got, (0..N).map(|t| (t, 1)).collect::<Vec<_>>());
+    }
+
+    /// 60.58 the cost of one pick at the ceiling of the waiting list (80 workers x DNS_INFLIGHT_MAX = 81,920), in the
+    /// three shapes where the lookup to take is behind the most others. Run on a timing box:
+    /// `cargo test --release dns_share_pick_cost -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn dns_share_pick_cost() {
+        const N: u32 = 81_920;
+        let (ib, now) = (Inbox::new(), std::time::Instant::now());
+        type Who = fn(u32) -> (DnsConn, KeyId);
+        let shapes: [(&str, Who); 3] = [
+            ("one connection", |_| ((0, 1, 1), K1)),
+            ("one address, a connection each", |i| ((0, i, 1), K1)),
+            ("an address each", |i| ((0, i, 1), Some((i as u128 + 10) << 64))),
+        ];
+        for (what, who) in shapes {
+            let fl = InFlight::default();
+            let mut sh = DnsShare::new(16, sched(false));
+            let t = std::time::Instant::now();
+            for i in 0..N {
+                let (conn, key) = who(i);
+                ask(&mut sh, &fl, &ib, &format!("n{i}"), conn, key);
+            }
+            let admit = t.elapsed().as_nanos() / N as u128;
+            let run = names(&mut sh, &fl, now, 15); // the attacker's lookups run on 15 threads
+            let mut picks = Vec::new();
+            for r in 0..2000u32 {
+                // a legit connection of another address asks; the free thread must find it behind everything else
+                let legit = (9, r, 1);
+                ask(&mut sh, &fl, &ib, &format!("legit{r}"), legit, K2);
+                let t = std::time::Instant::now();
+                let got = sh.pick();
+                picks.push(t.elapsed().as_nanos());
+                if what != "an address each" {
+                    assert_eq!(got, Some(legit), "{what}");
+                }
+                let (h, c) = take(&mut sh, &fl, now).unwrap();
+                back(&mut sh, &fl, &h, c, now);
+                if c != legit {
+                    // (an address each: the oldest waiting address ran; put a lookup back so the list stays full)
+                    let (conn, key) = who(N + r);
+                    ask(&mut sh, &fl, &ib, &format!("m{r}"), conn, key);
+                    let l = take(&mut sh, &fl, now).unwrap();
+                    back(&mut sh, &fl, &l.0, l.1, now);
+                }
+            }
+            picks.sort();
+            println!(
+                "dns_share_pick_cost {what}: {} waiting, {} running; admit {admit} ns each; pick median {} ns, p99 {} ns, max {} ns",
+                sh.waiting,
+                run.len(),
+                picks[picks.len() / 2],
+                picks[picks.len() * 99 / 100],
+                picks[picks.len() - 1]
+            );
+        }
+        // --dns-reserve: an address each, every one of them slow and waiting, their 12 threads in use
+        let (fl, sec) = (InFlight::default(), |n: u64| now + std::time::Duration::from_secs(n));
+        let mut sh = DnsShare::new(16, sched(true));
+        let who = |i: u32| ((0, i, 1), Some((i as u128 + 10) << 64));
+        for i in 0..N {
+            let (conn, key) = who(i);
+            ask(&mut sh, &fl, &ib, &format!("s{i}"), conn, key);
+            let l = take(&mut sh, &fl, now).unwrap();
+            fl.lock().unwrap().remove(&l.0);
+            sh.done(l.1, now, sec(2));
+        }
+        for i in 0..N {
+            let (conn, key) = who(i);
+            ask(&mut sh, &fl, &ib, &format!("n{i}"), conn, key);
+        }
+        let run = names(&mut sh, &fl, sec(2), 12);
+        assert_eq!(take(&mut sh, &fl, sec(2)), None);
+        let mut picks = Vec::new();
+        for r in 0..2000u32 {
+            let legit = (9, r, 1);
+            ask(&mut sh, &fl, &ib, &format!("legit{r}"), legit, K2);
+            let t = std::time::Instant::now();
+            let got = sh.pick();
+            picks.push(t.elapsed().as_nanos());
+            assert_eq!(got, Some(legit));
+            let (h, c) = take(&mut sh, &fl, sec(2)).unwrap();
+            back(&mut sh, &fl, &h, c, sec(2));
+        }
+        picks.sort();
+        println!(
+            "dns_share_pick_cost reserve, an address each, all slow: {} waiting, {} running; pick median {} ns, p99 {} ns, max {} ns",
+            sh.waiting,
+            run.len(),
+            picks[picks.len() / 2],
+            picks[picks.len() * 99 / 100],
+            picks[picks.len() - 1]
+        );
+    }
+
+    /// 60.58 the addresses that are no group for --dns-share (a proxy or a bridge in front of many users)
+    #[test]
+    fn shared_addr_classes() {
+        for s in [
+            "127.0.0.1",
+            "10.1.2.3",
+            "172.17.0.1",
+            "192.168.1.1",
+            "100.64.0.1",
+            "169.254.1.1",
+            "::1",
+            "fd00::1",
+            "fe80::1",
+            "100::",
+            "::ffff:10.0.0.1",
+        ] {
+            assert!(shared_addr(s.parse().unwrap()), "{s}");
+        }
+        for s in ["203.0.113.9", "8.8.8.8", "2001:db8::1", "2a01:4f8::5", "::ffff:8.8.8.8"] {
+            assert!(!shared_addr(s.parse().unwrap()), "{s}");
+        }
+        // 60.57 C local_peer (--conn-share) is the same rule; the two came from two branches and agree on every class
+        // (one function is a follow-up of the v1.3.0 merge)
+        let more = [
+            "2001::1",
+            "64:ff9b::808:808",
+            "2002:808:808::1",
+            "::8.8.8.8",
+            "192.0.2.1",
+            "198.18.0.1",
+            "240.0.0.1",
+            "224.0.0.1",
+            "0.0.0.0",
+            "::",
+        ];
+        let all = ["127.0.0.1", "10.1.2.3", "100.64.0.1", "169.254.1.1", "::1", "fd00::1", "fe80::1", "100::", "::ffff:10.0.0.1"];
+        for s in all.iter().chain(&more).chain(&["203.0.113.9", "8.8.8.8", "2001:db8::1", "::ffff:8.8.8.8"]) {
+            let ip: IpAddr = s.parse().unwrap();
+            assert_eq!(local_peer(ip), shared_addr(ip), "{s}");
+        }
     }
 }

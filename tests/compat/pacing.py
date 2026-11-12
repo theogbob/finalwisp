@@ -40,7 +40,7 @@ threading.Thread(target=lambda: [threading.Thread(target=serve, args=(ls.accept(
 D = tempfile.mkdtemp(prefix="fw-pacing-")
 def start(*args):
     log = open(os.path.join(D, "srv.log"), "w+")
-    p = subprocess.Popen([BIN, str(BASE), "--allow-loopback", *args], stdout=log, stderr=subprocess.STDOUT)
+    p = subprocess.Popen([BIN, str(BASE), "--allow-loopback", "--log-level", "debug", *args], stdout=log, stderr=subprocess.STDOUT)
     p.logf = log
     for _ in range(100):
         try:
@@ -164,7 +164,7 @@ for bad in ["16383", "4G", "1.5M", "x"]:
 cf = os.path.join(D, "fw.conf")
 open(cf, "w").write("allow-loopback\ndownload-rate 2M\n")
 os.chmod(cf, 0o600)
-p = subprocess.Popen([BIN, str(BASE), "--config", cf], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+p = subprocess.Popen([BIN, str(BASE), "--log-level", "debug", "--config", cf], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 time.sleep(1.0); stop(p)
 out = p.stdout.read()
 ok("download/conn 2097152 B/s" in out, "--config download-rate 2M")

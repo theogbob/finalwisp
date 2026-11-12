@@ -360,39 +360,56 @@ impl Worker {
         self.ready.push(tok(K_TARGET, ti, tg));
     }
 
+    /// 20.08 client `ci`'s splice pipe, opened at its first spliced read. false = no pipe for now (copy path; tried
+    /// again after PIPE_RETRY). 60.57 A2: out of line (once per client, so read_target keeps its code), and the pipe's
+    /// two fds are counted; none left under the fd limit is the same as a failed pipe2.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn pipe_open(&mut self, ci: u32) -> bool {
+        if Instant::now() < self.pipe_retry_at {
+            return false;
+        }
+        let mut p = [-1; 2];
+        let counted = self.fd_take(2);
+        if !counted || unsafe { libc::pipe2(p.as_mut_ptr(), libc::O_NONBLOCK | libc::O_CLOEXEC) } < 0 {
+            if counted {
+                self.fd_put(2);
+            }
+            // 60.05 H6: out of fds/pipes is temporary: copy path for a while (as below), not forever
+            self.pipe_retry_at = Instant::now() + PIPE_RETRY;
+            return false;
+        }
+        // 30.09: over the per-user pipe quota the kernel refuses the size (EPERM) and the pipe
+        // holds only 2 pages: not worth splicing through, so use the copy path for a while. A
+        // refusal from fs.pipe-max-size < 256 KiB leaves the default 64 KiB pipe: keep it and
+        // splice as before 30.09 (review r1).
+        if unsafe { libc::fcntl(p[1], libc::F_SETPIPE_SZ, SPLICE_PIPE as libc::c_int) } < 0
+            && unsafe { libc::fcntl(p[1], libc::F_GETPIPE_SZ) } < MIN_SPLICE_PIPE as libc::c_int
+        {
+            unsafe {
+                libc::close(p[0]);
+                libc::close(p[1]);
+            }
+            self.fd_put(2);
+            self.pipe_retry_at = Instant::now() + PIPE_RETRY;
+            return false;
+        }
+        self.clients.at(ci).pipe = p;
+        if self.fd_mask & crate::fdgate::MARK_SHARE != 0 {
+            // 60.57 C the pipe's two fds in the connection's count
+            Self::sfd_apply(&mut self.sfds, &self.peers_of, &self.cfg, self.idx, ci, 2);
+        }
+        true
+    }
+
     /// 20.08 splice download: target socket -> pipe -> client socket, payload never enters user
     /// space. Only used when nothing else is queued for the client, so stream order is trivial.
     /// 60.46: moves at most `len` bytes (SPLICE_PIPE, or with --adaptive-splice SPLICE_SLICE for a backed-up client with many
     /// streams: read_target).
     fn splice_target(&mut self, ti: u32, ci: u32, fd: RawFd, sid: u32, raw: bool, len: usize) -> SpliceRes {
-        if self.clients.at(ci).pipe[0] < 0 {
-            if Instant::now() < self.pipe_retry_at {
-                self.targets.at(ti).bulk = false;
-                return SpliceRes::Again;
-            }
-            let mut p = [-1; 2];
-            if unsafe { libc::pipe2(p.as_mut_ptr(), libc::O_NONBLOCK | libc::O_CLOEXEC) } < 0 {
-                // 60.05 H6: out of fds/pipes is temporary: copy path for a while (as below), not forever
-                self.pipe_retry_at = Instant::now() + PIPE_RETRY;
-                self.targets.at(ti).bulk = false;
-                return SpliceRes::Again;
-            }
-            // 30.09: over the per-user pipe quota the kernel refuses the size (EPERM) and the pipe
-            // holds only 2 pages: not worth splicing through, so use the copy path for a while. A
-            // refusal from fs.pipe-max-size < 256 KiB leaves the default 64 KiB pipe: keep it and
-            // splice as before 30.09 (review r1).
-            if unsafe { libc::fcntl(p[1], libc::F_SETPIPE_SZ, SPLICE_PIPE as libc::c_int) } < 0
-                && unsafe { libc::fcntl(p[1], libc::F_GETPIPE_SZ) } < MIN_SPLICE_PIPE as libc::c_int
-            {
-                unsafe {
-                    libc::close(p[0]);
-                    libc::close(p[1]);
-                }
-                self.pipe_retry_at = Instant::now() + PIPE_RETRY;
-                self.targets.at(ti).bulk = false;
-                return SpliceRes::Again;
-            }
-            self.clients.at(ci).pipe = p;
+        if self.clients.at(ci).pipe[0] < 0 && !self.pipe_open(ci) {
+            self.targets.at(ti).bulk = false;
+            return SpliceRes::Again;
         }
         let c = self.clients.at(ci);
         let n = unsafe {
@@ -550,6 +567,10 @@ impl Worker {
         }
         for &fd in &t.conn {
             unsafe { libc::close(fd) }; // 20.14 attempts still in flight
+        }
+        let closed = (t.fd >= 0) as u32 + t.conn.len() as u32; // 60.57 A2
+        if closed > 0 {
+            self.fd_put_c(t.client, t.cgen, closed); // (C: noted for the connection before the allowance can go back)
         }
         let Some(c) = self.clients.get(t.client, t.cgen) else { return };
         if t.blocked {

@@ -158,7 +158,7 @@ def run(v, binp, extra, test, cs, rep, holder):
     rt = spawn([*FWA, a.wbench, "target", "--port", str(rport), "--mode", "echo", "--bind", CLI], stderr=subprocess.DEVNULL)
     unit = f"fwbench-{os.getpid()}-{rep}-{v}"
     srv = spawn(["systemd-run", "--quiet", "--scope", "--unit", unit, "-p", "MemoryAccounting=yes", binp,
-                            "--port", str(a.port), "--host", SRV, "--allow-private", *extra],
+                            "--port", str(a.port), "--host", SRV, "--allow-private", "--log-level", "debug", *extra],  # (60.60: "tcpmem adapt on" is in the debug detail line)
                            stderr=subprocess.PIPE, text=True)
     log, t0 = [], time.time()
     threading.Thread(target=lambda: [log.append((round(time.time() - t0, 3), l.rstrip())) for l in srv.stderr], daemon=True).start()

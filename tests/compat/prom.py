@@ -95,7 +95,7 @@ def wisp_upgrade(port=BASE):
 
 # 1. the page
 p, log = start(["--port", str(BASE), "--metrics-listen", str(MP), "--threads", "2", "--motd", "promsecretmotd"])
-ok(wait_text(log, "metrics on http://127.0.0.1:%d/metrics" % MP), "startup line names the endpoint")
+ok(wait_text(log, "  metrics       http://127.0.0.1:%d/metrics" % MP), "the start block names the endpoint")
 for _ in range(3):
     wisp_upgrade()
 h, b = scrape()

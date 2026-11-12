@@ -37,7 +37,7 @@ serve(V6ONLY, pump, "::1", socket.AF_INET6)  # retry case: only ::1 listens, so 
 D = tempfile.mkdtemp(prefix="fw-real-")
 def start(*args):
     log = open(os.path.join(D, f"srv{time.monotonic_ns()}.log"), "w+")
-    p = subprocess.Popen([BIN, str(P), "--host", "127.0.0.1", "--metrics-interval", "1", "--allow-loopback", *args], stdout=log, stderr=subprocess.STDOUT)
+    p = subprocess.Popen([BIN, str(P), "--host", "127.0.0.1", "--log-level", "debug", "--metrics-interval", "1", "--allow-loopback", *args], stdout=log, stderr=subprocess.STDOUT)
     p.logf = log
     for _ in range(100):
         if "capabilities:" in open(log.name).read() or p.poll() is not None: break

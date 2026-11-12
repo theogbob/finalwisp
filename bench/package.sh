@@ -13,6 +13,14 @@ case "$ver" in
 esac
 here=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
 root=$(git -C "$here" rev-parse --show-toplevel)
+# 60.60 a release tag vX.Y.Z must be the version the binary reports (server/Cargo.toml, its one source). Other names
+# (the internal base-* tags, g<hash> for a manual run) are not versions and are not checked.
+case "$ver" in
+    v[0-9]*)
+        cargo_ver=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' "$root/server/Cargo.toml" | head -n1)
+        [ "$ver" = "v$cargo_ver" ] || { echo "package.sh: tag $ver, but server/Cargo.toml says $cargo_ver: set the version there, commit, tag again" >&2; exit 1; }
+        ;;
+esac
 outdir=$(readlink -m "${2:-$root/pkg}")
 rel="$root/server/target/x86_64-unknown-linux-gnu/release"
 for f in finalwisp BUILDINFO; do

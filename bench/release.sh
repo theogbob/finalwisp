@@ -67,9 +67,18 @@ if ! file -b "$bin" | grep -q 'static'; then
 fi
 
 hash=$(git rev-parse HEAD)
+# 60.60 the release version: its one source is server/Cargo.toml (the binary reads the same line at compile time, so
+# `finalwisp --version` says it and the build stays reproducible: the version is part of the source)
+version=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' "$root/server/Cargo.toml" | head -n1)
+[ -n "$version" ] || { echo "release.sh: no version in server/Cargo.toml" >&2; exit 1; }
+shown=$("$bin" --version)
+if [ "$shown" != "finalwisp $version" ]; then
+    echo "release.sh: the binary says '$shown', server/Cargo.toml says $version" >&2
+    exit 1
+fi
 dirty=no
-# dirty = any change in server/ (the build input), tracked or untracked (target/ is ignored)
-status=$(git status --porcelain -- .)
+# dirty = any change in server/ or in the preset file it embeds (the build inputs), tracked or untracked (target/ is ignored)
+status=$(git status --porcelain -- . ../contrib/public.conf)
 if [ -n "$status" ]; then
     dirty=yes
 fi
@@ -77,6 +86,7 @@ md5=$(md5sum "$bin" | awk '{print $1}')
 rustc_v=$(rustc -V)
 now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 {
+    echo "version: $version"
     echo "git: $hash"
     echo "dirty: $dirty"
     echo "rustc: $rustc_v"

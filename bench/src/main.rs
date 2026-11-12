@@ -128,6 +128,11 @@ pub struct RunArgs {
     /// 20.13: allow wss:// URLs; the server certificate is NOT verified (benchmarks only).
     #[arg(long)]
     pub insecure: bool,
+    /// 60.67 (acceptance test T2): every connection sends `X-Forwarded-For` with one of N public addresses in rotation
+    /// (even: IPv4 11.1.0.1 + k/2, odd: the IPv6 /64 2a10:77:H:L::1), for a server that trusts this client's address as
+    /// a proxy. Header text only: nothing is sent to those addresses. 0 = no header (the default).
+    #[arg(long, default_value_t = 0)]
+    pub xff_keys: u64,
     /// 20.19 browse: response sizes in bytes, cycled per request (comma list).
     #[arg(long, default_value = "2048,8192,32768,131072")]
     pub resp: String,
@@ -191,6 +196,7 @@ fn main() {
             }
         }
         Cmd::Run(args) => {
+            ws::XFF_KEYS.store(args.xff_keys, std::sync::atomic::Ordering::Relaxed);
             let rt = runtime(args.threads);
             match rt.block_on(run::run(args)) {
                 Ok(code) => std::process::exit(code),

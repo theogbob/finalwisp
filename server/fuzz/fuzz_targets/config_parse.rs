@@ -2,7 +2,9 @@
 //! 60.20 C8 cli.rs expand_config on a random --config file and command line: never panics; an accepted file leaves no
 //! --config behind and parse_args can run on the result; an error never shows a value from the file.
 //! Input: the command line (NUL-separated tokens, as cli_parse: a token whose first byte b is 0x01..=0x1f is a known
-//! flag, cli::FLAGS[(b - 1 + 31 * (len - 1)) % FLAGS.len()], or --config when b = 0x1f), then 0xff 0xfe, then the file.
+//! flag, cli::FLAGS[(b - 1 + 31 * (len - 1)) % FLAGS.len()], or, when b = 0x1f, --config (a 1-byte token), --preset (2
+//! bytes) or a preset name (60.59)), then 0xff 0xfe, then the file. Also 60.59: every token of the result has a layer,
+//! no --preset is left in it, and the preset line never panics.
 use finalwisp_fuzz::cli;
 use libfuzzer_sys::fuzz_target;
 
@@ -16,7 +18,9 @@ fuzz_target!(|data: &[u8]| {
     } else {
         cmd.split(|&b| b == 0)
             .map(|t| match t.first() {
-                Some(0x1f) => "--config".to_string(),
+                Some(0x1f) if t.len() == 1 => "--config".to_string(),
+                Some(0x1f) if t.len() == 2 => "--preset".to_string(),
+                Some(0x1f) => cli::PRESETS[t.len() % cli::PRESETS.len()].0.to_string(),
                 Some(&b @ 1..=0x1e) => cli::FLAGS[(b as usize - 1 + 31 * (t.len() - 1)) % cli::FLAGS.len()].0.to_string(),
                 _ => String::from_utf8_lossy(t).into_owned(),
             })
@@ -35,6 +39,9 @@ fuzz_target!(|data: &[u8]| {
             if ex.config.is_some() {
                 assert!(loaded);
             }
+            // 60.59 one layer per token; a preset line exactly when a preset was named
+            assert_eq!(ex.args.len(), ex.src.len());
+            assert_eq!(cli::preset_line(&ex).is_some(), ex.preset.is_some());
             let _ = cli::parse_args(ex.args, 4);
         }
         Err(e) => {
@@ -51,7 +58,8 @@ fuzz_target!(|data: &[u8]| {
                 if args[i] == "--config" {
                     path = path.or(args.get(i + 1).cloned());
                 }
-                let value = args[i] == "--config" || cli::FLAGS.iter().any(|&(f, v)| v && f == args[i]);
+                let value = matches!(args[i].as_str(), "--config" | "--preset" | "--print-preset")
+                    || cli::FLAGS.iter().any(|&(f, v)| v && f == args[i]);
                 i += if value { 2 } else { 1 };
             }
             let e = match &path {

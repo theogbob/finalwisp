@@ -35,8 +35,9 @@ threading.Thread(target=acc, daemon=True).start()
 
 D = tempfile.mkdtemp(prefix="fw-logs-")
 def start(*args, stderr=None, probe=False):
-    """ready at the capabilities line; `probe`: at the first accepted connection instead (a level that hides that
-    line; it would be a connection line itself with --log-conns), or after a fixed wait (stderr not in the log)"""
+    """ready at the last row of the start block (60.60: `preset`); `probe`: at the first accepted connection instead (a
+    level that hides the block; it would be a connection line itself with --log-conns), or after a fixed wait (stderr
+    not in the log)"""
     log = open(os.path.join(D, f"srv{time.monotonic_ns()}.log"), "w+")
     p = subprocess.Popen([BIN, str(P), "--allow-loopback", *args], stdout=log,
                          stderr=stderr if stderr is not None else subprocess.STDOUT)
@@ -47,7 +48,7 @@ def start(*args, stderr=None, probe=False):
             try:
                 socket.create_connection(("127.0.0.1", P), timeout=1).close(); break
             except OSError: pass
-        elif stderr is None and "capabilities:" in srvlog(p): break
+        elif stderr is None and "\n  preset " in srvlog(p): break
         time.sleep(0.05)
     if stderr is not None: time.sleep(0.5)
     return p
@@ -119,7 +120,11 @@ def wait_for(p, ev, n, t=3.0):
 p = start("--threads", "2")
 c = Conn(); ok(c.echo(1000), "default: echo"); c.s.close(); time.sleep(0.3)
 stop(p); t = srvlog(p)
-ok("ev=conn_" not in t and "ev=stream_" not in t and "listening on" in t and "capabilities:" in t, "default: info lines, no connection lines")
+ok("ev=conn_" not in t and "ev=stream_" not in t and "listening on" in t and "\n  threads       2\n" in t and "\n  preset        none\n" in t,
+   "default: info lines (the listening line and the start block), no connection lines")
+ok("capabilities:" not in t and "finalwisp: start:" not in t and max(len(l) for l in t.splitlines()) <= 200,
+   f"default: no detail line (60.60: it is a debug line); longest line {max(len(l) for l in t.splitlines())}")
+ok(t.startswith("finalwisp listening on ws://127.0.0.1:%d/\n" % P) and "\x1b" not in t, "default: the first line is the listening line; no colour in a file")
 
 # 2. --log-conns
 p = start("--threads", "2", "--log-conns", "--max-streams-per-conn", "1")
@@ -159,7 +164,9 @@ stop(p)
 
 # 3. --log-level
 p = start("--log-level", "warn", "--real-ip-header", "x-real-ip", probe=True); stop(p); t = srvlog(p)
-ok("warning: --real-ip-header" in t and "listening on" not in t and "capabilities:" not in t, "warn: warnings only")
+ok("warning: --real-ip-header" in t and "listening on" not in t and "capabilities:" not in t and "\n  threads" not in t and "hint:" not in t,
+   "warn: warnings only")
+ok(t.count("\n") == 1, f"warn: a warning is one line in a file ({t!r})")
 p = start("--log-level", "error", "--real-ip-header", "x-real-ip", probe=True); stop(p); t = srvlog(p)
 ok(t.strip() == "", f"error: nothing ({t[:200]!r})")
 p = start("--log-level", "warn", "--log-conns", probe=True); c = Conn(); c.s.close(); time.sleep(0.5); stop(p)
@@ -168,6 +175,9 @@ p = start("--log-conns", "--drain-timeout", "5"); c = Conn(); c.s.close(); time.
 ok(len(lines(p, "conn_close")) == 1, "exit right after a close: the queued line is written (writer flush)")
 p = start("--log-level", "debug", "--log-conns"); c = Conn(); c.s.close(); got = wait_for(p, "conn_close", 1); stop(p)
 ok(len(lines(p, "conn_open")) == 1 and len(got) == 1, "debug: conn_open + conn_close")
+t = srvlog(p)
+ok("\nfinalwisp: start: " in t and "\nfinalwisp: capabilities: " in t and "kernel: " in t and "\n  preset        none\n" in t,
+   "debug: the start block and the two detail lines (start, capabilities)")
 
 # 4. refusal flood: --max-conns 1, one held, 1000 more reset at accept
 p = start("--threads", "1", "--log-conns", "--max-conns", "1", "--metrics-interval", "1")

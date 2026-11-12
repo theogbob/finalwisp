@@ -10,15 +10,21 @@ impl Worker {
         let tg = self.targets.gen(ti);
         let t = self.targets.at(ti);
         let addrs = std::mem::take(&mut t.addrs);
+        let port = t.port;
         let mut err = 0;
+        // 60.57 A2/A4 the socket's fd in the count (one for the stream: the loop holds one socket at a time)
+        if !self.fd_take_t_cold(ti) {
+            return self.fd_short(ti);
+        }
         for ip in addrs {
-            match net::udp_connect(&SocketAddr::new(ip, t.port)) {
+            match net::udp_connect(&SocketAddr::new(ip, port)) {
                 Ok(fd) => {
                     if !ep_add(self.ep, fd, tok(K_TARGET, ti, tg), (libc::EPOLLIN | libc::EPOLLET) as u32) {
                         unsafe { libc::close(fd) };
                         err = libc::ENOMEM;
                         continue;
                     }
+                    let t = self.targets.at(ti);
                     t.fd = fd;
                     t.state = TState::Open;
                     if !self.streamlog.is_empty() {
@@ -44,6 +50,8 @@ impl Worker {
                 Err(e) => err = e,
             }
         }
+        self.fd_put_t(ti, 1); // no address gave a socket
+        let t = self.targets.at(ti);
         if t.dns_more {
             t.err = err; // 70.10 every early address failed: the final answer (other family) retries via start_connect
                          // (60.39: start_connect reads `udp && err != 0` as "already charged per destination")
@@ -52,6 +60,7 @@ impl Worker {
         if !self.streamlog.is_empty() {
             self.slog_why(ti, SWhy::ConnectFail, ""); // 60.35 (the addresses are taken: not a DNS failure)
         }
+        self.connect_failed(0); // 60.57 A6 (a UDP connect sends nothing: never a timeout)
         self.fail_target(ti, if err == 0 { CLOSE_UNREACHABLE } else { net::connect_reason(err) });
     }
 
