@@ -152,7 +152,7 @@ use std::sync::{Arc, OnceLock};
 /// One value alone on its cache lines (128 bytes: the adjacent-line prefetcher, as metrics::Stats)
 #[repr(align(128))]
 #[derive(Default)]
-struct Line<T>(T);
+pub(crate) struct Line<T>(pub(crate) T);
 
 /// A2 fds the process opens after the count at startup and keeps: the memory sampler's cgroup / proc files (at most 5),
 /// with room for a file read now and then (the metrics line's /proc/net/netstat, a certificate reload)
@@ -221,8 +221,12 @@ pub enum Line10 {
     MarkShare,
     /// C the host mark was crossed
     MarkHost,
+    /// 60.72 --stream-share: its mark was crossed
+    MarkStream,
+    /// 60.72 --stream-share: a stream was refused
+    StreamShare,
 }
-const LOG_KINDS: usize = 8;
+const LOG_KINDS: usize = 10;
 /// at most one line per kind per this (process-wide)
 pub const LOG_EVERY_MS: u64 = 10_000;
 
@@ -235,6 +239,12 @@ pub const HOST_OUT_16: u32 = 13;
 /// C bits of FdGate::marks
 pub const MARK_SHARE: u8 = 1;
 pub const MARK_HOST: u8 = 2;
+/// 60.72 --stream-share: the host mark's parts, as a bit of its own (bit 4 is the worker's HOLD_BOUNDS)
+pub const MARK_STREAM: u8 = 8;
+/// 60.72 --stream-pool: never a mark, only in the mask (it puts the workers in hold mode)
+pub const MARK_POOL: u8 = 16;
+/// the bits that are marks (moved by `mark`)
+const MARKS: u8 = MARK_SHARE | MARK_HOST | MARK_STREAM;
 /// C --conn-share: a key is gated when it holds more than F / SHARE_KEY_DIV fds ...
 pub const SHARE_KEY_DIV: u32 = 2;
 /// ... while the other keys together hold at least max(F / SHARE_FLOOR_DIV, SHARE_FLOOR_MIN) fds: "a real share", so
@@ -334,7 +344,8 @@ impl FdGate {
         debug_assert!(prev >= n, "FdGate gave back more than was granted");
         self.mark();
     }
-    /// C main, once, with set_limit: which marks are in use (--conn-share: MARK_SHARE, --fd-admission: MARK_HOST)
+    /// C main, once, with set_limit: which marks are in use (--conn-share: MARK_SHARE, --fd-admission: MARK_HOST;
+    /// 60.72 --stream-share: MARK_STREAM, --stream-pool: MARK_POOL, which is no mark)
     pub fn set_marks(&self, mask: u8) {
         self.mask.store(mask, Relaxed);
         self.mark();
@@ -358,7 +369,8 @@ impl FdGate {
                 m
             }
         };
-        step(step(m, MARK_SHARE, SHARE_IN_16, SHARE_OUT_16), MARK_HOST, HOST_IN_16, HOST_OUT_16) & mask
+        let m = step(step(m, MARK_SHARE, SHARE_IN_16, SHARE_OUT_16), MARK_HOST, HOST_IN_16, HOST_OUT_16);
+        step(m, MARK_STREAM, HOST_IN_16, HOST_OUT_16) & mask & MARKS
     }
     /// C move the marks to where `granted` is. Called after every change of `granted`. SeqCst here and on those changes
     /// (review): they are in one order for all threads, so of two workers that change `granted` at the same
@@ -366,7 +378,7 @@ impl FdGate {
     /// holds on x86, whose locked instructions order them anyway, and not on Arm.) A loser of the exchange reads both
     /// again.
     fn mark(&self) {
-        let mask = self.mask.load(Relaxed);
+        let mask = self.mask.load(Relaxed) & MARKS;
         if mask == 0 {
             return;
         }
@@ -394,7 +406,7 @@ impl FdGate {
         const FIX: &str = "raise the open-file limit and restart (ulimit -n, systemd LimitNOFILE, docker --ulimit nofile)";
         let was = self.logged.load(Relaxed);
         let (key, floor) = share_rule(limit);
-        for (bit, kind) in [(MARK_SHARE, Line10::MarkShare), (MARK_HOST, Line10::MarkHost)] {
+        for (bit, kind) in [(MARK_SHARE, Line10::MarkShare), (MARK_HOST, Line10::MarkHost), (MARK_STREAM, Line10::MarkStream)] {
             if (was ^ now) & bit == 0 || !self.log_due(kind) {
                 continue;
             }
@@ -412,6 +424,15 @@ impl FdGate {
                 ),
                 (MARK_SHARE, false) => {
                     format!("finalwisp: fds: {granted} of {limit} usable fds are handed out: --conn-share is at rest (below 11/16)")
+                }
+                (MARK_STREAM, true) => format!(
+                    "finalwisp: fds: {granted} of {limit} usable fds are handed out: --stream-share is armed (from 7/8, until \
+                     below 13/16): a connection that holds its share of streams or more gets no new ones (CLOSE 0x49); the \
+                     share is about twice the usable fds per connection now and once that at the limit. Fix: {FIX}; or \
+                     --no-stream-share"
+                ),
+                (MARK_STREAM, false) => {
+                    format!("finalwisp: fds: {granted} of {limit} usable fds are handed out: --stream-share is at rest (below 13/16)")
                 }
                 (_, true) => format!(
                     "finalwisp: fds: {granted} of {limit} usable fds are handed out: --fd-admission resets new connections \

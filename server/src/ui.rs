@@ -149,7 +149,7 @@ pub fn help_main(p: Paint) -> String {
 /// One topic's page: every option of the topic with its default and its long text
 fn topic_page(p: Paint, name: &str, intro: &str) -> String {
     let mut out = format!("{}\n{}\n", p.bold(&format!("finalwisp {VERSION} - options: {name}")), wrap(intro, WIDTH, "", ""));
-    for s in OPTIONS.iter().filter(|s| s.topic == name) {
+    for s in OPTIONS.iter().filter(|s| s.topic == name && !cli::RARE.contains(&s.name)) {
         let (left, right) =
             (format!("  {}", form(s)), if s.default.is_empty() { String::new() } else { format!("[default: {}]", s.default) });
         out.push('\n');
@@ -376,7 +376,8 @@ mod tests {
         assert!(!h.contains('\x1b') && help_main(Paint(true)).contains("\x1b[1mUsage:\x1b[0m"));
     }
 
-    /// B / A: every option is in exactly one topic page, with its long text, wrapped; `all` is every page
+    /// B / A: every option is in exactly one topic page, with its long text, wrapped (a cli::RARE option in none: its
+    /// topic page names it); `all` is every page
     #[test]
     fn help_topics_hold_every_option_once() {
         let pages: Vec<(&str, String)> = TOPICS.iter().map(|t| (t.0, help_topic(PLAIN, t.0).unwrap())).collect();
@@ -384,10 +385,18 @@ mod tests {
             page.lines().filter(|l| *l == format!("  {}", form(s)) || l.starts_with(&format!("  {}  ", form(s)))).count()
         };
         for s in OPTIONS {
+            let rare = cli::RARE.contains(&s.name);
             for (topic, page) in &pages {
-                assert_eq!(heads(page, s), (*topic == s.topic) as usize, "{} in --help {topic}", s.name);
+                assert_eq!(heads(page, s), (*topic == s.topic && !rare) as usize, "{} in --help {topic}", s.name);
             }
             let page = &pages.iter().find(|p| p.0 == s.topic).unwrap().1;
+            if rare {
+                // 60.75 not listed, but its topic page names it (in the text of another option)
+                let word = |c: char| c.is_ascii_alphanumeric() || c == '-';
+                let named = page.match_indices(s.name).any(|(i, _)| !page[i + s.name.len()..].starts_with(word));
+                assert!(named, "{}: named on --help {}", s.name, s.topic);
+                continue;
+            }
             let first = s.long.split_whitespace().take(4).collect::<Vec<_>>().join(" ");
             assert!(page.contains(&format!("      {first}")), "{}: its text", s.name);
             assert!(s.default.is_empty() || page.contains(&format!("[default: {}]", s.default)), "{}: its default", s.name);
@@ -401,7 +410,7 @@ mod tests {
             );
             assert!(all.contains(page.trim_end_matches("\nOther topics: finalwisp --help\n")), "all holds {topic}");
         }
-        assert!(OPTIONS.iter().all(|s| heads(&all, s) == 1) && fits(&all));
+        assert!(OPTIONS.iter().all(|s| heads(&all, s) == (!cli::RARE.contains(&s.name)) as usize) && fits(&all));
         // a page is plain reading text: no option list in brackets, no line of the old usage wall
         assert!(!all.contains("[--") && all.lines().all(|l| l.chars().count() <= WIDTH));
     }
@@ -516,9 +525,9 @@ mod tests {
         };
         assert_eq!(rows("", ""), ["preset: none"]);
         assert_eq!(rows("--port 6001 --host 127.0.0.1 --max-conns 0 --no-block-smtp", ""), ["preset: none"], "defaults are not listed");
-        // (T: the settings that v1.3.0 added to the preset: 60.57 / 60.58 and the four of 60.63)
-        const T: &str =
-            ", fd-admission on, conn-share on, dns-own on, dns-reserve on, tcpmem-share on, port-share on, dest-failfast on, net-watch on";
+        // (T: the settings that v1.3.0 added to the preset: 60.57 / 60.58 and the four of 60.63; the two of 60.72)
+        const T: &str = ", fd-admission on, conn-share on, dns-own on, dns-reserve on, tcpmem-share on, port-share on, dest-failfast on, net-watch on, \
+                         stream-share on, stream-pool on";
         let t = |s: &str| format!("{s}{T}");
         assert_eq!(rows("--preset public", ""), [t("preset: public: block-smtp on, max-streams-per-conn 1024")]);
         assert_eq!(rows("--preset none 7000", ""), ["preset: none", "command line: port 7000"]);
@@ -527,7 +536,7 @@ mod tests {
             rows("--preset public --config f --no-dns-reserve", "no-conn-share\nno-dns-own\n"),
             [
                 "preset: public: block-smtp on, max-streams-per-conn 1024, fd-admission on, conn-share off (config file), dns-own off (config file), \
-                 dns-reserve off (command line), tcpmem-share on, port-share on, dest-failfast on, net-watch on",
+                 dns-reserve off (command line), tcpmem-share on, port-share on, dest-failfast on, net-watch on, stream-share on, stream-pool on",
                 "config file: f"
             ]
         );
@@ -558,7 +567,7 @@ mod tests {
         assert_eq!(
             b,
             "  version       1.3.0\n  preset        public: block-smtp on, max-streams-per-conn 1024,\n                fd-admission on, conn-share on, \
-             dns-own on, dns-reserve on,\n                tcpmem-share on, port-share on, dest-failfast on, net-watch on\n  command line  host 0.0.0.0, port 443, \
+             dns-own on, dns-reserve on,\n                tcpmem-share on, port-share on, dest-failfast on, net-watch on,\n                stream-share on, stream-pool on\n  command line  host 0.0.0.0, port 443, \
              splice off, balance on, udp off,\n                motd hello, max-conns 20000, max-conns-per-ip 64\n"
         );
         assert!(fits(&b));

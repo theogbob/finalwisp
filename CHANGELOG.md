@@ -1,5 +1,68 @@
 # Changelog
 
+## v1.3.2
+
+New options, all off by default (a plain `finalwisp` does not change):
+
+- `--stream-share`: while 7/8 of the usable file descriptors are handed out (the mark where `--fd-admission` refuses
+  new connections; it does not need `--fd-admission`), a connection that holds its share of streams or more gets no
+  new stream (CLOSE `0x49`, counter `refuse_stream_share`). Connections with fewer streams go on, and open streams are
+  not closed. The share is about twice the file descriptors per open connection at the mark, once that at the limit,
+  and never below 32 streams. It counts connections, not addresses.
+- `--stream-pool`: under memory pressure (memory level 1 and above, and always with a budget under 256 MiB) the
+  worker threads share one stream limit of the same total instead of one limit each, so one busy connection is no
+  longer refused while another thread has room. The memory bound does not change. In a test with 128 MiB and 2
+  threads, one connection got 340 of 340 streams instead of 227.
+- `--unread-close`: while the host's TCP memory is short (the mark of `--tcpmem-share`), a connection whose client has
+  taken no data for 600 seconds (10 minutes) with its receive window at 0 is reset. That frees the kernel memory its
+  downloads hold. Nothing is reset while the host has TCP memory to spare. An honest slow reader also takes no data
+  for minutes while its buffer drains: in our tests up to 187 s at 2 KiB per second with the kernel's default buffer
+  and 346 s with an 8 MiB buffer, so a reader that is slower or has a larger buffer can be reset under pressure.
+  Counter `close_unread`, `why=unread` in `--log-conns`. Needs Linux 5.4 or later.
+
+Changed in `--preset public` (the Docker image and `contrib/finalwisp.service` start with it):
+
+- **The preset turns on the two stream options.** `--print-preset public` prints two more lines, and the `preset`
+  line at startup lists `stream-share on, stream-pool on`. What a preset user can see change:
+  - From 7/8 of the file descriptors on, a connection that holds its share of streams or more gets CLOSE `0x49` for
+    new streams, so connections with fewer streams can still open theirs. Before, one busy connection could take the
+    descriptors until none was left, and then the new streams of every connection were refused.
+  - On a host with a small memory budget, one connection can open more streams than one thread's limit
+    (`refuse_streams` counts fewer refusals); the total stays the same.
+  - `--no-stream-share` and `--no-stream-pool` undo them.
+- `--unread-close` is off unless asked for: the preset does not turn it on in this release. A later release may, once
+  a rule that does not depend on the client's buffer size has been tested with real clients.
+- What the two stream options cost: when a stream opens and closes, about 170 more instructions of the server's own
+  (2.2% of the preset's count, counted with callgrind on loopback); per new connection 0.5%. Relayed bytes cost
+  nothing extra that the counts could show. Timed on two 2-core VPSes, new connections per second with the preset
+  read 2.1% to 2.7% below 1.3.1 in four readings (no reading is a confirmed loss); on an 80-thread server no
+  difference. (`--unread-close`, when asked for, reads `TCP_INFO` once every 2 seconds
+  for each connection that holds a download that waits for its client.)
+
+Changed:
+
+- **`--net-watch` also reads the host's connection-tracking table** (`nf_conntrack_count` and `nf_conntrack_max`, where
+  the kernel has one and the files are readable; read only). It warns at the start and while it runs when the table is
+  3/4 full (the next such warning only after the table was below half), and the metrics get `host_conntrack` and
+  `host_conntrack_max`. When the table is full, the kernel drops the packets of new connections, and nothing in the
+  server's other counters names the cause. The preset sets `--net-watch`.
+- `--show-config` has a row `connection tracking` with `--net-watch`: the entries in use, the table's size, and whether
+  the table has fewer entries than the file descriptors for connections and streams. It also names the mark of
+  `--stream-share`.
+- When the open-file limit cannot be read, the start warning names every option that needs it.
+
+Tested with:
+
+- The wisp-js client 0.5.3 (before: 0.5.0) in the compatibility tests.
+
+Documentation:
+
+- The [benchmarks](docs/benchmarks.md) page is renewed: finalwisp 1.3.1 against the newest version of every other server
+  on 2026-11-15, on an 80-thread server and two 2-core VPSes, and the README's performance table follows it.
+  epoxy-server built as its README says crashed under load on the VPSes; the page has that build and one with
+  tokio-websockets 0.12.3. The epoxy-server numbers published before 2026-11-15 were for a build with
+  tokio-websockets 0.12.3.
+
 ## v1.3.1
 
 Fixed:

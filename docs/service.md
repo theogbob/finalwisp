@@ -51,7 +51,7 @@ Running finalwisp in a unit also gives it its own cgroup, which makes the memory
 
 ## Docker
 
-The image is `ghcr.io/theogbob/finalwisp`. Each release has a tag (`v1.3.1`), and `latest` is the newest release.
+The image is `ghcr.io/theogbob/finalwisp`. Each release has a tag (`v1.3.2`), and `latest` is the newest release.
 
 ```sh
 docker run -d --name finalwisp -p 6001:6001 --stop-timeout 35 --memory 1g ghcr.io/theogbob/finalwisp:latest

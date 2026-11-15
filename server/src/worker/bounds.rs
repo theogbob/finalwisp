@@ -2,7 +2,7 @@
 //! worker reaches these functions from the out-of-line side of 60.57's fd count and from its idle sweep.
 //!
 //! How a worker learns that a mark is set: `bd_pick` loads the process state where the worker is out of line anyway
-//! (fd_grab: when its fd allowance is used up, every 64 fds at most; fd_trim at the idle sweep, every 2 s). While a
+//! (fd_grab: when its fd allowance is used up, every 64 fds at most; the idle sweep, every 2 s). While a
 //! mark is set the worker is in 60.57's hold mode (HOLD_BOUNDS in fd_mask: fd_have is exactly its count), so every
 //! CONNECT comes to fd_more (before DNS) and every connect attempt to fd_grab_t (with its stream): the rules run
 //! there. When the marks clear, the same places take the worker out of hold mode. With --conn-share or
@@ -16,8 +16,8 @@
 
 use super::*;
 use crate::bounds::{
-    self as bd, Bounds, Dest, DestTop, Dests, Log, Unread, OPT_DEAD, OPT_PORT, OPT_TCPMEM, OPT_WATCH, PT_TOP, ST_PT_BUSY, ST_PT_SHORT,
-    ST_TM_SHARE,
+    self as bd, Bounds, Dest, DestTop, Dests, Log, Stall, Unread, OPT_DEAD, OPT_PORT, OPT_TCPMEM, OPT_UNREAD, OPT_WATCH, PT_TOP,
+    ST_PT_BUSY, ST_PT_SHORT, ST_TM_SHARE, ST_UNREAD,
 };
 use crate::clientip::IpKey;
 
@@ -76,6 +76,9 @@ pub(super) struct Wb {
     df_syns: u8,
     /// E3 connecting sockets asked for their SYN count so far (one getsockopt each; the tests read it)
     asked: u64,
+    /// E5 the stall of each connection, by client slot (bounds::uc_step), and its limit (bounds::UC_STALL_MS)
+    uc: Vec<Stall>,
+    uc_limit_ms: u64,
 }
 
 /// E3 a destination that does not answer
@@ -129,6 +132,8 @@ impl Wb {
             df_age_ms: bd::DF_AGE_MS,
             df_syns: bd::DF_SYNS,
             asked: 0,
+            uc: Vec::new(),
+            uc_limit_ms: bd::UC_STALL_MS,
         })
     }
 }
@@ -139,6 +144,12 @@ impl Worker {
     pub(super) fn df_set(&mut self, age_ms: u64, syns: u8) {
         let b = self.bd.as_mut().unwrap();
         (b.df_age_ms, b.df_syns) = (age_ms, syns);
+    }
+
+    /// Tests: E5 with a stall limit of `ms`
+    #[cfg(test)]
+    pub(super) fn uc_set(&mut self, ms: u64) {
+        self.bd.as_mut().unwrap().uc_limit_ms = ms;
     }
 
     /// Tests: E3 the connecting sockets asked for their SYN count so far
@@ -176,7 +187,7 @@ impl Worker {
     #[inline(never)]
     pub(super) fn bd_pick(&mut self) {
         let Some(b) = self.bd.as_mut() else { return };
-        let live = b.g.state();
+        let live = b.g.state() & !ST_UNREAD; // (E5 is read at the sweep: no hold mode)
         if live == b.live {
             return;
         }
@@ -210,12 +221,54 @@ impl Worker {
         }
     }
 
-    /// fd_trim at the idle sweep: the state, and this worker's counts for the other workers
+    /// the idle sweep (before fd_trim): the state, and this worker's counts for the other workers
     #[cold]
     #[inline(never)]
     pub(super) fn bd_sweep(&mut self) {
         self.bd_pick();
-        self.bd_count(metrics::now_ms());
+        let now = metrics::now_ms();
+        self.bd_count(now);
+        if self.bd.as_ref().is_some_and(|b| b.g.opts & OPT_UNREAD != 0) {
+            self.bd_unread(now);
+        }
+    }
+
+    /// E5 at the idle sweep, after bd_count (Wb::by_client holds each connection's parked downloads): a step of
+    /// bounds::uc_step for every connection, and the reset of those it names (`now`: ms)
+    #[cold]
+    #[inline(never)]
+    pub(super) fn bd_unread(&mut self, now: u64) {
+        let Some(mut b) = self.bd.take() else { return };
+        let pressed = b.g.state() & ST_UNREAD != 0;
+        if b.uc.len() < self.clients.slots.len() {
+            b.uc.resize(self.clients.slots.len(), Stall::default());
+        }
+        let mut reset = Vec::new();
+        for (ci, s) in self.clients.slots.iter().enumerate() {
+            let parked = b.by_client.get(ci).is_some_and(|n| *n > 0);
+            let info = match s.1.as_ref() {
+                Some(c) if parked && !c.dead && !c.closing && c.local != LOCAL_UNIX => bd::wnd_acked(c.fd),
+                _ => None,
+            };
+            if bd::uc_step(&mut b.uc[ci], s.0, info, now, b.uc_limit_ms, pressed) {
+                reset.push(ci as u32);
+            }
+        }
+        if !reset.is_empty() && b.g.log_due(Log::UcReset) {
+            metrics::log_nowait(format!(
+                "finalwisp: --unread-close: {} connection(s) reset: each held a download its client did not read (receive \
+                 window 0, no data taken for {} s) while host TCP memory is short ({} MiB). Fix: more memory or a larger \
+                 net.ipv4.tcp_mem on the host; or --no-unread-close (counted as close_unread; at most one such line per 10 s)",
+                reset.len(),
+                b.uc_limit_ms / 1000,
+                b.g.mib()
+            ));
+        }
+        self.bd = Some(b);
+        for ci in reset {
+            self.stats.close_unread.bump();
+            self.abort_client(ci, Why::Unread); // (review) RST on the targets too: memory pressure (20.26)
+        }
     }
 
     /// The client address of connection `ci` as a key of section E: an IPv4 address or an IPv6 /64; behind a
@@ -267,6 +320,7 @@ impl Worker {
     pub(super) fn bd_count(&mut self, now: u64) {
         let Some(mut b) = self.bd.take() else { return };
         let (tcpmem, port, dead) = (b.g.opts & OPT_TCPMEM != 0, b.g.opts & OPT_PORT != 0, b.g.opts & OPT_DEAD != 0);
+        let uc = b.g.opts & OPT_UNREAD != 0;
         let up_port = self.cfg.upstream.as_deref().map(|u| u.port);
         b.by_client.clear();
         b.by_client.resize(self.clients.slots.len(), 0);
@@ -278,7 +332,7 @@ impl Worker {
         let mut unread = 0u32;
         for (ti, s) in self.targets.slots.iter().enumerate() {
             let Some(t) = s.1.as_ref() else { continue };
-            if tcpmem && t.blocked && !t.udp {
+            if (tcpmem || uc) && t.blocked && !t.udp {
                 if let Some(n) = b.by_client.get_mut(t.client as usize) {
                     *n += 1;
                     unread += 1;

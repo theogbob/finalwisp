@@ -34,8 +34,8 @@ pub(super) struct ProxyHs {
     step: Step,
     out: Vec<u8>, // request bytes not yet written: out[wpos..]
     wpos: usize,
-    tgt: Vec<IpAddr>, // local DNS: the target addresses (C1-filtered, IPv4 first); tgt[idx] is being tried
-    idx: usize,
+    tgt: Vec<IpAddr>,             // local DNS: the target addresses (C1-filtered, IPv4 first); tgt[idx] is being tried
+    pub(super) idx: usize,        // (60.72 worker/slimits.rs: past 0 = a retry)
     name: Option<Box<str>>,       // socks5h + --upstream-trust-dns: the name the proxy resolves
     pub(super) deadline: Instant, // whole open: proxy connect + handshake + the proxy's own connect (+ retries)
 }

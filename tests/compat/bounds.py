@@ -12,6 +12,12 @@ Cases:
   does not); a stream to another destination opens. The destination answers again: the suspect goes and a new stream
   to it opens.
 - E3 a destination that was dead and then refuses the connection: the suspect goes, a new stream gets 0x44.
+- E5 --unread-close (60.73): --show-config has its row; a client that never reads 4 downloads is kept while the host has
+  TCP memory to spare (6 s, 3 sweeps), close_unread 0. The reset itself needs a host that is short of TCP memory: the
+  worker tests (worker::tests::bd::uc_*) cover it with the state set by hand.
+- --net-watch and the connection-tracking table: where /proc/sys/net/netfilter/nf_conntrack_* is readable, the metrics
+  line has host_conntrack and --show-config the row `connection tracking` with the option, and neither without it; the
+  start has no warning for the table's size.
 E1 and E2 act on a host at 3/4 of its TCP memory or of its source ports toward one destination: the unit tests
 (bounds::tests, worker::tests::bd) and the box cells of note 60.63 cover them.
 A timeout is a failure everywhere."""
@@ -168,7 +174,8 @@ REFUSALS = ("refuse_tcpmem_share", "refuse_port_share", "refuse_port_full", "ref
 # --- off
 p = start()
 ok("guard" not in threads(p), "off: no guard thread")
-ok(all(metric(p, k) == 0 for k in REFUSALS + ("tcpmem_unread", "port_dest_max", "dest_dead")), "off: the counters of section E are in the metrics line, at 0")
+ok(all(metric(p, k) == 0 for k in REFUSALS + ("tcpmem_unread", "port_dest_max", "dest_dead", "close_unread")), "off: the counters of section E are in the metrics line, at 0")
+ok(metric(p, "host_conntrack") is None, "off: no host_conntrack without --net-watch")
 stop(p)
 cfg = subprocess.run([BIN, "--show-config"], capture_output=True, text=True, timeout=10).stdout
 ok("TCP memory guard" not in cfg and "dead destination guard" not in cfg, "off: --show-config has no row of section E")
@@ -233,6 +240,57 @@ ok(a.reason(20, 3) == 0x44, "E3 refusing: a new stream gets the kernel's answer,
 ok(metric(p, "refuse_dest_dead") == n, "E3 refusing: not counted as refused")
 a.close(); b.close()
 stop(p)
+
+# --- E5: a client that never reads, on a host with TCP memory to spare
+class Source:
+    """a target that sends without end to everyone who connects"""
+    def __init__(self):
+        self.s = socket.socket(); self.s.bind(("127.0.0.1", 0)); self.s.listen(64)
+        self.port = self.s.getsockname()[1]
+        threading.Thread(target=self.run, daemon=True).start()
+    def run(self):
+        while True:
+            try: c, _ = self.s.accept()
+            except OSError: return
+            threading.Thread(target=self.feed, args=(c,), daemon=True).start()
+    def feed(self, c):
+        blob = b"x" * 65536
+        try:
+            while True: c.sendall(blob)
+        except OSError: c.close()
+cfg = subprocess.run([BIN, "--show-config", "--unread-close"], capture_output=True, text=True, timeout=10).stdout
+ok("unread download guard" in cfg and "600 s" in cfg, "E5: --show-config has the row of --unread-close")
+src = Source()
+p = start("--unread-close")
+ok("guard" in threads(p), "E5: the guard thread runs (it reads the host's TCP memory)")
+a, b = Wisp(A), Wisp(B)
+a.s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+for sid in range(1, 5):
+    a.connect(sid, src.port)
+b.connect(1)
+time.sleep(6.5)  # (3 idle sweeps)
+ok(metric(p, "close_unread") == 0, "E5: nothing reset while the host has TCP memory to spare")
+ok(b.echo(1), "E5: the other client works")
+try:
+    a.s.settimeout(1); alive = len(a.s.recv(65536)) > 0
+except OSError: alive = False
+ok(alive, "E5: the client that does not read is still connected (its downloads are there)")
+a.close(); b.close()
+stop(p)
+
+# --- --net-watch: the connection-tracking table
+ct = all(os.access(f"/proc/sys/net/netfilter/nf_conntrack_{k}", os.R_OK) for k in ("count", "max"))
+p = start("--net-watch")
+v = metric(p, "host_conntrack")
+ok((v is not None and metric(p, "host_conntrack_max") > 0) if ct else v is None,
+   f"net-watch: host_conntrack {'in' if ct else 'not in'} the metrics line (the table is {'' if ct else 'not '}readable here)")
+# the table's size against the descriptors is a --show-config row, never a start warning (the state warning is 3/4 full)
+ok("file descriptors" not in "".join(l for l in srvlog(p).splitlines(True) if "connection-tracking" in l), "net-watch: no start warning for the size of the table")
+stop(p)
+cfg = subprocess.run([BIN, "--show-config", "--net-watch"], capture_output=True, text=True, timeout=10).stdout
+ok(("connection tracking" in cfg) == ct, f"net-watch: --show-config {'has' if ct else 'has no'} the connection tracking row")
+cfg = subprocess.run([BIN, "--show-config"], capture_output=True, text=True, timeout=10).stdout
+ok("connection tracking" not in cfg, "off: no connection tracking row without --net-watch")
 
 print(f"{'FAILED' if fails else 'ok'}: {fails} failure(s); logs in {D}", flush=True)
 sys.exit(1 if fails else 0)

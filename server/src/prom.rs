@@ -143,6 +143,10 @@ pub fn render(stats: &[Arc<Stats>], peers: &[Arc<Inbox>]) -> String {
     if let Some(n) = metrics::host_net() {
         p.one("host_syn_retrans_total", "counter", "60.63 SYN retransmits sent by the host (since boot, this netns)", n.syn_retrans);
         p.one("host_udp_out_total", "counter", "60.63 UDP datagrams sent by the host (since boot, this netns)", n.udp_out);
+        if let Some((count, max)) = crate::bounds::conntrack() {
+            p.one("host_conntrack", "gauge", "60.73 entries in the host's connection-tracking table (this netns)", count);
+            p.one("host_conntrack_max", "gauge", "60.73 size of the host's connection-tracking table (nf_conntrack_max)", max);
+        }
     }
     let (sum, close) = metrics::sum(stats);
     for (i, (k, help)) in Stats::help().into_iter().enumerate() {

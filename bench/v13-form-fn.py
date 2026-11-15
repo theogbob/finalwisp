@@ -232,8 +232,10 @@ def group_b(a):
     open(conf_named, "w").write("preset public\nmax-streams-per-conn 2000\n")
     conf_off3 = os.path.join(a.tmp, "off3.conf")
     P = "finalwisp: preset "
-    # v1.3.0: the preset has ten settings; T = the four switches of 60.57 / 60.58 and the four of 60.63 with one layer
-    SW = ("fd-admission", "conn-share", "dns-own", "dns-reserve", "tcpmem-share", "port-share", "dest-failfast", "net-watch")
+    # v1.3.0: the preset has ten settings (60.72: twelve); T = the four switches of 60.57 / 60.58, the four of 60.63 and
+    # the two stream limits of 60.72 with one layer (60.73's unread-close is not in it in v1.3.2)
+    SW = ("fd-admission", "conn-share", "dns-own", "dns-reserve", "tcpmem-share", "port-share", "dest-failfast", "net-watch", "stream-share",
+          "stream-pool")
     open(conf_off3, "w").write("".join("no-%s\n" % k for k in SW))
     T = lambda layer, on="on": "".join(", %s %s (%s)" % (k, on, layer) for k in SW)
     off3 = ["--no-" + k for k in SW]
@@ -506,8 +508,9 @@ def group_e(a):
            stderr=p.stderr.decode("utf-8", "replace")[:300])
     # 60.60: at the default log level the start block's `preset` row says it (the image's CMD cannot carry --log-level debug)
     P = "  preset        "
-    # (v1.3.0: the four switches of 60.57 / 60.58 and the four of 60.63)
-    T = ", fd-admission on, conn-share on, dns-own on, dns-reserve on, tcpmem-share on, port-share on, dest-failfast on, net-watch on"
+    # (v1.3.0: the four switches of 60.57 / 60.58 and the four of 60.63; 60.72: the two stream limits)
+    T = (", fd-admission on, conn-share on, dns-own on, dns-reserve on, tcpmem-share on, port-share on, dest-failfast on, net-watch on"
+         ", stream-share on, stream-pool on")
     for name, extra, want, listen in [
         ("E3 docker run IMAGE", [], P + "public: block-smtp on, max-streams-per-conn 1024" + T, "0.0.0.0:6001"),
         ("E4 docker run IMAGE --host 0.0.0.0 --port 6001 --motd hi (arguments replace CMD, the preset stays)",

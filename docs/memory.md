@@ -33,7 +33,9 @@ A level goes up at once and comes down after usage stays 10 points lower for a s
 Budgets under 256 MiB start at level 1 and never go below it, because a download burst can grow memory faster than it can be
 measured. So a small budget always has the stream limit of level 1: with 128 MiB and 2 threads it is 227 open
 streams per thread (computed), and a few users with stream-heavy pages can reach it. In a test with 20 connections
-of 20 streams each, some streams were refused at 128 MiB and none at 512 MiB.
+of 20 streams each, some streams were refused at 128 MiB and none at 512 MiB. The limit is per thread, and a connection
+lives on one thread: [`--stream-pool`](configuration.md#--stream-pool) (off by default, on in the `public` preset) makes it one limit of the same total for
+all threads, so one busy connection is not refused while another thread has room.
 
 How usage is measured:
 
@@ -94,15 +96,24 @@ with far clients on 20 ms and 112 ms paths and the targets on another host:
 
 What helps, with the measured costs:
 
-- **`--no-splice`.** The copy path reads less from each target socket at a time, so the kernel probably grows fewer of
-  them to large sizes. In the 100-stream case at 20 ms the download was 1.2x faster (1.16-1.21x in three paired
-  comparisons of 16 runs), the runs in pressure fell from 13-14 of 16 to 0-2 of 16, and the host TCP peak fell from
-  233-234 to 178-180 MiB. The upload next to it kept 4-40 MiB/s at 20 ms (median 19) and 16-26 MiB/s at 112 ms
-  (median 24). The cost is on fast local paths: on loopback on the same kind of VPS, downloads were 12-31% slower
+- **`--no-splice`, only for far clients behind a reverse proxy on the same host.** The copy path reads less from each
+  target socket at a time, so the kernel probably grows fewer of them to large sizes. Adaptive splice (next point)
+  does the same for far clients that connect directly, but behind a reverse proxy on the same host every client looks
+  local to finalwisp, so there `--no-splice` is the switch that is left. These numbers are from before adaptive
+  splice, with the far client connected directly (behind a proxy it was not measured): in the 100-stream case at
+  20 ms the download was 1.2x faster (1.16-1.21x in three paired comparisons of 16 runs), the runs in pressure fell
+  from 13-14 of 16 to 0-2 of 16, and the host TCP peak fell from 233-234 to 178-180 MiB. The upload next to it kept
+  4-40 MiB/s at 20 ms (median 19) and 16-26 MiB/s at 112 ms (median 24). For far clients that connect directly with
+  many streams it adds nothing now: in the 100-stream case at 112 ms, adaptive splice against `--no-splice` was 0.987
+  (no difference) for the rule as shipped and 1.015 and 0.994 for two earlier versions, in paired comparisons of 16
+  runs, with the same runs in pressure (0 of 16; `--no-splice` 2 of 16 once). The 10 x 10 case of that test gave no
+  result, and clients with 1-4 streams were not compared. The cost is on fast local paths: on loopback on the same kind of VPS, downloads were 12-31% slower
   (1 stream 12%, 10 x 10 streams 31%), and the host held more TCP memory there, not less (10 x 10 streams: in
   pressure in all 16 runs instead of 8). An older test on another machine lost more on one loopback stream (3.5 to
-  1.9 GiB/s). Use it on a small host whose clients are far away; leave splice on where clients and targets are close
-  and fast.
+  1.9 GiB/s). With a client program on the same many-core host the server used 10% more CPU per MiB (2.48 instead of
+  2.26 ms; the download was 1.17x faster there only because the client's own CPU per MiB fell). Use it on a small
+  host whose far clients come through a reverse proxy on the same host and that enters TCP memory pressure; leave
+  splice on everywhere else.
 - **Adaptive splice** (on by default since 1.2.1; `--no-adaptive-splice` turns it off). Keeps splice on, but a far
   client (round trip 10 ms or more when it connected) with more than 4 streams (busy or idle) whose socket is backed
   up gets 64 KiB reads from its targets instead of 256 KiB. In the 100-stream case at 112 ms the download was 1.2-1.4x

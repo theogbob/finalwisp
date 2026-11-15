@@ -9,6 +9,6 @@
   "keywords": [],
   "type": "commonjs",
   "dependencies": {
-    "@mercuryworkshop/wisp-js": "^0.5.0"
+    "@mercuryworkshop/wisp-js": "0.5.3"
   }
 }

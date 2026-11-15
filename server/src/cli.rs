@@ -85,6 +85,11 @@ pub const TOPICS: &[(&str, &str, &str)] = &[
     ("advanced", "tuning and diagnostic switches", "Leave these at the default unless a measurement or a problem points here."),
 ];
 
+/// 60.75 options that stay accepted (parser, config file, --show-config) but are not listed in --help: no topic page
+/// shows them; the long text of another option of the same topic names them, and docs/configuration.md names them in
+/// "Rarely needed options", not in an option table (bench/tools/doccheck.py reads this list)
+pub const RARE: &[&str] = &["--adaptive-splice"];
+
 /// 60.60 the options --help shows on its first page
 pub const COMMON: &[&str] =
     &["--host", "--port", "--preset", "--config", "--tls-cert", "--tls-key", "--trusted-proxy", "--threads", "--mem-budget", "--log-level"];
@@ -97,7 +102,7 @@ pub const OPTIONS: &[OptSpec] = &[
     o("--preset", "NAME", "config", "none", "built-in settings: public or none", "Start from a set of options that is built into the binary. public: the settings for a server that anyone can reach. none: no preset (use it to drop the preset of a start command, such as the Docker image's). The order is preset, config file, command line; the later one wins. In a config file: preset NAME.").early(),
     o("--print-preset", "NAME", "config", "", "print the settings of a preset and exit", "Print the settings of the preset on stdout, in the config file format, and exit. Nothing else is checked or started.").early(),
     o("--show-config", "", "config", "", "check the options, print the settings, exit", "Check the preset, the config file and the command line, print every setting in effect with the layer that set it and what this host allows (kernel, memory, open files), then exit with status 0. No listener is opened. A wrong option exits with status 2, as at a normal start.").early(),
-    o("--help", "[TOPIC]", "config", "", "print this help, or the options of a topic", "Print the overview, the options of one topic, or with the topic all a one-line list of every option. Also -h.").early(),
+    o("--help", "[TOPIC]", "config", "", "print this help, or the options of a topic", "Print the overview, the options of one topic, or with the topic all the options of every topic. Also -h.").early(),
     o("--version", "", "config", "", "print the version and exit", "Print the version and exit. Also -V.").early(),
     o("--host", "IP", "listen", "127.0.0.1", "address to listen on", "The address to listen on: an IP address, not a name. Use 0.0.0.0 or :: for direct clients; keep 127.0.0.1 behind a reverse proxy on the same host."),
     o("--port", "PORT", "listen", "6001", "port to listen on", "The TCP port to listen on (1 to 65535). A bare number does the same: finalwisp 7000. 0 is accepted but do not use it: the kernel then picks the port, and the start line does not show it."),
@@ -108,7 +113,7 @@ pub const OPTIONS: &[OptSpec] = &[
     o("--connect-timeout", "SECS", "limits", "10", "how long a connect to a target may take", "How long a connect to a target may take (at most 86400). A timeout closes the stream with CLOSE 0x43."),
     o("--drain-timeout", "SECS", "limits", "30", "time for open connections at shutdown", "On SIGTERM or SIGINT, how long open connections may go on before they are closed (at most 86400; 0 exits at once)."),
     o("--graceful-close", "", "advanced", "off", "close finished target connections with FIN", "Close a finished target connection with FIN instead of a TCP reset when the client closes the stream. The reset is much faster under connection churn and leaves no TIME_WAIT sockets."),
-    o("--no-splice", "", "advanced", "splice on", "copy downloads in user space, not with splice", "Copy downloads through user space instead of the kernel's zero-copy splice. On a small host with far clients it can hold less kernel TCP memory; with near, fast clients downloads get slower. See the docs page memory.md, small hosts."),
+    o("--no-splice", "", "advanced", "splice on", "copy downloads in user space, not with splice", "Copy downloads through user space instead of the kernel's zero-copy splice. A diagnostic switch; leave splice on, except for far clients behind a reverse proxy on the same small host when the host enters kernel TCP memory pressure: such clients look near to the server, so adaptive splice does not act for them. For far clients that connect directly with many streams adaptive splice already does the same. With near, fast clients on a 2-core host downloads got slower, and with a client program on the same host the server used more CPU per byte. See the docs page memory.md, small hosts."),
     o("--balance", "", "advanced", "off", "hand new connections to the least busy thread", "Hand each new connection to the least busy thread instead of letting the kernel choose. Helps a few busy long-lived connections on big machines (4-11% on 36-72 threads) and costs 1-7% when many short connections come and go."),
     o("--no-tfo", "", "advanced", "TFO on", "no TCP Fast Open to targets", "Do not use TCP Fast Open to targets. Try it if a middlebox drops SYN packets that carry data."),
     o("--no-keepalive", "", "advanced", "keepalive on", "no dead-peer detection (TCP keepalive)", "Turn off dead-peer detection on clients and targets (TCP keepalive). With it on, an idle dead peer is closed after 3 to 4 minutes."),
@@ -131,7 +136,7 @@ pub const OPTIONS: &[OptSpec] = &[
     o("--no-credit-pace", "", "memory", "credit pace on", "give upload credit while a download waits", "Turn off credit pacing. By default a stream gets no new upload credit while its download waits on the client, so streams that upload and download at once cannot fill the kernel socket buffers faster than the client reads. Turn it off only to compare or roll back."),
     o("--park-rcvlock", "", "memory", "off", "freeze the receive buffer of a waiting download", "Stop the kernel from growing the receive buffer of a download's target connection while the stream waits on a slow client. Many waiting downloads then hold less kernel memory on a small host. The buffer is never made smaller and grows again once the client catches up. Needs Linux 5.15 or later (the server refuses to start otherwise)."),
     o("--adaptive-splice", "", "memory", "on", "the default; kept for 1.2.0 configs", "Turn adaptive splice on. It is on by default; this option undoes an earlier --no-adaptive-splice and keeps 1.2.0 configs valid."),
-    o("--no-adaptive-splice", "", "memory", "adaptive splice on", "same read size for far and near clients", "Turn off adaptive splice. By default a client 10 ms or more away with more than 4 streams whose socket is backed up gets 64 KiB reads from its targets instead of 256 KiB, so many slow far downloads hold less kernel TCP memory on a small host. Clients closer than 10 ms, clients behind a reverse proxy on the same host and clients on --listen-unix always get 256 KiB. Turn it off only to compare or roll back."),
+    o("--no-adaptive-splice", "", "memory", "adaptive splice on", "same read size for far and near clients", "Turn off adaptive splice. By default a client 10 ms or more away with more than 4 streams whose socket is backed up gets 64 KiB reads from its targets instead of 256 KiB, so many slow far downloads hold less kernel TCP memory on a small host. Clients closer than 10 ms, clients behind a reverse proxy on the same host and clients on --listen-unix always get 256 KiB. Turn it off only to compare or roll back. --adaptive-splice, still accepted for 1.2.0 configs, turns it back on."),
     o("--metrics-interval", "SECS", "logs", "off", "print a line with all counters every SECS", "Print one line with all counters on stderr every SECS seconds, and a last one at exit. 0 is off."),
     o("--max-conns", "N", "limits", "off", "the most client connections in total", "The most client connections in total. A new connection over the limit is reset right after accept. 0 is off."),
     o("--max-streams-per-conn", "N", "limits", "off", "the most streams on one connection", "The most streams on one connection. A CONNECT over it is refused with CLOSE 0x49 (throttled); the connection stays. 0 is off. The public preset sets 1024."),
@@ -184,8 +189,14 @@ pub const OPTIONS: &[OptSpec] = &[
     o("--no-port-share", "", "limits", "", "undo --port-share", "Undo --port-share of a preset, a config file or earlier on the command line."),
     o("--dest-failfast", "", "limits", "off", "no new connects to a destination that is dead", "Stop sending connects to a destination that does not answer. A destination (target address and port) is taken for dead when 8 or more connects of one worker thread to it have each got no answer to 4 SYNs and none has opened. Until it answers, a new stream to it is refused at once with CLOSE 0x43, the reason it would get at the connect timeout; one connect per second per worker thread still goes out as a probe, and the first one that connects ends it. Only while another client is connected: a client alone on the server is never refused. A name with more addresses goes on with the next one. Streams that are connecting go on until --connect-timeout. Never applies to loopback, private and other addresses that are not public, to --trusted-proxy addresses and to a client without a client address. TCP streams only; not in effect with --upstream. The public preset sets it."),
     o("--no-dest-failfast", "", "limits", "", "undo --dest-failfast", "Undo --dest-failfast of a preset, a config file or earlier on the command line."),
-    o("--net-watch", "", "limits", "off", "counters and a log line: SYN retransmits, UDP", "Watch two things that no option bounds, because the host has no readable limit for packets out: connects to many destinations that do not answer, and UDP datagrams. Nothing is refused. The metrics get host_syn_retrans and host_udp_out (SYN retransmits and UDP datagrams sent by the host since boot) and the gauge connecting (streams with a connect in flight). Every 10 seconds one thread compares the host's counters: a warning is logged when the host sent 30000 or more SYN retransmits in 10 seconds and 3 or more per connect attempt, or 75000 or more UDP datagrams in 10 seconds and they are half of all its packets; the next warning of a kind comes only at twice that value. The public preset sets it."),
+    o("--net-watch", "", "limits", "off", "counters and a log line: SYN retransmits, UDP", "Watch two things that no option bounds, because the host has no readable limit for packets out: connects to many destinations that do not answer, and UDP datagrams. Nothing is refused. The metrics get host_syn_retrans and host_udp_out (SYN retransmits and UDP datagrams sent by the host since boot) and the gauge connecting (streams with a connect in flight). Every 10 seconds one thread compares the host's counters: a warning is logged when the host sent 30000 or more SYN retransmits in 10 seconds and 3 or more per connect attempt, or 75000 or more UDP datagrams in 10 seconds and they are half of all its packets; the next warning of a kind comes only at twice that value. It also reads the host's connection-tracking table (nf_conntrack_count and nf_conntrack_max, where readable): a warning at the start and while it runs when it is 3/4 full, the gauges host_conntrack and host_conntrack_max, and a --show-config row that compares its size with the file descriptors for connections and streams. The public preset sets it."),
     o("--no-net-watch", "", "limits", "", "undo --net-watch", "Undo --net-watch of a preset, a config file or earlier on the command line."),
+    o("--stream-share", "", "limits", "off", "a stream cap per connection when fds run short", "When open files run short, a connection that holds many streams gets no new ones while connections with fewer go on, so the last file descriptors are not used up by the busiest connections first. While 7/8 of the file descriptors the server can use are handed out (until below 13/16), a new stream on a connection that holds its share of streams or more gets CLOSE 0x49. The share is about twice the usable file descriptors per open connection at 7/8 and once that at the limit, and never below 32 streams. Open streams go on. It counts connections, not addresses: a proxy that carries many users on one Wisp connection is one connection. Without a readable open-file limit it does nothing. The public preset sets it."),
+    o("--no-stream-share", "", "limits", "", "undo --stream-share", "Undo --stream-share of a preset, a config file or earlier on the command line."),
+    o("--stream-pool", "", "memory", "off", "one stream limit for all threads, not one each", "Under memory pressure (memory level 1, and always with a budget under 256 MiB) each worker thread has a limit on its open streams, sized from the budget (counter refuse_streams). With --stream-pool the threads share one limit of the same total, so a busy thread is not refused while another thread has room. The memory bound stays the same. A thread takes the streams in small blocks from the shared count and gives back what it does not use. The public preset sets it."),
+    o("--no-stream-pool", "", "memory", "", "undo --stream-pool", "Undo --stream-pool of a preset, a config file or earlier on the command line."),
+    o("--unread-close", "", "limits", "off", "reset a client that stopped reading its downloads", "While the host's TCP memory is short (from 3/4 of net.ipv4.tcp_mem's maximum until below 11/16; in a container that cannot read it, while the kernel reports TCP memory pressure), reset a connection that holds a download its client does not read: the client's receive window has been 0 and it took no data for 600 seconds (10 minutes). A reset frees the kernel memory of all its streams. Nothing is reset while the host has TCP memory to spare. A slow reader can take no data for minutes while its buffer drains (in our tests up to 187 s at 2 KiB per second with the kernel's default buffer, 346 s with an 8 MiB buffer): one that reads slower, or has a larger buffer, can be reset under pressure, as can a client paused for 10 minutes or more (a phone app in the background, a frozen browser tab); it connects again. Counter close_unread. Needs Linux 5.4 or later. Off unless asked for: the public preset does not set it (a later release may)."),
+    o("--no-unread-close", "", "limits", "", "undo --unread-close", "Undo --unread-close of a preset, a config file or earlier on the command line."),
 ];
 
 /// Longest --connect-timeout: `Instant + Duration` panics on overflow, so a huge value is refused here.
@@ -275,6 +286,9 @@ pub struct Opts {
     pub port_share: bool,    // 60.63 E2 source ports toward one destination: socket option, share rule (default off)
     pub dest_failfast: bool, // 60.63 E3 a destination that does not answer gets no new connect (default off)
     pub net_watch: bool,     // 60.63 E4 counters and a log line for SYN retransmits and UDP datagrams (default off)
+    pub stream_share: bool,  // 60.72 a per-connection stream cap from the host mark of the fd count (default off)
+    pub stream_pool: bool,   // 60.72 the memory levels' stream limit shared by the workers (default off)
+    pub unread_close: bool,  // 60.73 E5 reset a client that stopped reading, while host TCP memory is short (default off)
 }
 
 impl Opts {
@@ -1156,6 +1170,9 @@ fn parse_args_of<I: IntoIterator<Item = String>>(args: I, threads: usize, whole:
         port_share: false,
         dest_failfast: false,
         net_watch: false,
+        stream_share: false,
+        stream_pool: false,
+        unread_close: false,
     };
     let (mut tls_certs, mut tls_keys) = (Vec::<String>::new(), Vec::<String>::new());
     let mut args = args.into_iter();
@@ -1288,6 +1305,12 @@ fn parse_args_of<I: IntoIterator<Item = String>>(args: I, threads: usize, whole:
             "--no-dest-failfast" => o.dest_failfast = false,
             "--net-watch" => o.net_watch = true,
             "--no-net-watch" => o.net_watch = false,
+            "--stream-share" => o.stream_share = true, // 60.72 (each pair: the later one wins)
+            "--no-stream-share" => o.stream_share = false,
+            "--stream-pool" => o.stream_pool = true,
+            "--no-stream-pool" => o.stream_pool = false,
+            "--unread-close" => o.unread_close = true, // 60.73
+            "--no-unread-close" => o.unread_close = false,
             // 60.20 C1 destination policy
             "--allow-host" | "--block-host" => {
                 let v = list(&a, &val()?, crate::policy::host_entry)?;
@@ -1761,6 +1784,14 @@ mod tests {
             assert!(!line.is_empty() && !intro.is_empty() && !note_id(line) && !note_id(intro));
         }
         assert!(COMMON.iter().all(|n| spec(n).is_some()));
+        // 60.75 a rare option is a parsed row, not on the first page, and another option of its topic names it
+        for n in RARE {
+            let s = spec(n).unwrap();
+            assert!(s.parsed && !COMMON.contains(n), "{n}");
+            let word = |c: char| c.is_ascii_alphanumeric() || c == '-';
+            let names = |t: &str| t.match_indices(n).any(|(i, _)| !t[i + n.len()..].starts_with(word));
+            assert!(OPTIONS.iter().any(|t| t.topic == s.topic && t.name != s.name && names(t.long)), "{n}");
+        }
         for f in ["--credit-v2", "--prio", "--no-tcpmem-adapt", "--no-dns-coalesce"] {
             assert!(spec(f).is_none() && removed(f).is_some(), "{f}");
         }
@@ -2440,14 +2471,14 @@ mod tests {
             e.args,
             words(
                 "--block-smtp --max-streams-per-conn 1024 --fd-admission --conn-share --dns-own --dns-reserve --tcpmem-share \
-                 --port-share --dest-failfast --net-watch"
+                 --port-share --dest-failfast --net-watch --stream-share --stream-pool"
             )
         );
         assert_eq!(
             preset_line(&e).unwrap(),
             "preset public (command line): block-smtp on (preset), max-streams-per-conn 1024 (preset), fd-admission on (preset), \
              conn-share on (preset), dns-own on (preset), dns-reserve on (preset), tcpmem-share on (preset), port-share on \
-             (preset), dest-failfast on (preset), net-watch on (preset)"
+             (preset), dest-failfast on (preset), net-watch on (preset), stream-share on (preset), stream-pool on (preset)"
         );
     }
 
@@ -2623,12 +2654,12 @@ mod tests {
 
     /// opts_diff of a corpus case as the base commit saw it (`base`: the corpus column). The corpus was classified when
     /// the public preset had two lines; v1.3.0 added switches to it (fd-admission, conn-share, dns-reserve, which sets
-    /// dns-share, and the four of 60.63: tcpmem-share, port-share, dest-failfast, net-watch). No old command line names
+    /// dns-share, and the four of 60.63: tcpmem-share, port-share, dest-failfast, net-watch; and 60.72's two stream limits). No old command line names
     /// them, so they are on exactly when the public preset is in effect: checked here, then left out of the comparison
     /// with the corpus column. The preset's dns-own is a setting that old command lines do name (--dns-own,
     /// --dns-server): on with the preset, and left out where the base had it off.
     fn diff_as_at_base(st: &Start, base: &str) -> String {
-        const ADDED: [&str; 8] = [
+        const ADDED: [&str; 10] = [
             "dns_share: true",
             "dns_reserve: true",
             "fd_admission: true",
@@ -2637,6 +2668,8 @@ mod tests {
             "port_share: true",
             "dest_failfast: true",
             "net_watch: true",
+            "stream_share: true", // 60.72
+            "stream_pool: true",
         ];
         const OWN: &str = "dns_own: true";
         let diff = opts_diff(&st.opts);
@@ -2902,8 +2935,8 @@ mod tests {
         assert!(s.iter().all(|x| !x.key.starts_with("no-")));
         assert_eq!(
             s.len(),
-            FLAGS.len() - 11,
-            "the pairs (block-smtp, adaptive-splice, dns-share, fd-admission, conn-share, dns-reserve, dns-own and the four of section E) are one row each"
+            FLAGS.len() - 14,
+            "the pairs (block-smtp, adaptive-splice, dns-share, fd-admission, conn-share, dns-reserve, dns-own, the five of section E and the two stream limits) are one row each"
         );
         // the default state of every switch is what the parser does without it (the table's texts cannot drift)
         let bare = parse("").unwrap();
@@ -2947,7 +2980,9 @@ mod tests {
                 "tcpmem-share",
                 "port-share",
                 "dest-failfast",
-                "net-watch"
+                "net-watch",
+                "stream-share",
+                "stream-pool"
             ]
         );
         assert!(preset_keys(None).is_empty() && preset_keys(Some(("none", Src::Cmd))).is_empty());

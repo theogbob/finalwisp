@@ -84,7 +84,9 @@ function streamEcho(conn, host, bytes, chunk) {
     let n = 0;
     const t = setTimeout(() => res({ ok: false, why: `timeout got ${n}/${bytes}` }), 20000);
     s.onmessage = d => { got.push(Buffer.from(d)); n += d.length;
-      if (n >= bytes) { clearTimeout(t); s.close(0x02);
+      if (n >= bytes) { clearTimeout(t);
+        // wisp-js 0.5.3: ClientStream.close() fires the stream's own onclose(reason) at once (0.5.0 did not): ignore our own close
+        s.onclose = () => {}; s.close(0x02);
         const same = Buffer.concat(got).equals(data); res({ ok: same, why: same ? "" : "content mismatch" }); } };
     s.onclose = r => { clearTimeout(t); res({ ok: false, why: `closed early reason ${r}` }); };
     for (let i = 0; i < bytes; i += chunk) s.send(data.subarray(i, Math.min(bytes, i + chunk)));

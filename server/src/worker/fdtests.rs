@@ -144,7 +144,7 @@ pub(super) fn client_with(w: &mut Worker, port: u16, hello: &[u8]) -> (TcpStream
     (c, ci)
 }
 
-fn peer_port(fd: RawFd) -> u16 {
+pub(super) fn peer_port(fd: RawFd) -> u16 {
     let s = std::mem::ManuallyDrop::new(unsafe { TcpStream::from_raw_fd(fd) });
     s.peer_addr().map_or(0, |a| a.port())
 }

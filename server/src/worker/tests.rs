@@ -5127,3 +5127,7 @@ fn a_client_timeout_counts_as_a_dead_peer() {
 // 60.63 section E (its own file)
 #[path = "bdtests.rs"]
 mod bd;
+
+// 60.72 --stream-share, --stream-pool (its own file)
+#[path = "sltests.rs"]
+mod sl;

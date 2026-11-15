@@ -36,6 +36,7 @@ mod meter;
 mod pace;
 mod proxy;
 mod rcvlock;
+mod slimits; // 60.72
 mod streamlog;
 mod sweep;
 mod target;
@@ -619,7 +620,7 @@ impl Worker {
             pend_over_sweeps: 0,
             l3_mark: u64::MAX,
             l3_sweeps: 0,
-            max_streams: mem::max_streams(&mem::STAGES[mem::LEVEL.load(Relaxed) as usize]),
+            max_streams: Self::streams_cap(mem::LEVEL.load(Relaxed) as usize), // (60.72 --stream-pool: none)
             rbuf_max: mem::rbuf_max(mem::LEVEL.load(Relaxed) as usize),
             win: mem::grant_window(mem::cap_level(mem::LEVEL.load(Relaxed) as usize)),
             bulk_at: mem::bulk_at(mem::cap_level(mem::LEVEL.load(Relaxed) as usize)),

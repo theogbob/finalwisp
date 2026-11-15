@@ -12,7 +12,7 @@
 # so arguments after the image name keep it. See it: docker run --rm finalwisp:$VER --print-preset public
 # Turn it off: add `--preset none` to the arguments (the last --preset wins), or one setting's off value
 # (--no-block-smtp, --max-streams-per-conn 0, --no-fd-admission, --no-conn-share, --no-dns-own, --no-dns-reserve,
-# --no-tcpmem-share, --no-port-share, --no-dest-failfast, --no-net-watch).
+# --no-tcpmem-share, --no-port-share, --no-dest-failfast, --no-net-watch, --no-stream-share, --no-stream-pool).
 # File descriptors: docker starts a container with a soft limit of 1024 open files and a much higher hard limit;
 # finalwisp raises its soft limit to the hard limit at startup (at most 1048576). To set both yourself:
 # --ulimit nofile=1048576:1048576 (docs/service.md#docker).

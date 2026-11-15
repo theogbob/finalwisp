@@ -6,6 +6,28 @@
    "note": "this repo's release build ($FINALWISP_BIN overrides)"
   },
   "epoxy": {
+   "cmd": "{root}/ref/epoxy-tls-9cde724/target/release/epoxy-server {dir}/epoxy-{port}.toml",
+   "files": {
+    "epoxy-{port}.toml": "[server]\nbind = [\"tcp\", \"127.0.0.1:{port}\"]\nruntime = \"multithread\"\n\n[stream]\nallow_loopback = true\nallow_non_global = true\n"
+   },
+   "extra": [
+    "--stall-ping-ms",
+    "1"
+   ],
+   "note": "epoxy-server multithread, loopback + non-global targets allowed (matrix.main.json); upstream 9cde724 (2026-10-22, latest multiplexed) built as its README says (cargo b -r: its Cargo.lock, tokio-websockets 0.12.0, which panics under load and takes the server down); ref/epoxy-tls-9cde724 (a git worktree of ref/epoxy-tls)"
+  },
+  "epoxy-9cde724-lock0123": {
+   "cmd": "{root}/ref/epoxy-tls-9cde724-lock0123/target/release/epoxy-server {dir}/epoxy-{port}.toml",
+   "files": {
+    "epoxy-{port}.toml": "[server]\nbind = [\"tcp\", \"127.0.0.1:{port}\"]\nruntime = \"multithread\"\n\n[stream]\nallow_loopback = true\nallow_non_global = true\n"
+   },
+   "extra": [
+    "--stall-ping-ms",
+    "1"
+   ],
+   "note": "'epoxy' with one lock change: `cargo update -p tokio-websockets --precise 0.12.3` (0.12.0 panics in FrameQueue with 64+ queued frames and the whole server exits); built in ref/epoxy-tls-9cde724-lock0123, md5 b3281c54"
+  },
+  "epoxy-0c11678-lock0123": {
    "cmd": "{root}/ref/epoxy-tls/target/release/epoxy-server {dir}/epoxy-{port}.toml",
    "files": {
     "epoxy-{port}.toml": "[server]\nbind = [\"tcp\", \"127.0.0.1:{port}\"]\nruntime = \"multithread\"\n\n[stream]\nallow_loopback = true\nallow_non_global = true\n"
@@ -14,7 +36,7 @@
     "--stall-ping-ms",
     "1"
    ],
-   "note": "epoxy-server multithread, loopback + non-global targets allowed (matrix.main.json)"
+   "note": "the epoxy-server build of all results before 2026-11-15: 0c11678 with a LOCAL Cargo.lock edit (tokio-websockets 0.12.0 -> 0.12.3; upstream pins 0.12.0), md5 8161edc1; same config as 'epoxy'. Before/after only: benches use 'epoxy' (upstream as it is)"
   },
   "epoxy-single": {
    "cmd": "{root}/ref/epoxy-tls/target/release/epoxy-server {dir}/epoxy-single-{port}.toml",
@@ -40,12 +62,21 @@
   },
   "wisp-js": {
    "cmd": "node server.mjs {port}",
+   "cwd": "{root}/baselines/js-server-0.5.3",
+   "extra": [
+    "--stall-ping-ms",
+    "1"
+   ],
+   "note": "wisp-js 0.5.3 server (npm latest, 2026-11-06), default log level (INFO)"
+  },
+  "wisp-js-0.5.0": {
+   "cmd": "node server.mjs {port}",
    "cwd": "{root}/baselines/js-server",
    "extra": [
     "--stall-ping-ms",
     "1"
    ],
-   "note": "wisp-js 0.5.0 server, default log level (INFO)"
+   "note": "wisp-js 0.5.0 server, the build of all results before 2026-11-15, default log level (INFO)"
   },
   "wisp-js-0.4.1": {
    "cmd": "node server.mjs {port}",
@@ -57,13 +88,22 @@
    "note": "legacy: wisp-js 0.4.1 + DEBUG logging, as pinned by WispMark"
   },
   "python": {
+   "cmd": "{root}/baselines/python-0.11.0/.venv/bin/python -m wisp.server --port={port} --allow-loopback --allow-private --log-level error",
+   "cwd": "{root}/ref/wisp-server-python-deeb390",
+   "extra": [
+    "--stall-ping-ms",
+    "1"
+   ],
+   "note": "wisp-server-python 0.11.0 (upstream deeb390, 2026-11-04 = PyPI latest), CPython 3.13.6; venv baselines/python-0.11.0"
+  },
+  "python-0.9.0": {
    "cmd": "{root}/baselines/python/.venv/bin/python -m wisp.server --port={port} --allow-loopback --allow-private --log-level error",
    "cwd": "{root}/ref/wisp-server-python",
    "extra": [
     "--stall-ping-ms",
     "1"
    ],
-   "note": "wisp-server-python"
+   "note": "wisp-server-python 0.9.0 (ae940ec), the build of all results before 2026-11-15"
   },
   "python-wispmark": {
    "cmd": "{root}/baselines/python/.venv/bin/python -m wisp.server --port={port} --allow-loopback",
@@ -81,7 +121,16 @@
     "--stall-ping-ms",
     "1"
    ],
-   "note": "author's speed.config.json (32768 credits); baselines/wispurr/SOURCE.md"
+   "note": "author's speed.config.json (32768 credits); upstream 0e0fdb1 (2026-11-14); baselines/wispurr/SOURCE.md"
+  },
+  "wispurr-2afbad2": {
+   "cmd": "./wispurr-2afbad2 -config speed.config.json -port {port} --host 127.0.0.1",
+   "cwd": "{root}/baselines/wispurr",
+   "extra": [
+    "--stall-ping-ms",
+    "1"
+   ],
+   "note": "the wispurr build of all results before 2026-11-15 (data-loss + credit-stall bugs); baselines/wispurr/SOURCE.md"
   },
   "wispurr-wispmark": {
    "cmd": "./wispurr -config {dir}/wispurr-wispmark.json -port {port} --host 127.0.0.1",
@@ -104,7 +153,30 @@
     "--stall-ping-ms",
     "1"
    ],
-   "note": "WispMark's mrrowisp settings (256 credits). Known data-loss + credit-stall bugs: baselines/wispurr/SOURCE.md"
+   "note": "WispMark's mrrowisp settings (256 credits). Data-loss + credit-stall bugs were in 2afbad2, fixed in 0e0fdb1: baselines/wispurr/SOURCE.md"
+  },
+  "wispurr-2afbad2-wispmark": {
+   "cmd": "./wispurr-2afbad2 -config {dir}/wispurr-2afbad2-wispmark.json -port {port} --host 127.0.0.1",
+   "cwd": "{root}/baselines/wispurr",
+   "files": {
+    "wispurr-2afbad2-wispmark.json": {
+     "json_base": "{root}/baselines/wispurr/speed.config.json",
+     "set": {
+      "port": "{port}",
+      "tcpBufferSize": 131072,
+      "bufferRemainingLength": 256,
+      "tcpNoDelay": true,
+      "enableV2": true,
+      "websocketPermessageDeflate": false,
+      "allowUDP": false
+     }
+    }
+   },
+   "extra": [
+    "--stall-ping-ms",
+    "1"
+   ],
+   "note": "'wispurr-wispmark' on the old 2afbad2 build (the before side of the credit-stall check, 60.71)"
   },
   "wispx": {
    "cmd": "{root}/ref/wispx-rust/epoxy-server {dir}/wispx-{port}.toml",
@@ -129,12 +201,20 @@
    "note": "UNOFFICIAL: 'wispx' with v2_close_delay_ms = 0 (its 2 ms CLOSE hold for old native wisp-mux clients off)"
   },
   "holywisp": {
+   "cmd": "{root}/ref/holywisp-1758e6a/build/release/holywisp --host 127.0.0.1 --port {port} --allow-loopback on --allow-private on --allow-direct-ip on --flood-protection off --connections-limit-per-ip 0 --connection-window-s 0 --reputation off --log-level error",
+   "extra": [
+    "--stall-ping-ms",
+    "1"
+   ],
+   "note": "UNOFFICIAL: holyWisp (github.com/Fracital/holyWisp, C) upstream 1758e6a (2026-11-13), built with `make release` in ref/holywisp-1758e6a (a git worktree of ref/holywisp); its flood limits, per-IP connection rate and reputation are on by default and would throttle a loopback benchmark (all streams to one target from one IP), so they are off here, like the other servers' (they have none on)"
+  },
+  "holywisp-cb2510a": {
    "cmd": "{root}/ref/holywisp/build/release/holywisp --host 127.0.0.1 --port {port} --allow-loopback on --allow-private on --allow-direct-ip on --flood-protection off --connections-limit-per-ip 0 --connection-window-s 0 --reputation off --log-level error",
    "extra": [
     "--stall-ping-ms",
     "1"
    ],
-   "note": "UNOFFICIAL: holyWisp (github.com/Fracital/holyWisp, C) built with `make release` in ref/holywisp; its flood limits, per-IP connection rate and reputation are on by default and would throttle a loopback benchmark (all streams to one target from one IP), so they are off here, like the other servers' (they have none on)"
+   "note": "UNOFFICIAL: the holyWisp build before 2026-11-15 (cb2510a, ref/holywisp); same flags as 'holywisp'"
   }
  }
 }

@@ -45,7 +45,15 @@ finalwisp: ev=conn_close ts=2026-11-01T12:00:00.123Z w=3 cid=3:1842 ip=203.0.113
 
 `why` is one of: `client_close`, `server_close` (shutdown, or a plain HTTP request answered), `ws_error`,
 `protocol_error`, `hs_timeout` (no complete handshake in time), `auth_failed`, `tls_error`, `pressure_shed` (memory
-pressure), `dead_peer` (the client vanished), `limit` (a per-IP limit or a policy refusal).
+pressure), `dead_peer` (the client vanished), `limit` (a per-IP limit or a policy refusal). With
+[`--unread-close`](configuration.md#--unread-close) it can also be `unread`: the connection was reset because its
+client did not read its downloads while the host's TCP memory was short.
+
+`streams` counts a CONNECT that got past the connection's own checks (policy, `--max-streams-per-conn`, the per-thread
+stream limit, `--stream-rate-per-ip`), like the counter `connects`. Some refusals come later, while the stream is set
+up, and are counted there too: no file descriptor left (`refuse_fd`), a name that does not resolve, with
+`--stream-pool` the shared stream limit (`refuse_streams`), and `--stream-share` (`refuse_stream_share`). Such a
+stream is in `streams`, not in `refused`, and gets its CLOSE at once; the stream log has its line with the reason.
 
 A connection refused right at accept (`--max-conns`, `--max-conns-per-ip`, `--conn-rate-per-ip`) gives `ev=conn_refused ... why=limit`, at
 most 20 lines per second per thread, then one `ev=refused_suppressed n=` line per second.

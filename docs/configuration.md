@@ -1,8 +1,9 @@
 # Configuration reference
 
-Every option finalwisp accepts, grouped by topic, with its default. The source of truth is the binary itself:
+Every option finalwisp accepts, grouped by topic, with its default (a few that are rarely needed are in a short
+section of their own: [rarely needed options](#rarely-needed-options)). The source of truth is the binary itself:
 `finalwisp --help` prints a short overview, `finalwisp --help TOPIC` the options of one topic and
-`finalwisp --help all` every option (on stdout, with status 0).
+`finalwisp --help all` the options of every topic (on stdout, with status 0).
 
 All options are off or at a safe default unless you set them. A plain `finalwisp` serves `ws://127.0.0.1:6001/`.
 
@@ -34,8 +35,9 @@ Before the topics: [how options are read](#how-options-are-read), the [config fi
   `--adaptive-splice` after `--no-adaptive-splice` turns it back on, and `--no-block-smtp` after `--block-smtp` turns it
   off. `--no-fd-admission`, `--no-conn-share` and `--no-dns-share` turn `--fd-admission`, `--conn-share` and
   `--dns-share` off again: of the two, the later one wins. `--no-dns-reserve` and `--no-dns-own` do the same for
-  `--dns-reserve` and `--dns-own`, and `--no-tcpmem-share`, `--no-port-share`, `--no-dest-failfast` and
-  `--no-net-watch` for the four guards.)
+  `--dns-reserve` and `--dns-own`; so do `--no-tcpmem-share`, `--no-port-share`, `--no-dest-failfast` and
+  `--no-net-watch` for the four guards, `--no-stream-share` and `--no-stream-pool` for the two stream limits, and
+  `--no-unread-close` for `--unread-close`.)
 - Options come from up to three places: a [preset](#presets), a [config file](#config-file) and the command line. The
   preset is read first, then the command line from left to right, with the config file at the place where `--config`
   stands. The later one wins.
@@ -60,7 +62,7 @@ Before the topics: [how options are read](#how-options-are-read), the [config fi
 | `--print-preset` | `NAME` |  | Print the preset's settings on stdout and exit with status 0. See [presets](#presets). |
 | `--show-config` |  |  | Check the options, print every setting in effect with the layer that set it and what this host allows, then exit. Nothing is started. |
 | `--help` | `[TOPIC]` |  | Print a short overview and exit with status 0. With a topic (the section names of this page, or `all`): the options of that topic. Short form: `-h`. |
-| `--version` |  |  | Print the version (`finalwisp 1.3.1`) and exit. Short form: `-V`. |
+| `--version` |  |  | Print the version (`finalwisp 1.3.2`) and exit. Short form: `-V`. |
 
 ## Config file
 
@@ -106,8 +108,9 @@ How the file and the command line combine:
 - A switch set in the file cannot be turned off on the command line. Remove the line instead. (Exceptions:
   `--adaptive-splice` on the command line undoes `no-adaptive-splice` in the file, and `--no-block-smtp` undoes
   `block-smtp`. `--no-fd-admission`, `--no-conn-share` and `--no-dns-share` undo `fd-admission`, `conn-share` and
-  `dns-share`. `--no-dns-reserve` and `--no-dns-own` undo `dns-reserve` and `dns-own`, and `--no-tcpmem-share`,
-  `--no-port-share`, `--no-dest-failfast` and `--no-net-watch` undo the four guards.)
+  `dns-share`. `--no-dns-reserve` and `--no-dns-own` undo `dns-reserve` and `dns-own`; `--no-tcpmem-share`,
+  `--no-port-share`, `--no-dest-failfast` and `--no-net-watch` undo the four guards; `--no-stream-share` and
+  `--no-stream-pool` undo the two stream limits; and `--no-unread-close` undoes `unread-close`.)
 
 Errors stop the server before it opens any socket, with status 2. The message names `FILE:LINE` and the option, but
 never the value, because the file may hold secrets. Limits: the file must be at most 1 MiB, each line at most 16 KiB,
@@ -149,6 +152,8 @@ What `public` sets:
 | `port-share` | on | `--no-port-share` |
 | `dest-failfast` | on | `--no-dest-failfast` |
 | `net-watch` | on | `--no-net-watch` |
+| `stream-share` | on | `--no-stream-share` |
+| `stream-pool` | on | `--no-stream-pool` |
 
 `finalwisp --print-preset public` shows the lines of the version you run.
 
@@ -284,8 +289,12 @@ limits that you choose.
 | `--no-port-share` |  |  | Turns `--port-share` off again. Of the two, the later one wins. |
 | `--dest-failfast` |  | off | Stop sending connects to a destination that does not answer: new streams to it fail at once instead of after the connect timeout. `--no-dest-failfast` turns it off again. [Details](#--dest-failfast). |
 | `--no-dest-failfast` |  |  | Turns `--dest-failfast` off again. Of the two, the later one wins. |
-| `--net-watch` |  | off | Counters and a log line for two things that no option bounds: SYN retransmits (connects that get no answer) and UDP datagrams. Nothing is refused. `--no-net-watch` turns it off again. [Details](#--net-watch). |
+| `--net-watch` |  | off | Counters and a log line for two things that no option bounds: SYN retransmits (connects that get no answer) and UDP datagrams; and a warning when the host's connection-tracking table is 3/4 full. Nothing is refused. `--no-net-watch` turns it off again. [Details](#--net-watch). |
 | `--no-net-watch` |  |  | Turns `--net-watch` off again. Of the two, the later one wins. |
+| `--stream-share` |  | off | When file descriptors run short, a connection that holds many streams gets no new ones, while connections with fewer go on. The `public` preset sets it. `--no-stream-share` turns it off again. [Details](#--stream-share). |
+| `--no-stream-share` |  |  | Turns `--stream-share` off again. Of the two, the later one wins. |
+| `--unread-close` |  | off | While the host's TCP memory is short, reset a connection whose client stopped reading its downloads. Off unless asked for: the `public` preset does not set it. `--no-unread-close` turns it off again. [Details](#--unread-close). |
+| `--no-unread-close` |  |  | Turns `--unread-close` off again. Of the two, the later one wins. |
 
 Rates are bytes per second of TCP payload. In network units: `1M` is about 8.4 Mbit/s, `10M` about 84 Mbit/s,
 `100M` about 839 Mbit/s.
@@ -324,6 +333,22 @@ Each connection and each stream needs one file descriptor, so the limit is the n
 server can hold. The startup log shows the limit before and after. If the hard limit is unlimited or above the
 kernel's `fs.nr_open`, the kernel accepts the raise only together with a hard limit of `fs.nr_open`: the server does
 that and logs a warning.
+
+### `--stream-share`
+
+While 7/8 of the usable file descriptors are handed out to the worker threads (the mark of `--fd-admission`; until
+below 13/16), a new stream on a connection that already holds its share of streams or more gets CLOSE `0x49`. The
+share is the usable file descriptors divided by the open connections, twice that at 7/8 and falling to once that at
+the limit, and never below 32 streams. Connections with fewer streams go on opening streams, so the room that is left
+goes to them and not to the busiest connections first. Open streams are not closed. It does not need
+`--fd-admission` (that one refuses new connections at the same mark). Counter: `refuse_stream_share`; with
+`--log-streams` the refusal has `rule=stream_share`. Without a readable open-file limit it does nothing.
+
+It counts connections, not addresses. A proxy that carries many users on one Wisp connection is one connection and
+gets one share; users behind one address with a connection each get a share each. In a test with an open-file limit
+of 400 (304 usable), 20 connections without streams and one that asked for 304: without the option that connection
+took the descriptors until none was left, and the 20 others got CLOSE `0x49` for their first stream; with it, it got
+244 streams and the others opened theirs. A higher limit is still the real fix.
 
 ### `--tcpmem-share`
 
@@ -471,6 +496,81 @@ few times at most. The two numbers are thresholds for a log line, not limits. Th
 4,200 and 10,000. A host with a faster network path has more room. 100 browsers that load a page from a slow host
 at the same time stay below both conditions.
 
+`--net-watch` also reads the host's connection-tracking table, where the kernel has one (the `nf_conntrack` module
+of a firewall; files `/proc/sys/net/netfilter/nf_conntrack_count` and `nf_conntrack_max`, read only). Each client
+connection and each stream takes an entry (on loopback both ends of a stream), and a closed one keeps its entry for
+up to 2 minutes. When the table is full, the kernel drops the packets of new connections: new clients and new
+streams time out, and the server cannot tell why.
+
+- At the start it warns when the table is 3/4 full.
+- While it runs, the thread above reads the table every 10 seconds and logs a warning when it is 3/4 full. The next
+  such warning comes only after the table was below half. (No second warning when the start warning said it.)
+- The metrics get `host_conntrack` and `host_conntrack_max` (gauges).
+- `--show-config` has a row `connection tracking`: the entries in use and the table's size, and whether the table has
+  fewer entries than the file descriptors the server may use for connections and streams. That is not a warning: with
+  the raised open-file limit most hosts have the smaller table, and it fills first only when that many connections and
+  streams are open. In a test, one active user held about 340 entries, so a table of 262,144 entries holds about 770
+  users.
+
+Where these files are missing or not readable (no connection tracking, or a container without access to them), there
+is no warning and no gauge. finalwisp changes no setting of the table.
+
+### `--unread-close`
+
+`--tcpmem-share` acts when a stream is opened. A client that opened its downloads before the host's TCP memory got
+short, or many clients that each hold a few, keep that memory for as long as they stay connected and do not read.
+`--unread-close` acts on those connections.
+
+While the host's TCP memory is short, the server resets a connection when both of these are true at each of its
+checks (every 2 seconds) for 600 seconds (10 minutes):
+
+- The connection holds a download that waits for its client: the server has stopped reading the target because the
+  client's output is full (the same count as `--tcpmem-share`).
+- The client's receive window is 0 and the client took no data: its own socket buffer is full. A connection that is
+  slow because of the network, or because the host has no memory to send, has a window above 0 and is not counted.
+
+"Short" is the mark of `--tcpmem-share`: from 3/4 of the third value of `net.ipv4.tcp_mem` until below 11/16. In a
+container that cannot read `net.ipv4.tcp_mem`, it is the time while the kernel reports TCP memory pressure
+(`/proc/net/protocols`). The server reads `/proc/net/sockstat` for this, and changes no kernel setting. The 600
+seconds can start before the mark: a connection that has taken nothing for 600 seconds is reset at the first check
+after the mark is set.
+
+A reset (TCP RST) closes every stream of the connection and frees the kernel memory of all of them: the buffers of
+its target sockets and the data queued for the client. A CLOSE for each stream would not help, because a client that
+does not read never gets it. Counter: `close_unread`. With `--log-conns`, the line of the connection says
+`why=unread`. A log line, at most one per 10 s, says how many connections were reset and why. Without
+`--tcpmem-share`, the log also says when the host's TCP memory gets short (`--unread-close is armed`) and when it is no
+longer short (`is at rest`), at most one such pair per 10 s; with `--tcpmem-share` on, its own lines name the same
+moments.
+
+Why 600 seconds: a Linux client whose buffer is full opens its window again only when much of the buffer is free,
+so a client that reads slowly takes no new data for minutes at a time, and the larger its buffer, the longer. In tests
+on one host (loopback, 10 minutes each), the longest time without new data was:
+
+| client's receive buffer | reads 2 KiB per second | reads 8 KiB per second |
+|---|---|---|
+| the kernel's default, grown by the kernel (to 0.4-0.8 MiB) | 168-187 s | 45 s |
+| 8 MiB | 315-346 s | 87 s |
+
+What it does to honest clients:
+
+- Nothing is reset while the host has TCP memory to spare, however long a client does not read.
+- A reader of 2 KiB per second or more with a buffer of up to 8 MiB stayed below the limit in these tests. A client
+  that reads slower, or has a larger buffer (a buffering media player can have one), can take no data for 600 seconds
+  and be reset while the host's TCP memory is short.
+- A client that paused and then read again within 10 minutes is kept, if its buffer then empties before the limit.
+- A client that paused for 10 minutes or more can be reset while the host's TCP memory is short. A phone app in the
+  background or a frozen browser tab can do this. Such a client gets an error and connects again.
+- Unix-socket clients (`--listen-unix`) are never reset: they have no TCP receive window.
+
+What it does not cover: a client that reads a little now and then on purpose is a slow reader to the server, and
+still holds the memory of its downloads. A connection that does not read is reset only after 600 seconds, so the
+host can be short of TCP memory for that long. `--tcpmem-share` acts sooner, at new streams.
+
+It needs Linux 5.4 or later (the receive window in `TCP_INFO`). On an older kernel, a start with the option logs that
+it is not in effect. It is off unless asked for: the public preset does not set it in this release (a later release
+may, once a rule that does not depend on the client's buffer is tested); `--no-unread-close` turns it off.
+
 <a id="destination-policy"></a>
 ## Destinations
 
@@ -616,8 +716,21 @@ splice are on. [Memory](memory.md) explains when each one helps.
 | `--tcpmem-adapt` |  | off | When the host is near its kernel TCP memory limit (`net.ipv4.tcp_mem`), shrink the buffers of this server's sockets to remote peers. For a small VPS that runs out of TCP memory under many fast streams. [Details](#--tcpmem-adapt). |
 | `--no-credit-pace` |  | credit pace on | Turn off credit pacing. By default a stream gets no new upload credit while its download waits on the client (the client reads slower than the target answers), so echo-like traffic and other full-duplex bulk transfers cannot fill the kernel socket buffers faster than the client reads. [Details](#--no-credit-pace). |
 | `--park-rcvlock` |  | off | Stop the kernel from growing the receive buffer of a download stream's target connection while the stream waits on a slow client. Needs Linux 5.15 or later (the server refuses to start otherwise). [Details](#--park-rcvlock). |
-| `--adaptive-splice` |  | on | The default since 1.2.1. Still accepted, so that a 1.2.0 config keeps working. After `--no-adaptive-splice` it turns adaptive splice back on. |
 | `--no-adaptive-splice` |  | adaptive splice on | Turn off adaptive splice (on by default since 1.2.1; `--adaptive-splice` is still accepted). Adaptive splice reads less from the targets of a busy far client at a time. [Details](#--no-adaptive-splice). |
+| `--stream-pool` |  | off | Under memory pressure the worker threads share one stream limit of the same total instead of one limit each, so a busy thread is not refused while another has room. The `public` preset sets it. `--no-stream-pool` turns it off again. [Details](#--stream-pool). |
+| `--no-stream-pool` |  |  | Turns `--stream-pool` off again. Of the two, the later one wins. |
+
+### `--stream-pool`
+
+At memory level 1 and above, and always with a budget under 256 MiB, each worker thread has a limit on its open
+streams, sized from the budget so that the capped socket buffers fit in it (counter `refuse_streams`, CLOSE `0x49`;
+see [memory budget](memory.md#memory-budget)). A connection lives on one thread, so one busy connection can meet its
+thread's limit while the other threads have room: with 128 MiB and 2 threads the limit is 227 streams per thread,
+and of 400 streams that one connection asked for, 173 were refused. With `--stream-pool` the threads share one limit of
+the same total (454 there): one connection that asked for 340 streams got all of them, and with a second connection
+the server held 452 streams in all and refused the rest. The memory bound does not change. A thread takes streams
+from the shared count in small blocks and gives back what it does not use, so the open streams can fall short of the
+total by the blocks the other threads keep (at most 2 each).
 
 ### `--tcpmem-adapt`
 
@@ -659,6 +772,13 @@ difference with it on. Turn it off only to compare or roll back. Clients with 1-
 nothing when splice is off (`--no-splice`, or a `--download-rate` cap). See [small
 hosts](memory.md#small-hosts-and-many-slow-downloads).
 
+### Rarely needed options
+
+`--adaptive-splice` is still accepted, so that a 1.2.0 config keeps working, but it is not in the tables above and
+`finalwisp --help` does not list it. Adaptive splice is on by default since 1.2.1, so the option changes nothing,
+except after `--no-adaptive-splice`: then it turns adaptive splice back on (on the command line after the switch, or
+on the command line over a config file that has `no-adaptive-splice`).
+
 <a id="advanced-and-diagnostic"></a>
 ## Advanced
 
@@ -670,7 +790,7 @@ Leave these at the default unless a problem points at one of them.
 |---|---|---|---|
 | `--buffer` | `N` | `128` | The first stream credit (packets) the server grants. `0` counts as 1. [Details](#--buffer). |
 | `--graceful-close` |  | reset | Close a finished target connection with FIN instead of a TCP reset when the client closes the stream. The reset is much faster under connection churn and leaves no `TIME_WAIT` sockets behind. |
-| `--no-splice` |  | splice on | Copy downloads through user space instead of the kernel's zero-copy `splice`. [Details](#--no-splice). |
+| `--no-splice` |  | splice on | Copy downloads through user space instead of the kernel's zero-copy `splice`. A diagnostic switch: the one case where it may help is far clients behind a reverse proxy on the same small host. [Details](#--no-splice). |
 | `--balance` |  | off | Hand each new connection to the least busy thread instead of letting the kernel choose. Helps a few busy long-lived connections on big machines (4-11 % on 36-72 threads) and costs 1-7 % when many short connections come and go. |
 | `--no-tfo` |  | TFO on | Do not use TCP Fast Open to targets. Try it if a middlebox drops SYN packets that carry data. |
 | `--no-keepalive` |  | on | Turn off dead-peer detection on clients and targets (TCP keepalive). With it on, an idle dead peer is closed after 3 to 4 minutes. |
@@ -688,8 +808,24 @@ from downloads. See [small hosts](memory.md#small-hosts-and-many-slow-downloads)
 
 ### `--no-splice`
 
-On a small host whose clients are far away it probably holds less kernel TCP memory: one client with 100 download
-streams at 20 ms on a 2-core VPS got 1.2x the speed, the host left TCP memory pressure in most runs (13-14 of 16 runs
-in pressure before, 0-2 after), and an upload next to it slowed far less (median 19 instead of 0.3 MiB/s). Cost: on
-loopback on the same 2-core VPS, downloads were 12-31% slower and the host held more TCP memory, not less; keep splice
-on where clients and targets are close and fast. See [small hosts](memory.md#small-hosts-and-many-slow-downloads).
+Leave splice on, except in one case: far clients that reach finalwisp through a reverse proxy on the same small host
+(nginx or Caddy, the usual setup), on a host that enters kernel TCP memory pressure. Behind such a proxy every client
+looks local to finalwisp, so [adaptive splice](#--no-adaptive-splice) does nothing for them, and `--no-splice` is the
+switch that is left. What it did before adaptive splice existed, with a far client that connected directly (not
+behind a proxy): one client with 100 download streams at 20 ms on a 2-core VPS got 1.2x the speed, the host left TCP
+memory pressure in most runs (13-14 of 16 runs in pressure before, 0-2 after), and an upload next to it slowed far
+less (median 19 instead of 0.3 MiB/s). Behind a proxy it was not measured.
+
+In the other cases that were measured it gained nothing, or the server paid for it:
+
+- Far clients that connect directly with many streams: adaptive splice does the same there. With one client 112 ms
+  away and 100 download streams on a 2-core VPS, adaptive splice against `--no-splice` was 0.987 (no difference) for
+  the rule as shipped, and 1.015 and 0.994 for two earlier versions of it, in paired comparisons of 16 runs each. With
+  10 connections of 10 streams that test gave no result (the host was in TCP memory pressure with every variant).
+  Adaptive splice does not act for clients with 1-4 streams; for them `--no-splice` was not measured against it.
+- Near, fast clients: on loopback on the same 2-core VPS, downloads were 12-31% slower and the host held more TCP
+  memory, not less.
+- A client program on the same many-core host: the download was 1.17x faster, but only because the client's own CPU
+  per MiB fell; the server used 10% more CPU per MiB (2.48 instead of 2.26 ms).
+
+See [small hosts](memory.md#small-hosts-and-many-slow-downloads).

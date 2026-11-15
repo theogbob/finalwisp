@@ -298,6 +298,12 @@ stats! {
     dest_dead,
     /// 60.63 --net-watch gauge: streams with a connect in flight, as the workers counted them at their last sweep
     connecting,
+    /// 60.72 --stream-share: CONNECT refused with 0x49: 7/8 of the usable file descriptors were handed out and the
+    /// connection held its share of streams or more (about twice the usable fds per connection at 7/8, once at the limit)
+    refuse_stream_share,
+    /// 60.73 --unread-close: connections reset because their client did not read its downloads (receive window 0, no
+    /// data taken for 600 s) while the host's TCP memory was short
+    close_unread,
 }
 
 impl Stats {
@@ -385,6 +391,9 @@ pub fn line(ev: &str, stats: &[Arc<Stats>], peers: &[Arc<Inbox>]) -> String {
     if let Some(n) = host_net() {
         // 60.63 --net-watch: SYN retransmits and UDP datagrams sent by the host (since boot, this netns)
         s += &format!(" host_syn_retrans={} host_udp_out={}", n.syn_retrans, n.udp_out);
+        if let Some((count, max)) = crate::bounds::conntrack() {
+            s += &format!(" host_conntrack={count} host_conntrack_max={max}"); // 60.73 (only where the table is readable)
+        }
     }
     let (changes, times) = crate::mem::level_times(now);
     s += &format!(" level_changes={changes}");

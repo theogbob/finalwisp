@@ -36,6 +36,8 @@ pub mod policy;
 pub mod pool;
 #[path = "../../src/proxyproto.rs"]
 pub mod proxyproto; // 60.34
+#[path = "../../src/slimits.rs"]
+pub mod slimits; // 60.72
 #[path = "../../src/tls.rs"]
 pub mod tls;
 #[path = "../../src/ui.rs"]

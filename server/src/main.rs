@@ -19,6 +19,7 @@ mod policy;
 mod pool;
 mod prom;
 mod proxyproto; // 60.34
+mod slimits; // 60.72
 mod tls;
 mod ui; // 60.60
 mod upstream;
@@ -611,7 +612,7 @@ fn show_config(
     if let Some(b) = &fd_budget {
         // (after `open files`)
         let at = rows.iter().position(|r| r.0 == "open files").map_or(rows.len(), |i| i + 1);
-        let marks = fd_marks_note(b.usable, o.conn_share, o.fd_admission);
+        let marks = fd_marks_note(b.usable, o.conn_share, o.fd_admission, o.stream_share);
         if !marks.is_empty() {
             rows.insert(at, ("open-file marks", marks.trim_start_matches("; ").to_string()));
         }
@@ -624,16 +625,20 @@ fn show_config(
         );
     }
     // 60.63 section E: which form of each guard this host allows (nothing is started here)
-    let (bd, bd_warn) = bounds::build(o.tcpmem_share, o.port_share, o.dest_failfast, o.net_watch, o.upstream.is_some(), workers);
+    let (bd, bd_warn) =
+        bounds::build(o.tcpmem_share, o.port_share, o.dest_failfast, o.net_watch, o.unread_close, o.upstream.is_some(), workers);
     rows.extend(bd.iter().flat_map(|b| b.describe()));
+    // 60.73 the table against the descriptors: a row, not a warning
+    rows.extend(bounds::ct_row(bd.as_ref().is_some_and(|b| b.opts & bounds::OPT_WATCH != 0), fd_budget.map(|b| b.usable as u64)));
     let rows: Vec<(String, String)> = rows.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
     // the warnings of a start that need nothing opened, in its order, then the notes
     let notes: Vec<String> = (st.warning.clone().into_iter())
         .chain(option_warnings(o, upstream_on_cmdline))
         .chain(raise_warning(&nofile))
         .chain(adapt_warning)
-        .chain(fd_warnings(&nofile, fd_budget, o.conn_share || o.fd_admission))
+        .chain(fd_warnings(&nofile, fd_budget, &marks_asked(o)))
         .chain(bd_warn)
+        .chain(bounds::ct_warnings(bd.as_ref().is_some_and(|b| b.opts & bounds::OPT_WATCH != 0)))
         .chain(mem_warning(&budget, o.mem_budget))
         .chain(host.warnings())
         .chain(host.notes())
@@ -767,13 +772,19 @@ fn nofile_detail(nofile: &Option<fdgate::Raise>, raise: bool) -> String {
 
 /// 60.57 A1 / A2 the warnings about the open-file limit that the limits alone decide (a start and --show-config):
 /// an unreadable limit, or a limit that leaves fewer than fdgate::USABLE_WARN fds
-fn fd_warnings(nofile: &Option<fdgate::Raise>, budget: Option<fdgate::Budget>, marks_asked: bool) -> Vec<String> {
+fn fd_warnings(nofile: &Option<fdgate::Raise>, budget: Option<fdgate::Budget>, marks_asked: &[&str]) -> Vec<String> {
     let Some(r) = nofile else {
-        return vec![format!(
-            "open-file limit unreadable: the server does not limit its file descriptors{}.",
-            // 60.57 C (review: not silently)
-            if marks_asked { ", and --conn-share and --fd-admission do nothing" } else { "" }
-        )];
+        let n = marks_asked.len();
+        // 60.57 C (review: not silently); 60.72 the shorter form with names: three of them fit in two lines
+        return vec![match n {
+            0 => "open-file limit unreadable: the server does not limit its file descriptors.".to_string(),
+            1 => format!("open-file limit unreadable: no limit on file descriptors, so {} does nothing.", marks_asked[0]),
+            _ => format!(
+                "open-file limit unreadable: no limit on file descriptors, so {} and {} do nothing.",
+                marks_asked[..n - 1].join(", "),
+                marks_asked[n - 1]
+            ),
+        }];
     };
     let low = budget.filter(|b| (b.usable as u64) < fdgate::USABLE_WARN).map(|b| {
         format!(
@@ -785,8 +796,17 @@ fn fd_warnings(nofile: &Option<fdgate::Raise>, budget: Option<fdgate::Budget>, m
     low.into_iter().collect()
 }
 
-/// 60.57 C the marks for the startup line (empty with both flags off)
-fn fd_marks_note(usable: u32, conn_share: bool, fd_admission: bool) -> String {
+/// 60.57 C / 60.72 the options that act at a mark of the open-file count (fd_warnings: without a readable limit they
+/// do nothing)
+fn marks_asked(o: &cli::Opts) -> Vec<&'static str> {
+    [(o.conn_share, "--conn-share"), (o.fd_admission, "--fd-admission"), (o.stream_share, "--stream-share")]
+        .into_iter()
+        .filter_map(|(on, name)| on.then_some(name))
+        .collect()
+}
+
+/// 60.57 C the marks for the startup line (empty with the flags off)
+fn fd_marks_note(usable: u32, conn_share: bool, fd_admission: bool, stream_share: bool) -> String {
     let mut s = String::new();
     if conn_share {
         let (key, floor) = fdgate::share_rule(usable);
@@ -800,6 +820,13 @@ fn fd_marks_note(usable: u32, conn_share: bool, fd_admission: bool) -> String {
     if fd_admission {
         s += &format!(
             "; --fd-admission: from {} fds (7/8; until below {}) no new connections",
+            fdgate::part16(usable, fdgate::HOST_IN_16),
+            fdgate::part16(usable, fdgate::HOST_OUT_16)
+        );
+    }
+    if stream_share {
+        s += &format!(
+            "; --stream-share: from {} fds (7/8; until below {}) no new streams for a connection that holds its share",
             fdgate::part16(usable, fdgate::HOST_IN_16),
             fdgate::part16(usable, fdgate::HOST_OUT_16)
         );
@@ -1020,6 +1047,7 @@ fn main() {
     });
     let udp_on = o.udp && upstream.is_none();
     let per_ip = o.per_ip(); // (before o.motd moves out)
+    let asked = marks_asked(&o); // 60.72 (before o.motd moves)
     let ext = load_ext(udp_on, o.auth_file.as_deref(), &o.cert_keys, o.motd);
     let scheme = if tls.is_some() { "wss" } else { "ws" };
     let tls_note = match tls.as_deref() {
@@ -1106,7 +1134,8 @@ fn main() {
     // 60.63 section E: the state the workers and the guard thread share (None: no option of it is on, or none can work
     // on this host). Built before the configuration: the options that are in effect decide whether a connection's
     // peer is kept. Installed before the workers are built; the thread starts after them.
-    let (bd, bd_warn) = bounds::build(o.tcpmem_share, o.port_share, o.dest_failfast, o.net_watch, o.upstream.is_some(), o.threads.max(1));
+    let (bd, bd_warn) =
+        bounds::build(o.tcpmem_share, o.port_share, o.dest_failfast, o.net_watch, o.unread_close, o.upstream.is_some(), o.threads.max(1));
     let bd = bd.map(Arc::new);
     let cfg = Arc::new(Config {
         addr: std::net::SocketAddr::new(o.ip, o.port),
@@ -1200,6 +1229,10 @@ fn main() {
     // built (their listeners, epoll and event fds are the fixed part) and before any of them runs.
     let fdg = Arc::new(fdgate::FdGate::unlimited());
     fdg.set_stats(stats.clone());
+    if o.stream_share || o.stream_pool {
+        // 60.72 before the workers are built (Worker::new reads --stream-pool for its stream limit)
+        slimits::install(slimits::Slimits::new(o.stream_share, o.stream_pool, cfg.threads));
+    }
     fdgate::install(fdg.clone());
     if let Some(b) = &bd {
         bounds::install(b.clone());
@@ -1219,7 +1252,14 @@ fn main() {
     if let Some(b) = &fd_budget {
         fdg.set_limit(b.usable, fdgate::block(b.usable, cfg.threads));
         // 60.57 C the marks in use (without a readable limit there is nothing to take parts of)
-        fdg.set_marks(if o.conn_share { fdgate::MARK_SHARE } else { 0 } | if o.fd_admission { fdgate::MARK_HOST } else { 0 });
+        fdg.set_marks(
+            if o.conn_share { fdgate::MARK_SHARE } else { 0 }
+                | if o.fd_admission { fdgate::MARK_HOST } else { 0 }
+                | if o.stream_share { fdgate::MARK_STREAM } else { 0 } // 60.72
+                | if o.stream_pool { fdgate::MARK_POOL } else { 0 },
+        );
+    } else if o.stream_pool {
+        fdg.set_marks(fdgate::MARK_POOL); // 60.72 the pool needs no readable open-file limit
     }
     for (i, w) in workers.into_iter().enumerate() {
         // detached: the workers run forever (a panic aborts the process, panic = "abort")
@@ -1400,7 +1440,7 @@ fn main() {
             b.fixed,
             b.reserve,
             b.usable,
-            fd_marks_note(b.usable, o.conn_share, o.fd_admission)
+            fd_marks_note(b.usable, o.conn_share, o.fd_admission, o.stream_share)
         );
     }
     for (label, text) in bd.iter().flat_map(|b| b.describe()) {
@@ -1408,9 +1448,9 @@ fn main() {
     }
     // 60.60 from here warnings go straight out: first the ones held since the start, then the host's and the settings'
     release_notes();
-    for w in
-        fd_warnings(&nofile, fd_budget, o.conn_share || o.fd_admission).into_iter().chain(bd_warn).chain(mem_warn).chain(host.warnings())
-    {
+    // 60.73 --net-watch: the connection-tracking table 3/4 full (no line without the option)
+    let ct_warn = bounds::ct_warnings(bounds::global().is_some_and(|b| b.opts & bounds::OPT_WATCH != 0));
+    for w in fd_warnings(&nofile, fd_budget, &asked).into_iter().chain(bd_warn).chain(ct_warn).chain(mem_warn).chain(host.warnings()) {
         warn(&w);
     }
     if smtp_open {
@@ -1683,15 +1723,21 @@ mod tests {
         }
         assert_eq!(kept_below(&None, false), None);
         // nothing to say with a usable limit; an unreadable limit; a limit that leaves almost nothing; the raise's own
-        assert!(fd_warnings(&raise((1024, 4096), (4096, 4096)), Some(fdgate::budget(4096, 40, 16, 2)), true).is_empty());
-        let w = fd_warnings(&None, None, false);
+        assert!(fd_warnings(&raise((1024, 4096), (4096, 4096)), Some(fdgate::budget(4096, 40, 16, 2)), &["--fd-admission"]).is_empty());
+        let w = fd_warnings(&None, None, &[]);
         assert_eq!(w, ["open-file limit unreadable: the server does not limit its file descriptors."]);
-        let w = fd_warnings(&None, None, true);
-        assert!(w.len() == 1 && w[0].ends_with("file descriptors, and --conn-share and --fd-admission do nothing."), "{w:?}");
+        let w = fd_warnings(&None, None, &["--conn-share", "--fd-admission"]);
+        assert!(w.len() == 1 && w[0].ends_with("file descriptors, so --conn-share and --fd-admission do nothing."), "{w:?}");
+        two_lines(&w[0]);
+        // 60.72
+        let w = fd_warnings(&None, None, &["--stream-share"]);
+        assert!(w.len() == 1 && w[0].ends_with("file descriptors, so --stream-share does nothing."), "{w:?}");
+        let w = fd_warnings(&None, None, &["--conn-share", "--fd-admission", "--stream-share"]);
+        assert!(w[0].ends_with(", so --conn-share, --fd-admission and --stream-share do nothing."), "{w:?}");
         two_lines(&w[0]);
         let b = fdgate::budget(200, 40, 16, 2);
         assert!((b.usable as u64) < fdgate::USABLE_WARN);
-        let w = fd_warnings(&raise((200, 200), (200, 200)), Some(b), false);
+        let w = fd_warnings(&raise((200, 200), (200, 200)), Some(b), &[]);
         assert_eq!(
             w,
             [format!(
@@ -1703,14 +1749,14 @@ mod tests {
         two_lines(&w[0]);
         // (many workers: a 7-digit limit can leave this little)
         let b = fdgate::budget(1_048_576, 1_048_440, 16, 2);
-        let w = fd_warnings(&raise((1_048_576, 1_048_576), (1_048_576, 1_048_576)), Some(b), false);
+        let w = fd_warnings(&raise((1_048_576, 1_048_576), (1_048_576, 1_048_576)), Some(b), &[]);
         assert!(w.len() == 1 && w[0].contains("(limit 1048576, 1048448 fixed, "), "{w:?}");
         two_lines(&w[0]);
         // what the raise reported is its own warning (a start holds it right after the raise), with fdgate's real texts
         let mut r = raise((1024, 524288), (1024, 524288));
         assert_eq!(raise_warning(&r), None);
         r.as_mut().unwrap().warn = Some("the raise failed".to_string());
-        assert!(fd_warnings(&r, Some(fdgate::budget(1024, 40, 16, 2)), false).is_empty());
+        assert!(fd_warnings(&r, Some(fdgate::budget(1024, 40, 16, 2)), &[]).is_empty());
         assert_eq!(raise_warning(&r).as_deref(), Some("the raise failed"));
         assert_eq!(raise_warning(&None), None);
         let unlimited = Limits { soft: 1024, hard: INF };

@@ -1213,8 +1213,8 @@ fn press_text(n: u64) -> String {
         "finalwisp: warning: the host entered kernel TCP memory pressure{times}: while it lasts the kernel throttles \
          every TCP socket on this host, so all clients slow down. It comes from many streams with full socket buffers \
          (downloads that slow clients do not read, bulk echo). What helps: fewer parallel streams per client \
-         (--max-streams-per-conn), --no-splice when the clients are far away, more RAM or a larger net.ipv4.tcp_mem \
-         (see the docs page memory.md, small hosts)"
+         (--max-streams-per-conn), --no-splice when far clients come through a reverse proxy on this host, more RAM \
+         or a larger net.ipv4.tcp_mem (see the docs page memory.md, small hosts)"
     )
 }
 

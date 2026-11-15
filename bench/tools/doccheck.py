@@ -12,7 +12,8 @@ It reads the files of the tree it is in (the working tree, or an unpacked archiv
    `docs/NAME.md#anchor` named in a text file under contrib/ or .github/ is checked the same way.
    README.public.md, where it exists, is read as the README.md that other pages link to.
 2. Options: every option of the server (the table cli::OPTIONS in server/src/cli.rs) starts a table row in
-   docs/configuration.md. Every `--option` that the README or a docs page names in code style is an option of the
+   docs/configuration.md; an option on the list cli::RARE (accepted, not listed in --help) starts none and is named
+   in the section "Rarely needed options" there instead. Every `--option` that the README or a docs page names in code style is an option of the
    server, or of another tool on the list OTHER_TOOLS. --pending names options that the docs describe before the code
    has them (a branch that is not merged yet).
 3. --lost REV: every heading anchor of the README and docs pages of commit REV (LOST_FILES) still exists in the same
@@ -150,15 +151,36 @@ def server_options(top):
     return [name for name, early in rows if not early], {name for name, _ in rows}
 
 
+def rare_options(top):
+    """the options of cli::RARE in server/src/cli.rs (accepted, not listed in --help, no table row)"""
+    src = open(os.path.join(top, "server/src/cli.rs"), encoding="utf-8").read()
+    m = re.search(r"pub const RARE: &\[&str\]\s*=\s*&\[([^\]]*)\];", src)
+    if not m:
+        sys.exit("doccheck: no list cli::RARE in server/src/cli.rs: the table's form changed")
+    return set(re.findall(r'"(--[a-z0-9-]+)"', m.group(1)))
+
+
 def check_options(top, files, pending, problems):
     flags, known = server_options(top)
+    rare = rare_options(top)
     ref = open(os.path.join(top, "docs/configuration.md"), encoding="utf-8").read()
-    rows = set()
+    rows, rare_part, in_rare = set(), "", False
     for _, line in rendered(ref):
+        if line.startswith("#"):
+            in_rare = line.lstrip("#").strip() == "Rarely needed options"
+        elif in_rare:
+            rare_part += line + "\n"
         if line.startswith("|"):
             first = line.split("|")[1] if line.count("|") > 1 else ""
             rows |= set(re.findall(r"(?<![\w-])--[a-z][a-z0-9-]*", first))
-    for o in sorted(known):
+    for o in sorted(rare - known):
+        problems.append(f"server/src/cli.rs: RARE names {o}, which is not an option")
+    for o in sorted(known & rare):
+        if o in rows:
+            problems.append(f"docs/configuration.md: a table row starts with the rare option {o} (cli::RARE: name it in \"Rarely needed options\" only)")
+        if o not in re.findall(r"(?<![\w-])--[a-z][a-z0-9-]*", rare_part):
+            problems.append(f"docs/configuration.md: the section \"Rarely needed options\" does not name the rare option {o}")
+    for o in sorted(known - rare):
         if o not in rows:
             problems.append(f"docs/configuration.md: no table row starts with the option {o}")
     for o in sorted(pending):

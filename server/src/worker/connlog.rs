@@ -23,6 +23,8 @@ pub(super) enum Why {
     ServerClose,
     /// a failed client read or write: close_client names it from errno (io_why) when the log is on
     Io,
+    /// 60.73 --unread-close: the client did not read its downloads while host TCP memory was short
+    Unread,
 }
 
 impl Why {
@@ -40,6 +42,7 @@ impl Why {
             Why::Limit => "limit",
             Why::ServerClose => "server_close",
             Why::Io => "client_close", // (replaced by io_why in close_client)
+            Why::Unread => "unread",
         }
     }
 }

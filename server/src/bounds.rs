@@ -23,6 +23,13 @@
 //! answer and no target to it opened since the last count; until it answers, a new stream to it is refused at once
 //! (the CLOSE it would get at the connect deadline), except one probe per DF_PROBE_MS.
 //!
+//! E5 --unread-close: a connection whose client stopped reading its downloads, while the host's TCP memory is short
+//! (the reading and the marks of E1: TM_SHARE_IN_16 / TM_SHARE_OUT_16), is reset. A worker judges at its idle sweep only: a connection
+//! with a parked download (Target::blocked, as E1 counts it) whose client advertises a zero receive window (TCP_INFO
+//! tcpi_snd_wnd: the client's own buffer is full, so neither the host's memory nor the network is the cause) and
+//! took no byte (tcpi_bytes_acked) for UC_STALL_MS (uc_step). A reset frees the target sockets'
+//! receive buffers and the client socket's send queue; a CLOSE per stream cannot reach a client that reads nothing.
+//!
 //! E4 --net-watch: no refusal. What the server cannot bound, because the host has no readable limit for packets out:
 //! connects to many destinations that do not answer (SYN retransmits) and UDP datagrams. Two host counters in the
 //! metrics, a gauge of the connects in flight, and a log line per shape from the guard thread (nw_lines).
@@ -40,9 +47,12 @@ pub const OPT_TCPMEM: u8 = 1;
 pub const OPT_PORT: u8 = 2;
 pub const OPT_DEAD: u8 = 4;
 pub const OPT_WATCH: u8 = 8;
+pub const OPT_UNREAD: u8 = 16;
 
-/// Bounds::state bits: E1 the share mark (bit 2 is not in use)
+/// Bounds::state bits: E1 the share mark
 pub const ST_TM_SHARE: u8 = 1;
+/// E5 the host's TCP memory is short (the same marks as E1). Not a hold-mode bit: a worker reads it at its sweep.
+pub const ST_UNREAD: u8 = 2;
 /// E2 some destination holds 1/4 of the port range (the socket option), 3/4 (the share rule)
 pub const ST_PT_BUSY: u8 = 4;
 pub const ST_PT_SHORT: u8 = 8;
@@ -104,6 +114,14 @@ pub const TM_KEY_DIV: u64 = 2;
 /// ... and only when those sockets could matter on this host: their number times the kernel's default receive buffer
 /// (tcp_rmem[1], what a socket that was never read fast holds) is at least 1 / TM_FLOOR_DIV of the memory limit
 pub const TM_FLOOR_DIV: u64 = 16;
+/// E5 a connection is reset after this long with a zero receive window and no byte taken by its client. A Linux
+/// client with a full buffer opens its window again only when much of it is free, so an honest slow reader takes
+/// nothing for long: over 600-s runs (60.73 T-wnd-big) 168-187 s at 2 KiB/s with the autotuned default buffer, 315-346 s
+/// with an 8 MiB buffer (87 s at 8 KiB/s). v1.3.2: 600 s (was 120 s; a window-aware limit is open in 60.73)
+pub const UC_STALL_MS: u64 = 600_000;
+/// E5 the TCP_INFO bytes up to tcpi_snd_wnd (offset 228, Linux 5.4 and later)
+pub const UC_INFO_LEN: usize = 232;
+
 /// E1 a worker's published counts are used for this long (three idle sweeps: a worker without clients does not sweep)
 pub const SLOT_FRESH_MS: u64 = 6000;
 /// E1 flag form: the share mark stays this long after the kernel's pressure flag went off (it flaps)
@@ -141,8 +159,10 @@ pub enum Log {
     DfSuspect,
     DfRefused,
     PtLastRefused,
+    UcReset,
+    UcMark,
 }
-const LOG_KINDS: usize = 8;
+const LOG_KINDS: usize = 10;
 
 /// E2 a destination: the address and port a target socket is connected (or connecting) to
 pub type Dest = (IpAddr, u16);
@@ -407,6 +427,103 @@ pub fn nw_lines(d: Net, connecting: u64, last: &mut (u64, u64)) -> Vec<String> {
     out
 }
 
+/// E4 the host's connection-tracking table: (entries, size) from /proc/sys/net/netfilter (None: no conntrack module
+/// in this network namespace, or not readable here, as in many containers)
+pub fn conntrack() -> Option<(u64, u64)> {
+    let f = |p: &str| std::fs::read_to_string(p).ok()?.trim().parse::<u64>().ok();
+    let max = f("/proc/sys/net/netfilter/nf_conntrack_max").filter(|m| *m > 0)?;
+    Some((f("/proc/sys/net/netfilter/nf_conntrack_count")?, max))
+}
+
+/// E4 the table counts as near full from 3/4 of its size; the line comes again only after it was below 1/2
+pub const CT_FULL_IN_4: u64 = 3;
+pub const CT_FULL_OUT_2: u64 = 1;
+
+/// E4 the guard thread's line for the table (`said`: the last line was "near full", until below the exit mark)
+pub fn ct_line(count: u64, max: u64, said: &mut bool) -> Option<String> {
+    if !*said && count.saturating_mul(4) >= max.saturating_mul(CT_FULL_IN_4) {
+        *said = true;
+        return Some(format!(
+            "finalwisp: --net-watch: the host's connection-tracking table holds {count} of {max} entries (nf_conntrack_count, \
+             nf_conntrack_max). When it is full, the kernel drops the packets of new connections, of clients and of targets \
+             alike. Fix: a larger net.netfilter.nf_conntrack_max on the host, or no connection tracking for this server's \
+             traffic. Gauge host_conntrack; the next such line after the table was below half"
+        ));
+    }
+    if *said && count.saturating_mul(2) < max.saturating_mul(CT_FULL_OUT_2) {
+        *said = false;
+    }
+    None
+}
+
+/// E4 the start's warning for the table (`watch`: --net-watch is in effect): only its state, 3/4 full (as ct_line).
+/// It records in CT_START what it printed, for the guard thread's first line (ct_primed).
+pub fn ct_warnings(watch: bool) -> Vec<String> {
+    if !watch {
+        return Vec::new();
+    }
+    let w = conntrack().and_then(|(count, max)| ct_warn(count, max));
+    CT_START.store(ct_start_code(w.is_some()), Relaxed);
+    w.into_iter().collect()
+}
+
+/// E4 what the start's warnings printed for the table: 0 = they have not looked yet, CT_START_SAID = a warning,
+/// CT_START_QUIET = none (table below 3/4, or not readable). (review, v1.3.2: the guard took a sample of its
+/// own; a start at 74% and a guard at 80% gave no line until the table had been below half.)
+static CT_START: AtomicU8 = AtomicU8::new(0);
+const CT_START_SAID: u8 = 1;
+const CT_START_QUIET: u8 = 2;
+
+fn ct_start_code(warned: bool) -> u8 {
+    if warned {
+        CT_START_SAID
+    } else {
+        CT_START_QUIET
+    }
+}
+
+/// E4 the guard's `said` before its first line, from CT_START: None while the start has not looked (the guard skips
+/// the table in that window), Some(true) when the start warned (no 2nd line for the same state), else Some(false)
+fn ct_primed(start: u8) -> Option<bool> {
+    match start {
+        0 => None,
+        CT_START_SAID => Some(true),
+        _ => Some(false),
+    }
+}
+
+/// E4 ct_warnings for a table of `max` entries with `count` in use
+pub fn ct_warn(count: u64, max: u64) -> Option<String> {
+    (count.saturating_mul(4) >= max.saturating_mul(CT_FULL_IN_4)).then(|| {
+        format!(
+            "the host's connection-tracking table holds {count} of {max} entries (nf_conntrack_count, nf_conntrack_max): \
+             when it is full, the kernel drops the packets of new connections. Fix: a larger net.netfilter.nf_conntrack_max \
+             on the host."
+        )
+    })
+}
+
+/// E4 the --show-config row of the table against `fds` (the file descriptors the server may use for connections and
+/// streams): a plain row, not a warning (the parent, 60.73: with nofile raised most hosts have the smaller table).
+/// Each connection and stream takes an entry (on loopback both sides of a stream), and a closed one keeps it for up to
+/// 2 minutes: a table smaller than the descriptors can fill first. None: --net-watch off or no readable table.
+pub fn ct_row(watch: bool, fds: Option<u64>) -> Option<(&'static str, String)> {
+    let (count, max) = conntrack().filter(|_| watch)?;
+    Some(("connection tracking", ct_row_text(count, max, fds)))
+}
+
+pub fn ct_row_text(count: u64, max: u64, fds: Option<u64>) -> String {
+    let vs = match fds {
+        Some(f) if f > max => format!(
+            "; fewer than the about {f} file descriptors for connections and streams: the table can fill before they do \
+             (net.netfilter.nf_conntrack_max)"
+        ),
+        Some(f) => format!("; not fewer than the about {f} file descriptors for connections and streams"),
+        None => String::new(),
+    };
+    format!("{count} of {max} entries in use{vs}")
+}
+
 /// E3 the SYNs the kernel has sent on a connecting TCP socket (1 + the retransmits of TCP_INFO); None: not readable
 pub fn syns_sent(fd: RawFd) -> Option<u8> {
     // SAFETY: getsockopt writes at most `len` bytes into the zeroed struct
@@ -415,6 +532,62 @@ pub fn syns_sent(fd: RawFd) -> Option<u8> {
         let mut len = size_of::<libc::tcp_info>() as libc::socklen_t;
         (libc::getsockopt(fd, libc::IPPROTO_TCP, libc::TCP_INFO, &mut i as *mut _ as *mut _, &mut len) == 0)
             .then(|| i.tcpi_retransmits.saturating_add(1))
+    }
+}
+
+/// E5 one connection's record (Wb::uc, by client slot): its slot generation, its client's bytes_acked at `since`, and
+/// the start of its stall in ms (0: none)
+#[derive(Clone, Copy, Default, PartialEq, Debug)]
+pub struct Stall {
+    pub gen: u32,
+    pub acked: u64,
+    pub since: u64,
+}
+
+/// E5 a sweep's step for one connection: `info` = (the client's receive window, bytes it took) when the connection holds
+/// a parked download (None: it holds none, or TCP_INFO is not readable), `limit_ms` = UC_STALL_MS (tests shorten it),
+/// `pressed` = ST_UNREAD. true = reset it. A stall starts at a zero window and ends at an open window or at any byte
+/// taken: only a connection whose client took nothing for `limit_ms`, its window zero at every sweep, is reset, and
+/// only while the host is short.
+pub fn uc_step(e: &mut Stall, gen: u32, info: Option<(u32, u64)>, now_ms: u64, limit_ms: u64, pressed: bool) -> bool {
+    if e.gen != gen {
+        *e = Stall { gen, ..Stall::default() };
+    }
+    match info {
+        Some((0, acked)) if e.since != 0 && acked == e.acked => pressed && now_ms.saturating_sub(e.since) >= limit_ms,
+        Some((0, acked)) => {
+            (e.acked, e.since) = (acked, now_ms.max(1));
+            false
+        }
+        _ => {
+            e.since = 0;
+            false
+        }
+    }
+}
+
+/// E5 a TCP socket's peer receive window and the bytes the peer took (tcpi_snd_wnd, tcpi_bytes_acked); None: not a
+/// TCP socket, or a kernel without tcpi_snd_wnd
+pub fn wnd_acked(fd: RawFd) -> Option<(u32, u64)> {
+    let mut b = [0u8; UC_INFO_LEN];
+    let mut len = b.len() as libc::socklen_t;
+    // SAFETY: getsockopt writes at most `len` bytes into the buffer
+    let r = unsafe { libc::getsockopt(fd, libc::IPPROTO_TCP, libc::TCP_INFO, b.as_mut_ptr() as *mut _, &mut len) };
+    (r == 0 && len as usize >= UC_INFO_LEN)
+        .then(|| (u32::from_ne_bytes(b[228..232].try_into().unwrap()), u64::from_ne_bytes(b[120..128].try_into().unwrap())))
+}
+
+/// E5 does this kernel's TCP_INFO have tcpi_snd_wnd? (one socket, closed)
+pub fn wnd_probe() -> bool {
+    // SAFETY: plain libc calls on an fd that is closed here
+    unsafe {
+        let fd = libc::socket(libc::AF_INET, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0);
+        if fd < 0 {
+            return false;
+        }
+        let ok = wnd_acked(fd).is_some();
+        libc::close(fd);
+        ok
     }
 }
 
@@ -584,8 +757,10 @@ impl Bounds {
     pub fn tm_step(&self, pages: u64, flag: bool, now_ms: u64, flag_until: &mut u64) -> u8 {
         self.pages.store(pages, Relaxed);
         let cur = self.state();
+        // (E1 and E5 share the marks: both bits move together; either one is the mark's state)
+        let was = if cur & (ST_TM_SHARE | ST_UNREAD) != 0 { ST_TM_SHARE } else { 0 };
         let tm = match self.tcp {
-            TcpForm::Mem { max_pages } => tm_marks(cur, pages, max_pages),
+            TcpForm::Mem { max_pages } => tm_marks(was, pages, max_pages),
             TcpForm::Flag => {
                 if flag {
                     *flag_until = now_ms + FLAG_HOLD_MS;
@@ -599,7 +774,8 @@ impl Bounds {
                 }
             }
         };
-        let new = (cur & !ST_TM_SHARE) | (tm & ST_TM_SHARE);
+        let on = ((self.opts & OPT_TCPMEM != 0) as u8 * ST_TM_SHARE) | ((self.opts & OPT_UNREAD != 0) as u8 * ST_UNREAD);
+        let new = (cur & !(ST_TM_SHARE | ST_UNREAD)) | if tm & ST_TM_SHARE != 0 { on } else { 0 };
         if new != cur {
             self.state.0.store(new, Relaxed);
             self.tm_crossed(cur, new, pages);
@@ -627,6 +803,18 @@ impl Bounds {
                 )
             } else {
                 format!("finalwisp: --tcpmem-share is at rest: {of}")
+            });
+        }
+        // E5 alone (with E1 the line above names the same mark): its own pair, limited as E1's
+        if self.opts & OPT_TCPMEM == 0 && (was ^ now) & ST_UNREAD != 0 && self.mark_line(Log::UcMark, ST_UNREAD, now & ST_UNREAD != 0) {
+            crate::metrics::log_nowait(if now & ST_UNREAD != 0 {
+                format!(
+                    "finalwisp: --unread-close is armed: {of}. A connection whose client took no data for {} s with its \
+                     receive window at 0 is reset. Fix: {FIX}; or --no-unread-close (at most one such line per 10 s)",
+                    UC_STALL_MS / 1000
+                )
+            } else {
+                format!("finalwisp: --unread-close is at rest: {of}")
             });
         }
     }
@@ -713,13 +901,36 @@ impl Bounds {
                 ),
             ));
         }
+        if self.opts & OPT_UNREAD != 0 {
+            let at = match self.tcp {
+                TcpForm::Mem { max_pages } => format!(
+                    "while host TCP memory is at {} MiB or more (3/4 of net.ipv4.tcp_mem's maximum; until below {} MiB)",
+                    mib(tm_part(max_pages, TM_SHARE_IN_16)),
+                    mib(tm_part(max_pages, TM_SHARE_OUT_16))
+                ),
+                TcpForm::Flag => "while the kernel's TCP memory pressure flag is set (net.ipv4.tcp_mem is not readable here)".to_string(),
+            };
+            rows.push((
+                "unread download guard",
+                format!(
+                    "{at}, a connection with a download waiting for its client is reset when the client's receive window has \
+                     been 0 and it took no data for {} s",
+                    UC_STALL_MS / 1000
+                ),
+            ));
+        }
         if self.opts & OPT_WATCH != 0 {
             rows.push((
                 "network watch",
                 format!(
                     "counters host_syn_retrans, host_udp_out and connecting; a log line when the host sends {NW_SYN_FLOOR} or \
                      more SYN retransmits in 10 s and {NW_SYN_PER_OPEN} or more per connect attempt, or {NW_UDP_FLOOR} or more \
-                     UDP datagrams in 10 s and they are half of its packets; nothing is refused"
+                     UDP datagrams in 10 s and they are half of its packets; {}; nothing is refused",
+                    match conntrack() {
+                        Some((_, max)) =>
+                            format!("the connection-tracking table ({max} entries): gauge host_conntrack, a log line from 3/4 full"),
+                        None => "no connection-tracking table is readable here".to_string(),
+                    }
                 ),
             ));
         }
@@ -787,14 +998,32 @@ pub fn host_ports() -> Option<(u16, u16, u32)> {
 }
 
 /// main: the state for the options that are on (`tcpmem`: --tcpmem-share, `port`: --port-share, `dead`:
-/// --dest-failfast, `watch`: --net-watch; `upstream`: an --upstream proxy is set), or None when none can work here,
-/// and the warnings of a start (an option that is on and not in effect)
-pub fn build(tcpmem: bool, port: bool, dead: bool, watch: bool, upstream: bool, workers: usize) -> (Option<Bounds>, Vec<String>) {
+/// --dest-failfast, `watch`: --net-watch, `unread`: --unread-close; `upstream`: an --upstream proxy is set), or None
+/// when none can work here, and the warnings of a start (an option that is on and not in effect)
+pub fn build(
+    tcpmem: bool,
+    port: bool,
+    dead: bool,
+    watch: bool,
+    unread: bool,
+    upstream: bool,
+    workers: usize,
+) -> (Option<Bounds>, Vec<String>) {
     let (mut opts, mut tcp, mut warn) = (0, TcpForm::Flag, Vec::new());
+    let form = if tcpmem || unread { Some(tcp_form()) } else { None };
     if tcpmem {
-        match tcp_form() {
+        match form.clone().unwrap() {
             Ok(f) => (opts, tcp) = (opts | OPT_TCPMEM, f),
             Err(e) => warn.push(format!("--tcpmem-share is not in effect: {e}.")),
+        }
+    }
+    if unread {
+        match form.unwrap() {
+            Ok(_) if !wnd_probe() => warn.push(
+                "--unread-close is not in effect: this kernel does not report a peer's receive window (TCP_INFO, Linux 5.4).".to_string(),
+            ),
+            Ok(f) => (opts, tcp) = (opts | OPT_UNREAD, f),
+            Err(e) => warn.push(format!("--unread-close is not in effect: {e}.")),
         }
     }
     if dead && upstream {
@@ -834,7 +1063,7 @@ pub fn guard_sleep_ms(opts: u8, tcp: TcpForm, pages: u64, state: u8, nw_ms: u64)
     if opts & OPT_WATCH != 0 {
         ms = NW_WINDOW_MS.saturating_sub(nw_ms).max(1);
     }
-    if opts & OPT_TCPMEM != 0 {
+    if opts & (OPT_TCPMEM | OPT_UNREAD) != 0 {
         ms = ms.min(period_ms(tcp, pages, state));
     }
     if opts & OPT_PORT != 0 {
@@ -846,7 +1075,7 @@ pub fn guard_sleep_ms(opts: u8, tcp: TcpForm, pages: u64, state: u8, nw_ms: u64)
 /// E1 the guard thread's period for this reading
 pub fn period_ms(tcp: TcpForm, pages: u64, state: u8) -> u64 {
     match tcp {
-        _ if state & ST_TM_SHARE != 0 => PERIOD_AT_MS,
+        _ if state & (ST_TM_SHARE | ST_UNREAD) != 0 => PERIOD_AT_MS,
         TcpForm::Mem { max_pages } => {
             let out = tm_part(max_pages, TM_SHARE_OUT_16);
             if pages >= out {
@@ -874,7 +1103,7 @@ pub fn global() -> Option<Arc<Bounds>> {
 
 /// Start the guard thread (main; only with an option of section E that reads the host: E3 is the workers' own)
 pub fn start(b: Arc<Bounds>) {
-    if b.opts & (OPT_TCPMEM | OPT_PORT | OPT_WATCH) == 0 {
+    if b.opts & (OPT_TCPMEM | OPT_PORT | OPT_WATCH | OPT_UNREAD) == 0 {
         return;
     }
     std::thread::Builder::new().name("guard".into()).spawn(move || guard(b)).expect("spawn guard");
@@ -886,7 +1115,8 @@ fn guard(b: Arc<Bounds>) -> ! {
     let mut flag_until = 0;
     let (mut pages, mut warned) = (0u64, false);
     let (mut pt_at, mut range_at, mut slots, mut dests) = (0u64, crate::metrics::now_ms(), Vec::new(), Vec::new());
-    let (mut nw_at, mut nw_prev, mut nw_last) = (crate::metrics::now_ms(), net_read(), (0u64, 0u64));
+    // ct_said: None until main's start warnings have looked at the table (ct_primed; the guard starts before them)
+    let (mut nw_at, mut nw_prev, mut nw_last, mut ct_said) = (crate::metrics::now_ms(), net_read(), (0u64, 0u64), None);
     loop {
         let now = crate::metrics::now_ms();
         let mut state = b.state();
@@ -905,6 +1135,10 @@ fn guard(b: Arc<Bounds>) -> ! {
                 let connecting = fresh.map(|s| s.connecting as u64).sum();
                 nw_lines(d, connecting, &mut nw_last).into_iter().for_each(crate::metrics::log_nowait);
             }
+            ct_said = ct_said.or_else(|| ct_primed(CT_START.load(Relaxed)));
+            if let Some(l) = ct_said.as_mut().and_then(|said| conntrack().and_then(|(n, m)| ct_line(n, m, said))) {
+                crate::metrics::log_nowait(l);
+            }
             (nw_at, nw_prev) = (now, cur);
         }
         if b.opts & OPT_PORT != 0 && now.saturating_sub(pt_at) >= PT_PERIOD_MS {
@@ -918,7 +1152,7 @@ fn guard(b: Arc<Bounds>) -> ! {
             }
             state = b.pt_step(now, &mut slots, &mut dests);
         }
-        if b.opts & OPT_TCPMEM != 0 {
+        if b.opts & (OPT_TCPMEM | OPT_UNREAD) != 0 {
             // a failed read keeps the last value (and says so once): a mark never falls because a file went away
             let read = match b.tcp {
                 TcpForm::Mem { .. } => stat.as_mut().and_then(|f| sockstat_tcp_pages(f.read())).map(|p| (p, false)),
@@ -931,9 +1165,10 @@ fn guard(b: Arc<Bounds>) -> ! {
                 }
                 None if !warned => {
                     warned = true;
-                    crate::metrics::log_nowait(
-                        "finalwisp: --tcpmem-share: reading the host's TCP memory failed; the last value is kept (logged once)".to_string(),
-                    );
+                    let opt = if b.opts & OPT_TCPMEM != 0 { "--tcpmem-share" } else { "--unread-close" };
+                    crate::metrics::log_nowait(format!(
+                        "finalwisp: {opt}: reading the host's TCP memory failed; the last value is kept (logged once)"
+                    ));
                 }
                 None => {}
             }
@@ -982,6 +1217,67 @@ mod tests {
             }
             assert_eq!(tm_marks(ST_TM_SHARE, 0, max), 0);
         }
+    }
+
+    #[test]
+    fn uc_step_resets_only_a_stalled_client_under_pressure() {
+        const L: u64 = UC_STALL_MS;
+        // a client with a zero window that takes nothing: the stall starts at the first sweep, the reset comes at L
+        // with the mark, never without it
+        let mut e = Stall::default();
+        assert!(!uc_step(&mut e, 7, Some((0, 1000)), 1, L, true), "the first sweep only starts the stall");
+        assert_eq!(e, Stall { gen: 7, acked: 1000, since: 1 });
+        assert!(!uc_step(&mut e, 7, Some((0, 1000)), L, L, true));
+        assert!(!uc_step(&mut e, 7, Some((0, 1000)), 10 * L, L, false), "no mark: never");
+        assert!(uc_step(&mut e, 7, Some((0, 1000)), L + 1, L, true));
+        // an open window (the network or the host is slow, not the client): no stall, also under pressure
+        let mut e = Stall::default();
+        for t in (0..10 * L).step_by(2000) {
+            assert!(!uc_step(&mut e, 7, Some((65_535, 1000)), t, L, true));
+            assert_eq!(e.since, 0);
+        }
+        // a zero window at every sweep, but one byte taken now and then: a new stall starts at each such sweep
+        let mut e = Stall::default();
+        for t in (0..10 * L).step_by(2000) {
+            assert!(!uc_step(&mut e, 7, Some((0, t / (L - 2000))), t, L, true), "{t}");
+        }
+        // a pause shorter than L, then an open window: the stall ends, a new one starts from the next zero window
+        let mut e = Stall::default();
+        for t in (0..L).step_by(2000) {
+            assert!(!uc_step(&mut e, 7, Some((0, 5)), t, L, true));
+        }
+        assert!(!uc_step(&mut e, 7, Some((4096, 5)), L, L, true));
+        assert_eq!(e.since, 0);
+        assert!(!uc_step(&mut e, 7, Some((0, 5)), L + 2000, L, true));
+        assert!(!uc_step(&mut e, 7, Some((0, 5)), 2 * L + 1999, L, true));
+        assert!(uc_step(&mut e, 7, Some((0, 5)), 2 * L + 2000, L, true));
+        // no parked download (None): no stall; a new connection in the slot (another generation): a new stall
+        let mut e = Stall { gen: 7, acked: 0, since: 1 };
+        assert!(!uc_step(&mut e, 7, None, L * 5, L, true));
+        assert_eq!(e.since, 0);
+        let mut e = Stall { gen: 7, acked: 0, since: 1 };
+        assert!(!uc_step(&mut e, 8, Some((0, 0)), L * 5, L, true));
+        assert_eq!(e, Stall { gen: 8, acked: 0, since: L * 5 });
+        // the shared mark: E5's bit follows E1's marks, also with E1 off; E1's bit only with E1 on
+        for (opts, bit) in [(OPT_UNREAD, ST_UNREAD), (OPT_TCPMEM, ST_TM_SHARE), (OPT_UNREAD | OPT_TCPMEM, ST_UNREAD | ST_TM_SHARE)] {
+            let b = Bounds::new(opts, 1, TcpForm::Mem { max_pages: 1600 }, 4096, 131_072);
+            let mut until = 0;
+            assert_eq!(b.tm_step(1200, false, 1, &mut until), bit, "{opts}: 3/4 of 1600");
+            // the armed line: E1's when E1 is on, E5's own only without E1 (said holds the bit of the line printed)
+            let said = b.said.load(Relaxed);
+            assert_eq!(said & (ST_UNREAD | ST_TM_SHARE), if opts & OPT_TCPMEM != 0 { ST_TM_SHARE } else { ST_UNREAD }, "{opts}");
+            assert_eq!(b.tm_step(1100, false, 2, &mut until), bit, "{opts}: 11/16 is still in");
+            assert_eq!(b.tm_step(1099, false, 3, &mut until), 0, "{opts}: below 11/16 out");
+            assert_eq!(b.said.load(Relaxed) & (ST_UNREAD | ST_TM_SHARE), 0, "{opts}: the at-rest line came with the armed one");
+            assert_eq!(b.tm_step(1199, false, 4, &mut until), 0, "{opts}: not in from below 3/4");
+        }
+        let b = Bounds::new(OPT_UNREAD, 1, TcpForm::Flag, 4096, 131_072);
+        let mut until = 0;
+        assert_eq!(b.tm_step(10, true, 100, &mut until), ST_UNREAD);
+        assert_eq!(b.tm_step(10, false, 100 + FLAG_HOLD_MS, &mut until), 0);
+        assert!(Bounds::new(OPT_UNREAD, 1, TcpForm::Mem { max_pages: 1600 }, 4096, 131_072).describe()[0].1.contains("600 s"));
+        // this kernel has the window in TCP_INFO (the laptop, the CI images and the boxes run 5.4 or later)
+        assert!(wnd_probe());
     }
 
     #[test]
@@ -1160,12 +1456,15 @@ mod tests {
 
     #[test]
     fn dest_failfast_is_off_with_an_upstream_proxy() {
-        let (b, warn) = build(false, false, true, false, true, 2);
+        let (b, warn) = build(false, false, true, false, false, true, 2);
         assert!(b.is_none() && warn.len() == 1 && warn[0].contains("--dest-failfast is not in effect with --upstream"), "{warn:?}");
         assert!(!warn[0].contains(|c| crate::cli::REDACTION_MARKS.contains(c)));
-        let (b, warn) = build(false, false, true, false, false, 2);
+        let (b, warn) = build(false, false, true, false, false, false, 2);
         assert!(warn.is_empty() && b.is_some_and(|b| b.opts == OPT_DEAD));
-        assert!(build(false, false, false, false, false, 2).0.is_none() && build(false, false, false, false, true, 2).1.is_empty());
+        assert!(
+            build(false, false, false, false, false, false, 2).0.is_none()
+                && build(false, false, false, false, false, true, 2).1.is_empty()
+        );
     }
 
     /// 'another client is connected' as E1 and E3 read it: a connection that is not this address's, on any worker,
@@ -1274,7 +1573,7 @@ mod tests {
 
     #[test]
     fn net_watch_needs_the_host_counters() {
-        let (b, warn) = build(false, false, false, true, true, 1);
+        let (b, warn) = build(false, false, false, true, false, true, 1);
         assert!(warn.is_empty() && b.as_ref().is_some_and(|b| b.opts == OPT_WATCH), "{warn:?}");
         let d = b.unwrap().describe();
         assert_eq!(d.iter().map(|r| r.0).collect::<Vec<_>>(), ["network watch"]);
@@ -1284,6 +1583,55 @@ mod tests {
             "{d:?}"
         );
         assert!(!d[0].1.contains(|c| crate::cli::REDACTION_MARKS.contains(c)));
+    }
+
+    #[test]
+    fn conntrack_lines_and_warnings() {
+        // the table of the rented containers (60.67): 262144 entries
+        const MAX: u64 = 262_144;
+        let mut said = false;
+        assert_eq!(ct_line(196_607, MAX, &mut said), None);
+        let l = ct_line(196_608, MAX, &mut said).expect("3/4 full: a line");
+        assert!(l.contains("196608 of 262144 entries") && said);
+        assert_eq!(ct_line(MAX, MAX, &mut said), None, "one line until the table was below half");
+        assert_eq!(ct_line(131_072, MAX, &mut said), None);
+        assert!(said, "half is not below half");
+        assert_eq!(ct_line(131_071, MAX, &mut said), None);
+        assert!(!said);
+        assert!(ct_line(200_000, MAX, &mut said).is_some(), "again after it was below half");
+        // the start: only the state (3/4 full), never the size against the descriptors (that is a --show-config row)
+        assert_eq!(ct_warn(196_607, MAX), None);
+        assert!(ct_warn(200_000, MAX).unwrap().contains("holds 200000 of 262144 entries"));
+        assert_eq!(ct_row_text(331, MAX, Some(524_122)), "331 of 262144 entries in use; fewer than the about 524122 file descriptors for connections and streams: the table can fill before they do (net.netfilter.nf_conntrack_max)");
+        assert_eq!(
+            ct_row_text(331, MAX, Some(MAX)),
+            "331 of 262144 entries in use; not fewer than the about 262144 file descriptors for connections and streams"
+        );
+        assert_eq!(ct_row_text(331, MAX, None), "331 of 262144 entries in use");
+        for w in ct_warn(200_000, MAX).iter().chain(ct_line(MAX, MAX, &mut false).iter()) {
+            assert!(!w.contains(|c| crate::cli::REDACTION_MARKS.contains(c)), "{w}");
+        }
+        // without --net-watch nothing is read or said
+        assert!(ct_warnings(false).is_empty() && ct_row(false, Some(u64::MAX)).is_none());
+        // the guard's first line follows what the start printed, in both orders of the two samples (review)
+        assert_eq!(ct_primed(0), None, "the start has not looked yet: the guard waits");
+        // start at 74% (no warning), guard at 80%: the guard's line comes
+        let start = ct_start_code(ct_warn(194_000, MAX).is_some());
+        let mut said = ct_primed(start).unwrap();
+        assert!(ct_line(210_000, MAX, &mut said).is_some(), "start quiet at 74%, the guard at 80% says it");
+        // start at 80% (warning), guard at 74%..80%: no 2nd line until the table was below half
+        let start = ct_start_code(ct_warn(210_000, MAX).is_some());
+        let mut said = ct_primed(start).unwrap();
+        assert_eq!(ct_line(210_000, MAX, &mut said), None, "the start said it");
+        assert_eq!(ct_line(194_000, MAX, &mut said), None);
+        assert_eq!(ct_line(100_000, MAX, &mut said), None);
+        assert!(ct_line(200_000, MAX, &mut said).is_some(), "again after below half");
+        // start at 80% (warning), guard at 70%: nothing, and the next rise after below half is said
+        let mut said = ct_primed(ct_start_code(true)).unwrap();
+        assert_eq!(ct_line(183_500, MAX, &mut said), None);
+        assert!(said, "70% is not below half");
+        // a table not readable at the start: quiet
+        assert_eq!(ct_primed(ct_start_code(false)), Some(false));
     }
 
     #[test]

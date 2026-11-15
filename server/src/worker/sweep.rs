@@ -25,6 +25,12 @@ impl Worker {
             self.meter_sweep(); // 60.25 C10b (after count_stalls in sweep: a new stall interval starts)
         }
         self.stats.rx_bytes.set(self.rx_total); // 60.25 C5
+        if self.bd.is_some() {
+            // 60.63 the idle sweep's only call into section E. 60.73: here, not in fd_trim: fd_trim is reached from
+            // close_client (fd_put), and E5's reset calls close_client: that cycle changed the inlining of the
+            // per-byte paths (bulk_frame_done out of line in read_target) although E5 is off
+            self.bd_sweep();
+        }
         self.fd_trim(true); // 60.57 A2 allowance above one unused block goes back to the process count
         if self.fd_mask & crate::fdgate::MARK_SHARE != 0 {
             self.sfd_sweep(); // 60.57 C

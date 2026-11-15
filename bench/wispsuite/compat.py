@@ -23,6 +23,9 @@ usage: wst compat --bin FINALWISP [--base-port 8300] [--out DIR] [--matrix] [--s
                 at the fd limit, the warning lines; 60.57 C: --conn-share, --fd-admission)        base+52..+55
   bounds        tests/compat/bounds.py (60.63 E: the four options off and on, honest streams, --dest-failfast end to
                 end against a destination that does not answer, answers again, refuses)             base+97, +98
+  streamshare   tests/compat/streamshare.py (60.72 --stream-share at RLIMIT_NOFILE 400: the heavy connection stops at
+                7/8, the light ones go on; bare: they get 0x49)                                     base+56, +57
+  streampool    tests/compat/streampool.py (60.72 --stream-pool in a user scope with MemoryMax=128M; exit 77 = SKIP) base+58, +59
   policy        tests/compat/policy.py (60.20 C1: port/host/dest rules, --no-direct-ip, --no-ipv6-targets, recursion)  base+28, +29
   realip        tests/compat/realip.py (60.20 C2/C3b: per-IP limits direct and behind a trusted proxy, XFF, rates)  base+8, +9
   logs          tests/compat/logs.py (60.24 --log-level, --log-conns lines, refusal flood, stalled stderr)  base+22, +23
@@ -266,6 +269,10 @@ def gate_finalwisp(a, g):
         g.step("fds", [sys.executable, os.path.join(COMPAT, "fds.py"), binp, str(B + 52)], timeout=300)
     if want("bounds"):  # 60.63 E the bounds of section E (ports B+97, B+98)
         g.step("bounds", [sys.executable, os.path.join(COMPAT, "bounds.py"), binp, str(B + 97)], timeout=300)
+    if want("streamshare"):  # 60.72 --stream-share (ports B+56, B+57)
+        g.step("streamshare", [sys.executable, os.path.join(COMPAT, "streamshare.py"), binp, str(B + 56)], timeout=180)
+    if want("streampool"):  # 60.72 --stream-pool (ports B+58, B+59; a user systemd scope)
+        g.step("streampool", [sys.executable, os.path.join(COMPAT, "streampool.py"), binp, str(B + 58)], timeout=180, judge=membudget_judge)
     if want("policy"):  # 60.20 C1 destination policy (ports B+28, B+29)
         g.step("policy", [sys.executable, os.path.join(COMPAT, "policy.py"), binp, str(B + 28)], timeout=180)
     if want("realip"):  # 60.20 C2 / C3b (ports B+8, B+9)

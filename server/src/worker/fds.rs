@@ -16,11 +16,11 @@
 //! fds). No shared write per stream. The flag is still read: per closed connection, pipe open, idle sweep, share_rule.
 
 use super::*;
-use crate::fdgate::{FdGate, Line10, MARK_HOST, MARK_SHARE};
+use crate::fdgate::{FdGate, Line10, MARK_HOST, MARK_POOL, MARK_SHARE, MARK_STREAM};
 
 /// the fix every fd warning names
-const FIX: &str = "ulimit -n, systemd LimitNOFILE, docker --ulimit nofile; the hard limit is what counts";
-const EVERY: &str = "at most one such line per 10 s";
+pub(super) const FIX: &str = "ulimit -n, systemd LimitNOFILE, docker --ulimit nofile; the hard limit is what counts";
+pub(super) const EVERY: &str = "at most one such line per 10 s";
 /// A3 connections one failed accept resets through the spare fd (the 10 ms retry comes back for more)
 const SPARE_BATCH: u64 = 64;
 
@@ -121,6 +121,9 @@ impl Worker {
     #[cold]
     #[inline(never)]
     fn fd_grab_t(&mut self, ti: u32) -> bool {
+        if self.fd_mask & MARK_STREAM != 0 && self.sl_attempt_short(ti) {
+            return false; // 60.72 --stream-share at a stream's first attempt (fd_short sends the CLOSE)
+        }
         // 60.63 false from bd_take: refused by a rule of section E (fd_short sends the CLOSE), or no fd
         let ok = if self.bd.is_some() { self.bd_take(ti) } else { self.fd_grab(1) };
         if ok {
@@ -207,8 +210,8 @@ impl Worker {
     #[cold]
     #[inline(never)]
     pub(super) fn fd_trim(&mut self, idle: bool) {
-        if idle && self.bd.is_some() {
-            self.bd_sweep(); // 60.63 (the idle sweep's only call into section E)
+        if self.fd_mask & MARK_POOL != 0 {
+            self.sl_trim(idle); // 60.72 --stream-pool
         }
         let (used, block) = (self.stats.fds.get() as u32, self.fdg.block());
         let keep = if idle && used == 0 { 0 } else { block };
@@ -235,6 +238,9 @@ impl Worker {
     fn fd_more(&mut self, ti: u32) -> bool {
         if self.bd.is_some() && self.bd_room_short(ti) {
             return false; // 60.63 refused by a rule of section E, before any DNS work (fd_short sends the CLOSE)
+        }
+        if self.fd_mask & (MARK_STREAM | MARK_POOL) != 0 && self.sl_short(ti) {
+            return false; // 60.72 --stream-share or --stream-pool (fd_short sends the CLOSE)
         }
         if self.fd_pool > 0 {
             return true; // (a C flag is on)
@@ -337,7 +343,7 @@ impl Worker {
     }
 
     /// `1234 of 1234 usable fds in use, open-file limit 1024` for the warnings
-    fn fd_state(&self) -> String {
+    pub(super) fn fd_state(&self) -> String {
         let soft = crate::fdgate::nofile().map_or("unknown".to_string(), |l| l.soft.to_string());
         match self.fdg.limit() {
             u32::MAX => format!("{} fds in use, open-file limit {soft}", self.fdg.used()),
@@ -350,6 +356,12 @@ impl Worker {
     #[cold]
     #[inline(never)]
     pub(super) fn fd_short(&mut self, ti: u32) {
+        if self.fd_mask & (MARK_STREAM | MARK_POOL) != 0 {
+            let why = self.sl_why(); // 60.72 (set by sl_short in fd_more for this stream)
+            if why != 0 {
+                return self.sl_refused(ti, why);
+            }
+        }
         if self.bd.is_some() {
             // 60.63 not the fd limit: a rule of section E stopped the attempt (its own counters and warnings)
             let why = self.bd_why();

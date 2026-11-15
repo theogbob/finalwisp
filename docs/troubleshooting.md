@@ -28,6 +28,8 @@ finalwisp YOUR-OPTIONS --show-config
 - [Uploads slow down for everyone while one client downloads a lot](#uploads-slow-down-for-everyone-while-one-client-downloads-a-lot)
 - [Name lookups are slow when a name server is down](#name-lookups-are-slow-when-a-name-server-is-down)
 - [New names are slow, or fail with `0x42`, while other streams work](#new-names-are-slow-or-fail-with-0x42-while-other-streams-work)
+- [Clients are reset with `why=unread`](#clients-are-reset-with-whyunread)
+- [New connections and streams time out, and the host's connection-tracking table is full](#new-connections-and-streams-time-out-and-the-hosts-connection-tracking-table-is-full)
 - [Startup warnings](#startup-warnings)
 - [Known limits](#known-limits)
 
@@ -107,6 +109,26 @@ The resolver threads are busy, most often with names whose name server does not 
 `finalwisp_dns_wait_max_seconds` and `finalwisp_dns_expired_total`. See
 [slow names](public-server.md#slow-names-and-the-resolver-threads).
 
+### Clients are reset with `why=unread`
+
+`--unread-close` is on (it is off unless asked for), and the host's TCP memory was short. A connection with a download that its client did not
+read (receive window 0, no data taken for 600 seconds) was reset. The counter is `close_unread`, the log has one
+warning per 10 s at most. A client that was paused for 10 minutes or more (a phone app in the background, a frozen
+browser tab), or one that reads very slowly into a large buffer, can be one of them; it connects again. If honest clients are reset often, the host needs more TCP memory
+(`net.ipv4.tcp_mem`, or more RAM), or turn the option off with `--no-unread-close`. See the
+[reference](configuration.md#--unread-close).
+
+### New connections and streams time out, and the host's connection-tracking table is full
+
+When the host has a firewall with connection tracking (`nf_conntrack`), each client connection and each stream takes
+an entry, and a closed one keeps its entry for up to 2 minutes. When the table is full, the kernel drops the packets
+of new connections: new clients and new streams time out, and `connect_timeout` goes up. With `--net-watch` (in the
+public preset) the server warns at the start and while it runs when the table is 3/4 full; the gauges are
+`host_conntrack` and `host_conntrack_max`, and `--show-config` says whether the table is smaller than the server's
+open-file budget. Fix: a larger
+`net.netfilter.nf_conntrack_max` on the host. In a container the table may belong to the host, and its files may not
+be readable: then there is no warning. See the [reference](configuration.md#--net-watch).
+
 ## Startup warnings
 
 finalwisp warns about host settings that limit it, but never changes them. `finalwisp --show-config` lists the same
@@ -119,6 +141,7 @@ values, with a note for each one that limits the server:
 | `somaxconn` below 4096 | bursts of new connections are dropped | `net.core.somaxconn` |
 | open files below 65536 | each connection and stream is one file descriptor | `LimitNOFILE=`, `ulimit -n` |
 | memory budget off | `/proc/meminfo` could not be read | set `--mem-budget` |
+| connection-tracking table (with `--net-watch`) | 3/4 full: new connections are dropped when it is full | `net.netfilter.nf_conntrack_max` |
 
 The `tcp_wmem` / `tcp_rmem` line is not a warning: the kernel's default values are below 16 MiB, so nearly every host
 has it. The start output has one line for it, for example

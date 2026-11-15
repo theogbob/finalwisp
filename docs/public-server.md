@@ -40,7 +40,9 @@ file and the command line override it is in the [configuration reference](config
 | `tcpmem-share` | Kernel TCP memory share. Downloads that a client does not read stay in the kernel's TCP memory, and when that is full the kernel slows every connection of the host. From 3/4 of the host's limit, the client address that holds more than half of the unread downloads gets no new streams while another client is connected. Open streams go on. On a 2-core VPS, one address that kept adding unread downloads filled the host's TCP memory without this part: another client's upload stopped, and its download fell from 8.0 to 0.03 MiB/s. With it (three runs) the address got no stream past 2,000 and the host stayed below its limit. The other client kept working, but not always at full speed: its download was 8.0 MiB/s in one run and 0.7 MiB/s in two. A burst is not stopped (see below). The marks are in the [reference](configuration.md#--tcpmem-share). |
 | `port-share` | Source port share. The host has a fixed number of source ports toward one destination address and port (28,232 with the Linux defaults). From 3/4 of them in use, the client address that holds more than half of the sockets to that destination gets no new streams to it while another client uses it. From 15/16 of them in use, an address that is alone on a destination gets no new streams to it while other clients are connected, so ports are left for a client that comes later (the same counter, `refuse_port_share`; the stream log names the rule `port_share` or `port_reserve`). From 1/4, new sockets to it get a socket option that keeps connects fast (Linux 6.3 and later). See the [reference](configuration.md#--port-share). |
 | `dest-failfast` | Dead destinations. When 8 connects of one worker thread to one destination have each got no answer to 4 SYN packets (3 seconds or more, by the kernel's retransmit schedule), that thread's new streams to it fail at once and no longer hold a socket for the connect timeout. One connect per second per worker thread still goes out, and the first answer ends it. On a 2-core VPS, 2,000 streams per second to one dead port held 27,843 file descriptors and took another client's requests from 1,764 to 116 per 45 seconds without this part; with it the server held 39 file descriptors and the other client kept 1,626 of 1,812. See the [reference](configuration.md#--dest-failfast). |
-| `net-watch` | Counters and a log line for two things that no part of the preset bounds: SYN retransmits and UDP datagrams (see [what the preset does not do](#what-the-preset-does-not-do)). It refuses nothing. See the [reference](configuration.md#--net-watch). |
+| `net-watch` | Counters and a log line for two things that no part of the preset bounds: SYN retransmits and UDP datagrams (see [what the preset does not do](#what-the-preset-does-not-do)). It also warns when the host's connection-tracking table is 3/4 full: when that table is full, the kernel drops new connections. `--show-config` compares the table's size with the open-file budget ([what a user costs](#what-a-user-costs)). It refuses nothing. See the [reference](configuration.md#--net-watch). |
+| `stream-share` | Stream share per connection. While 7/8 of the file descriptors are handed out (where `fd-admission` refuses new connections), a connection that holds its share of streams or more gets no new ones (CLOSE `0x49`), so the room that is left goes to connections with fewer streams. The share is about twice the descriptors per open connection at 7/8 and once that at the limit, at least 32 streams. It counts connections, not addresses. See the [reference](configuration.md#--stream-share). |
+| `stream-pool` | Stream pool. Under memory pressure (always with a budget under 256 MiB) the worker threads share one stream limit of the same total instead of one limit each, so a busy thread is not refused while another has room. The memory bound stays the same. See the [reference](configuration.md#--stream-pool). |
 
 The server also raises its own open-file limit to the hard limit at startup (but not above 1048576), with or without
 the preset. `--no-nofile-raise` turns that off. See [what a user costs](#what-a-user-costs) for the number you need.
@@ -69,7 +71,8 @@ The preset holds no fixed per-address number and no fixed connection count, on p
   header itself: see [what the server can and cannot tell](reverse-proxy.md#what-the-server-can-and-cannot-tell).
 - **Streams on connections that are already open.** The connection share acts on new connections. A client can
   still open streams on the connections it has, up to 1024 on each, until one of the stream guards of the table
-  above refuses them.
+  above refuses them. Of those, `stream-share` acts only when the file descriptors run short: from 7/8 on, each
+  connection gets a share of them.
 - **Two load shapes that use the host's packet rate.** On a 2-core VPS, one client slowed other clients down with
   streams to many targets that never answer the connect (the kernel sends each SYN packet again and again: 4,200 SYN
   retransmits per second), and with a very high rate of UDP datagrams (10,000 per second). The preset sets no bound
@@ -80,12 +83,16 @@ The preset holds no fixed per-address number and no fixed connection count, on p
   address holds more than half, nobody is refused. For the ports, a stream is then refused only when a destination
   has no port left.
 - **Kernel TCP memory that fills.** Downloads that clients do not read stay in the kernel's TCP memory, and when it
-  is full every connection of the host slows down. The preset does not prevent this. The option
+  is full every connection of the host slows down. The preset limits this but does not prevent it. The option
   [`--tcpmem-share`](configuration.md#--tcpmem-share) covers one case: one address that keeps adding downloads it
   never reads. Its reference says what it does not cover, with the tests: many addresses that each hold a few, a
   burst from one address within a second or two, and downloads that ran at full speed and were then paused (honest
   clients or not). The warning "the host entered kernel TCP memory pressure" names the state. See
-  [small hosts and many slow downloads](memory.md#small-hosts-and-many-slow-downloads).
+  [small hosts and many slow downloads](memory.md#small-hosts-and-many-slow-downloads). The option
+  [`--unread-close`](configuration.md#--unread-close) (not in the preset in this release) acts later on the same downloads: while the host's TCP memory is
+  short, it resets a connection whose client has taken no data for 600 seconds with its receive window at 0. That
+  covers the three cases above once their clients have taken nothing for that long, not at once, and not a client
+  that reads a little now and then.
 - **A destination that comes back.** `dest-failfast` also refuses streams to a destination that comes back, until
   its next probe: in a test with a destination that was down for 12 seconds and came back, 60 of 270 streams were
   refused at once, and 59 of them would have connected after a wait of up to 7 seconds without this part. The first
@@ -110,6 +117,13 @@ The preset holds no fixed per-address number and no fixed connection count, on p
 ## More limits you can add
 
 All of these work with or without the preset. A later option overrides the preset's value.
+
+- **Clients that stopped reading.** `--unread-close` resets, while the host's TCP memory is short, a connection whose
+  client has taken no data for 600 seconds with its receive window at 0: that frees the memory its downloads hold. It
+  is off unless asked for; a later release may put it in the preset. An honest slow reader also takes no data for
+  minutes while its buffer drains (up to 187 s at 2 KiB per second with the kernel's default buffer, 346 s with an
+  8 MiB buffer, in our tests), so a slower reader, one with a larger buffer, or a client paused for 10 minutes or more
+  can be reset. See the [reference](configuration.md#--unread-close).
 
 - **Connection limits.** `--max-conns` caps the whole process. `--max-conns-per-ip` caps one address, and
   `--conn-rate-per-ip R/B` limits how fast one address opens new connections: `20/200` allows a burst of 200, then 20
@@ -162,8 +176,9 @@ counts and logs it and refuses new connections at once.
 The preset refuses new connections earlier, from 7/8 of the descriptors (806 connected users in the same test), and
 leaves the rest to the users who are already connected. That is room, not a guarantee: in the test their streams
 used it up 50 seconds later. Over the run they lost about a third of the requests they lost without the preset
-(60,269 against 168,096), and 194 of 1,000 users never got in (18 without it). Raise the limit before it comes to
-this.
+(60,269 against 168,096), and 194 of 1,000 users never got in (18 without it). That test ran without
+`stream-share` (in the preset since 1.3.2), which keeps the busiest connections from using up the room first. Raise
+the limit before it comes to this.
 
 Measured at the limit of the shipped systemd unit (1,048,576), on a virtual machine with 14 CPU threads that also
 ran the clients and the destinations. One run each; the users loaded pages at the usual rate, but each answer had
@@ -194,16 +209,21 @@ How to raise the limit (the `open files` line at startup shows the value in effe
 
 Memory is the second number: see [memory budget](memory.md#memory-budget).
 
-The connection-tracking table can run out before either. A host that tracks connections (Docker with its default
-network, or a firewall with stateful or NAT rules) keeps one entry in a kernel table for every TCP connection, and a
-closed connection keeps its entry for about 2 more minutes. In our replay an active user held about 340 entries:
-86 open (one connection and its streams) and about 250 that had closed in the last 2 minutes. With a table
-of 262,144 entries, a common size, 580 such users filled almost 80% of it, while they used under 10% of the file
-descriptors of that server. When the table is full the kernel drops the packets of new connections: connects to
-destinations time out, new clients do not get in, and nothing in the server's counters names the cause (the kernel
-log usually says `nf_conntrack: table full, dropping packet`). finalwisp does not read this table. Look at
-`sysctl net.netfilter.nf_conntrack_count net.netfilter.nf_conntrack_max` on the host under load, and raise
-`nf_conntrack_max` if the count comes near it.
+The connection-tracking table can run out before either. A host that tracks connections (`nf_conntrack`: Docker
+with its default network, or a firewall with stateful or NAT rules) keeps one entry in a kernel table for every TCP
+connection, and a closed connection keeps its entry for about 2 more minutes. In our replay an active user held about
+340 entries: 86 open (one connection and its streams) and about 250 that had closed in the last 2 minutes. So the
+common size of 262,144 entries holds about 770 such users (computed), far fewer than the descriptors of the table
+above: in the replay, 580 users filled almost 80% of it while they used under 10% of the file descriptors of that
+server. When the table is full, the kernel drops the packets of new connections: connects to destinations time out,
+and new clients do not get in (the kernel log usually says `nf_conntrack: table full, dropping packet`).
+
+With `--net-watch` (in the preset), the server reads the table where its files are readable: `--show-config` shows
+its size and whether it is smaller than the descriptors for connections and streams, the server warns when it is 3/4
+full, and the metrics have `host_conntrack` and `host_conntrack_max`. Without `--net-watch`, or in a container that
+cannot read the table, nothing in the server names the cause: look at
+`sysctl net.netfilter.nf_conntrack_count net.netfilter.nf_conntrack_max` on the host under load. The fix is a larger
+`net.netfilter.nf_conntrack_max`, or no connection tracking for the server's traffic.
 
 ## Destination policy
 

@@ -18,13 +18,13 @@ finalwisp is that server.
 finalwisp is one file for Linux on x86_64. It needs nothing else on the machine.
 
 ```sh
-V=v1.3.1
+V=v1.3.2
 curl -LO https://github.com/theogbob/finalwisp/releases/download/$V/finalwisp-$V-x86_64-linux.tar.gz
 curl -LO https://github.com/theogbob/finalwisp/releases/download/$V/SHA256SUMS
 tar -xzf finalwisp-$V-x86_64-linux.tar.gz
 sha256sum -c SHA256SUMS      # must print OK twice: the download, and the binary inside it
 sudo install -m 0755 finalwisp-$V-x86_64-linux/finalwisp /usr/local/bin/finalwisp
-finalwisp --version          # finalwisp 1.3.1
+finalwisp --version          # finalwisp 1.3.2
 ```
 
 All versions are on the [Releases](https://github.com/theogbob/finalwisp/releases) page. To build it yourself, see
@@ -112,30 +112,40 @@ and has the rest: options, memory, open files, TLS.
 
 ## Performance
 
-How many times faster finalwisp is than each server:
+How many times faster finalwisp is than each server (valid cells only¹):
 
 | finalwisp vs | Throughput | Requests/s | New streams/s |
 |---|---|---|---|
-| [epoxy-server](https://github.com/MercuryWorkshop/epoxy-tls) | 1.5–5.4× | 1.0–1.4× | 1.9–5.9× |
-| [wisp-server-python](https://github.com/MercuryWorkshop/wisp-server-python) | 2.7–7.2× | 2.0–4.2× | 3.3–7.3× |
-| [wisp-js](https://github.com/MercuryWorkshop/wisp-client-js) | 3.7–37× | 1.8–18× | 3.3–17× |
-| [wispurr](https://www.npmjs.com/package/wispurr) | 1.5–10×¹ | 2.1–6.0× | 2.4–5.1× |
+| [epoxy-server](https://github.com/MercuryWorkshop/epoxy-tls)² | 1.52–4.1× | 1.05–1.77× | 1.79–4.1× |
+| [wisp-server-python](https://github.com/MercuryWorkshop/wisp-server-python) | 1.62–6.4× | 1.94–5.1× | 2.8–5.3× |
+| [wisp-js](https://github.com/MercuryWorkshop/wisp-js) | 3.7–15.2× | 1.60–14.7× | 3.1–13.6× |
+| [wispurr](https://github.com/sylvieisnton/wispurr)³ | 1.28–2.4× | 1.36–3.1× | 2.3–3.5× |
 
-- Ranges cover a 72-thread Intel Xeon Gold server and two 2-core cloud VPSes, finalwisp 1.1.0, every server at its
-  default or documented settings.
+- Ranges cover an 80-thread Intel Xeon Gold server and two 2-core VPSes: finalwisp 1.3.1 and the newest version of
+  every other server on 2026-11-15, each at its default or documented settings. A value is the median of 3 runs, one
+  session per machine.
 - These are loopback tests without TLS: they show what each server can push when the network is not the limit. Over a
   real link, the link usually runs out first.
-- On the big server finalwisp moved 21.8 GiB/s of downloads and 445k requests/s; on a 2-core VPS, 2.4 GiB/s and
-  64–93k requests/s.
-- finalwisp also hands memory back when the load stops: its resident memory right after the heaviest test was 4 MiB
-  on the 2-core VPSes, where the others held 145 MiB to 3.3 GiB.
-- Its peak memory under load (VmHWM) was the lowest of the five servers on the big server and one VPS, and level with
-  wisp-server-python's on the other VPS (156 vs 160 MiB).
+- On the big server finalwisp moved 5.8 GiB/s of downloads and 421k requests/s; on a 2-core VPS, up to 1.8 GiB/s
+  (uploads: there the download tests ran short of TCP memory) and 57–97k requests/s.
+- finalwisp also hands memory back when the load stops: right after the heaviest test its resident memory was 25 MiB
+  on the big server and 4.1–4.5 MiB on the 2-core VPSes; the others held 872 MiB to 2.2 GiB on the big server and
+  146 MiB to 1.3 GiB on the VPSes.
+- Its peak memory under load (VmHWM) was the lowest of the servers whose runs did not crash, on all three machines. On
+  the VPSes the next lowest was epoxy-server with 163 MiB against 154 on one, and wisp-server-python with 168 MiB
+  against 125 on the other.
 
 Full tables and method: [benchmarks](docs/benchmarks.md).
 
-¹ Valid cells only: wispurr moved no data in most single-stream upload and echo runs, and failed the big server's
-download test (known bugs in the tested version).
+¹ Valid cells only: a test is left out of a range where the kernel ran short of TCP memory during it (some bulk tests
+on the VPSes), and where either server moved no data, reported errors or had crashed.
+
+² Built from its repository as its README says, epoxy-server crashed under load on both VPSes (a panic in its
+tokio-websockets 0.12.0), and the tests after a crash had no server, so they have no value. Its numbers here are for
+the same commit with tokio-websockets 0.12.3, which did not crash. Details: [benchmarks](docs/benchmarks.md#notes).
+
+³ The tested version fixed the data-loss and flow-control bugs of the version tested before. It does not answer the
+Wisp v2 subprotocol, so a Wisp v2 client falls back to Wisp v1 with it.
 
 ## Documentation
 
