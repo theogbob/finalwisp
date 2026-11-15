@@ -205,12 +205,13 @@ impl Worker {
     /// 60.20 C3a one client fewer on this worker: `Inbox.load`, the --max-conns reservation, (C3b) the per-IP key it
     /// charged and (60.57 A2) its socket's fd in the count, together, at each of the places a counted client ends
     /// (adopt's two failure exits, close_client, a pending PROXY connection), so no exit can drop one and keep another. `key`: Some only if that client charged it. (Fds still queued in an
-    /// inbox when the process exits are not released: the process is ending.)
-    pub(super) fn unload(&mut self, key: Option<clientip::IpKey>) {
+    /// inbox when the process exits are not released: the process is ending.) `slot`: false only for a client whose
+    /// --max-conns slot went back when it was refused per address (Peer::slot_freed, free_slot).
+    pub(super) fn unload(&mut self, key: Option<clientip::IpKey>, slot: bool) {
         self.inbox.load.fetch_sub(1, std::sync::atomic::Ordering::Release); // 60.25 C5: after the rx_bytes publish
         self.fd_put(1); // 60.57 A2 the client socket (every caller closes it)
 
-        if let Some(g) = &self.cfg.conn_gate {
+        if let Some(g) = self.cfg.conn_gate.as_ref().filter(|_| slot) {
             g.release();
         }
         if let (Some(k), Some(t)) = (key, self.cfg.clientip.as_ref().and_then(|c| c.table.as_ref())) {
@@ -241,7 +242,7 @@ impl Worker {
                 Ok(conn) => Some(Box::new(TlsHs { conn, out: Vec::new(), sent: 0, kept: 0, done: false })),
                 Err(_) => {
                     unsafe { libc::close(fd) };
-                    self.unload(h.key);
+                    self.unload(h.key, true);
                     if self.cfg.log_conns {
                         self.log_refused(h.peer, Why::ServerClose); // 60.24 (review: no silent drop)
                     }
@@ -349,7 +350,7 @@ impl Worker {
             if !ep_add(self.ep, fd, tok(K_CLIENT, i, g), EV_ALL) {
                 unsafe { libc::close(fd) };
                 self.clients.remove(i);
-                self.unload(h.key);
+                self.unload(h.key, true);
                 if self.cfg.log_conns {
                     self.log_refused(h.peer, Why::ServerClose); // 60.24
                 }
@@ -363,7 +364,7 @@ impl Worker {
                     // the slot 520 bytes instead of 512, 60.22). 60.31 C7 with --listen-unix always: a unix client's
                     // header is read, and a TCP client's slot is written None (close_client takes every entry; this
                     // keeps a slot from ever showing a TCP client a former unix client's trusted peer)
-                    self.set_peer(i, h.peer.map(|ip| clientip::Peer { ip, key: h.key }));
+                    self.set_peer(i, h.peer.map(|ip| clientip::Peer { ip, key: h.key, slot_freed: false }));
                 }
                 if self.cfg.log_conns || self.cfg.log_streams {
                     self.log_open(i, is_tls, h.peer); // 60.35 also for --log-streams alone (the streams' cid)
@@ -430,15 +431,27 @@ impl Worker {
         }
     }
 
+    /// v1.3.1 K2 a failed client read or write named from errno (connlog::io_why), with or without --log-conns: a
+    /// keepalive or retransmission timeout (Why::DeadPeer) is counted in dead_peers. Out of line: an error path only.
+    #[cold]
+    #[inline(never)]
+    fn io_why(&mut self, ci: u32) -> Why {
+        let w = connlog::io_why_of(self.clients.at(ci));
+        if w == Why::DeadPeer {
+            self.stats.dead_peers.bump();
+        }
+        w
+    }
+
     /// `why`: the reason for --log-conns (the first one given for the connection wins: begin_close names it first;
     /// Why::Io = a failed read or write, named here from errno)
     pub(super) fn close_client(&mut self, ci: u32, why: Why) {
         if self.clients.at(ci).dead {
             return;
         }
+        // 60.24 Why::Io from errno before drop_streams makes other syscalls
+        let why = if why == Why::Io { self.io_why(ci) } else { why };
         if !self.connlog.is_empty() {
-            // 60.24 Why::Io from errno before drop_streams makes other syscalls
-            let why = if why == Why::Io { connlog::io_why_of(self.clients.at(ci)) } else { why };
             connlog::set_why(&mut self.connlog, ci, why);
         }
         self.drop_streams(ci);
@@ -452,6 +465,7 @@ impl Worker {
         if !self.connlog.is_empty() {
             self.log_close(ci, peer.as_ref().map(|p| p.ip)); // 60.24 before the socket closes (TCP_INFO)
         }
+        let slot = !peer.as_ref().is_some_and(|p| p.slot_freed); // 60.69 S1: a 429 gave its slot back already
         let key = peer.and_then(|p| p.key);
         if self.meter {
             self.meter_close(ci, key); // 60.25 C10b the unread lease goes back (before unload releases the key)
@@ -459,7 +473,7 @@ impl Worker {
         // 60.25 C5: published before unload's Release decrement of Inbox.load: main sees load 0 (Acquire) only after the
         // last close's bytes (review: an emptied worker may sleep without a sweep; shutdown's final line)
         self.stats.rx_bytes.set(self.rx_total);
-        self.unload(key);
+        self.unload(key, slot);
         let c = self.clients.at(ci);
         c.dead = true;
         if c.ktls_on && !c.notified {

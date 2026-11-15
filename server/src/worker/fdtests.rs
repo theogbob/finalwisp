@@ -65,6 +65,7 @@ pub(super) fn rig(cfg: Config, limit: u32, block: u32) -> (Worker, u16, mpsc::Re
 pub(super) fn pump(w: &mut Worker, ms: i32) {
     let mut evs = [libc::epoll_event { events: 0, u64: 0 }; 64];
     let n = unsafe { libc::epoll_wait(w.ep, evs.as_mut_ptr(), 64, ms) };
+    w.now = Instant::now();
     for ev in &evs[..n.max(0) as usize] {
         let (t, e) = (ev.u64, ev.events);
         w.dispatch(t, e);

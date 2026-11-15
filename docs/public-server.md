@@ -103,9 +103,9 @@ The preset holds no fixed per-address number and no fixed connection count, on p
 - **UDP stays on.** In 125 rendered page loads with 4 browser client setups, no page opened a UDP stream. If your
   clients do not need UDP, `--no-udp` removes it.
 - **Who may connect and where to.** Authentication and destination lists are your policy (below).
-- **Idle connections** are never closed by a timeout of the server. There is one known issue with very many
-  connections that arrive within the same second or two and then stay idle: see
-  [known limits](troubleshooting.md#known-limits).
+- **Idle connections** are never closed by a timeout of the server while the client is alive. A client that vanished
+  without closing is found by TCP keepalive after 3 to 4 minutes of idle time and closed (`--no-keepalive` turns
+  this off).
 
 ## More limits you can add
 

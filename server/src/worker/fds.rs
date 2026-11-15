@@ -64,6 +64,12 @@ impl Worker {
         if self.bd.is_some() {
             self.bd_grab(); // 60.63 (out of line already: the place a worker learns that a mark of section E is set)
         }
+        self.fd_grab_n(n)
+    }
+
+    /// fd_grab after section E (bd_take calls it too)
+    #[inline(always)]
+    pub(super) fn fd_grab_n(&mut self, n: u32) -> bool {
         let used = self.stats.fds.get() as u32;
         let mut all = self.fd_have + self.fd_pool;
         if used + n > all {
@@ -115,10 +121,8 @@ impl Worker {
     #[cold]
     #[inline(never)]
     fn fd_grab_t(&mut self, ti: u32) -> bool {
-        if self.bd.is_some() && !self.bd_attempt(ti) {
-            return false; // 60.63 refused by a rule of section E (fd_short sends the CLOSE)
-        }
-        let ok = self.fd_grab(1);
+        // 60.63 false from bd_take: refused by a rule of section E (fd_short sends the CLOSE), or no fd
+        let ok = if self.bd.is_some() { self.bd_take(ti) } else { self.fd_grab(1) };
         if ok {
             self.sfd(ti, 1);
         }

@@ -195,10 +195,16 @@ impl Worker {
     #[inline(never)]
     pub(super) fn bd_grab(&mut self) {
         self.bd_pick();
+        self.bd_recount();
+    }
+
+    /// bd_grab's E3 count. The time is the loop turn's (no clock read at each fd): a count comes at most one turn late.
+    #[inline]
+    fn bd_recount(&mut self) {
         if self.connecting.is_empty() || self.bd.as_ref().is_none_or(|b| b.g.opts & OPT_DEAD == 0) {
             return;
         }
-        let now = metrics::now_ms();
+        let now = metrics::ms_at(self.now);
         if self.bd.as_ref().is_some_and(|b| now.saturating_sub(b.count_at) >= RECOUNT_MS) {
             self.bd_count(now);
         }
@@ -541,9 +547,10 @@ impl Worker {
     /// set back to no attempt (every address so far was refused by E2 or E3, and it waits for the rest of its
     /// lookup) is such a stream: it is judged again when the final answer comes. E2, E3: while a destination is busy
     /// or does not answer, every TCP attempt goes on in try_connect_gated, which judges each address.
+    /// An attempt that goes on then takes its fd here (bd_grab's count, fd_grab): one call of fd_grab_t per fd.
     #[cold]
     #[inline(never)]
-    pub(super) fn bd_attempt(&mut self, ti: u32) -> bool {
+    pub(super) fn bd_take(&mut self, ti: u32) -> bool {
         self.bd_pick();
         let t = self.targets.at(ti);
         let (first, udp) = (t.attempt == 0 && t.conn.is_empty(), t.udp);
@@ -554,7 +561,11 @@ impl Worker {
         if let Some(b) = self.bd.as_mut() {
             b.why = why;
         }
-        why == 0
+        if why != 0 {
+            return false;
+        }
+        self.bd_recount();
+        self.fd_grab_n(1)
     }
 
     /// fd_short with a reason of this file for the attempt of stream `ti` that fd_grab_t stopped

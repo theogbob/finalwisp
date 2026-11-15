@@ -333,10 +333,10 @@ keepalive_on = any("dead peers" in (e.get("capability") or [""])[0] and "dead pe
 rp = jl("reaps.jsonl")
 if rp:
     P("")
-    P("## Dead-peer reaping (half-open clients; base-1.2 expects idle ~180 s, with a queued download ~150-155 s)")
-    # bands: idle = keepalive 120 + 4 x 15 s (+ a 2 s poll); dl = PEER_GONE_MS 150 s + 2 sweeps (2 s each) + poll.
+    P("## Dead-peer reaping (half-open clients; base-1.2 expects idle ~180 s, 1.3.1 180-239 s, with a queued download ~150-155 s)")
+    # bands: idle = keepalive 120 + 0..59 s spread per connection (60.69 K1) + 4 x 15 s (+ a 2 s poll); dl = PEER_GONE_MS 150 s + 2 sweeps (2 s each) + poll.
     # A peer that dies at full probe backoff takes ~360 s (60.17: 3 unanswered probes); here it dies right after its download started.
-    for kind, lo, hi in (("idle", 175, 200), ("dl", 145, 170)):
+    for kind, lo, hi in (("idle", 175, 260), ("dl", 145, 170)):
         for tls in (False, True):
             g = [r for r in rp if r["kind"] == kind and r["tls"] == tls]
             if not g:

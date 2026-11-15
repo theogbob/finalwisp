@@ -75,14 +75,16 @@ impl Worker {
         self.stats.streams.set((self.targets.slots.len() - self.targets.free.len()) as u64);
         // targets first: they read their client's `active` before the client loop clears it
         let keepalive = self.cfg.keepalive;
-        for (_, slot) in self.targets.slots.iter_mut() {
+        for (ti, (_, slot)) in self.targets.slots.iter_mut().enumerate() {
             let Some(t) = slot.as_mut() else { continue };
             // 70.13 dead-target detection (net::KEEP_*), armed here and not at connect: churn streams that
             // end within a sweep skip the 4 setsockopt (cf. LAZY_CAP); detection comes at most one sweep
             // later. A failed setsockopt only loses the detection.
+            // v1.3.1 K1 the idle time spread by slot (net::keep_idle): streams opened together would probe together,
+            // as clients did (the same calls, only the value differs)
             if keepalive && !t.keepalive && !t.udp && t.state == TState::Open && t.fd >= 0 {
                 t.keepalive = true;
-                net::set_keepalive(t.fd);
+                net::set_keepalive(t.fd, net::keep_idle(ti as u32));
             }
             if t.phead == t.pend.len() && t.pend.capacity() > 0 {
                 let idle = self.clients.slots.get(t.client as usize).and_then(|s| s.1.as_ref()).is_some_and(|c| !c.active);
@@ -162,6 +164,20 @@ impl Worker {
                 // (gone_ack kept: `active` also means target reads; an ACK from the client makes the ACK age
                 // small, which clears it at the next sweep that checks)
                 continue;
+            }
+            // v1.3.1 K1 the first sweep that finds this connection idle gives it its own keepalive idle time (net::keep_idle;
+            // accepted sockets inherit KEEP_IDLE from the listener). Once per connection (ka_spread, cleared when the slot
+            // is freed: reap_dead), so the accept path and a connection that ends before it is idle for a sweep pay nothing.
+            // Not for unix clients (no TCP). Never late (review): a connection is idle at the first sweep whose whole period
+            // had no read, so this runs within 2 periods (4 s) of its last read (or of its accept); the kernel counts the
+            // idle time from the last received segment, so the first probe is still 116 s or more away. A read in a
+            // period that is not idle keeps the keepalive timer from running anyway (keepalive needs an idle socket).
+            if keepalive && c.local != LOCAL_UNIX && !self.ka_spread.get(i).copied().unwrap_or(false) {
+                if self.ka_spread.len() <= i {
+                    self.ka_spread.resize(i + 1, false);
+                }
+                self.ka_spread[i] = true;
+                net::set_keep_idle(c.fd, net::keep_idle(i as u32));
             }
             // 70.02 output queued (ours, or only in the kernel: a finished response the peer never ACKed) and
             // no read for a whole sweep: a slow (zero-window) reader, or a peer that vanished. TCP keepalive

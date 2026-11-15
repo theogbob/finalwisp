@@ -16,7 +16,9 @@ BIN, BASE = os.path.abspath(sys.argv[1]), int(sys.argv[2])
 TPORT = BASE + 1
 WARM, DUR = 2.0, 4.0
 LO, HI = 0.8, 1.25
-CERTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "server", "fuzz", "certs")
+# 80.02: tests/certs is the pair that run_tls.sh / the parallel gate make at run time. Before, this was server/fuzz/certs,
+# a directory that is gone since the certificates are no longer in the tree: the wss case below was a SKIP on every host
+CERTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "certs")
 fails = 0
 def ok(c, m):
     global fails
@@ -55,8 +57,12 @@ def start(*args, tls=False):
         time.sleep(0.05)
     time.sleep(0.2)
     return p
+TRIM = bool(os.environ.get("WST_TRIM"))  # wst compat --trim (80.01)
 def stop(p):
     p.terminate()
+    if TRIM:  # a second SIGTERM = exit now (60.12). Without it a server that still has this test's connections drains (30 s), and the wait below ends in SIGKILL after 10 s
+        try: p.wait(0.5)
+        except subprocess.TimeoutExpired: p.terminate()
     try: p.wait(10)
     except subprocess.TimeoutExpired: p.kill(); p.wait()
 

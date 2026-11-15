@@ -147,8 +147,12 @@ def start(*args):
     return p
 def srvlog(p):
     with open(p.logf.name) as f: return f.read()
+TRIM = bool(os.environ.get("WST_TRIM"))  # wst compat --trim (80.01)
 def stop(p):
     p.terminate()
+    if TRIM:  # a second SIGTERM = exit now (60.12). Without it a server that still has this test's connections drains (30 s), and the wait below ends in SIGKILL after 10 s
+        try: p.wait(0.5)
+        except subprocess.TimeoutExpired: p.terminate()
     try: p.wait(10)
     except subprocess.TimeoutExpired: p.kill(); p.wait()
 def metric(p, key):
@@ -227,8 +231,56 @@ def echo_ok(w, host, msg, port=E, payload=b"ping-123"):
     ok(got == payload, f"{msg}: echo through the proxy ({got[:20]!r})")
     return sid
 
+# ---- WST_CASES="k/n" runs only shard k of n (k = 1..n). Unset: nothing changes. From here on the file is a list of
+# sections. "#@seg NAME SECONDS" starts a case group (one unit; SECONDS = its measured time alone without WST_TRIM, used
+# only to balance the shards; a later "#@seg NAME" continues the group), "#@seg NAME SECONDSxCOUNT" a group whose loop
+# over each(NAME, [...]) is COUNT units of SECONDS each, "#@all" the lines that every shard runs (objects that several
+# groups use, and the summary line; they print no PASS line). With WST_CASES this file is compiled again with the groups
+# of the other shards blanked (the line numbers stay) and run here: each unit is in exactly one shard.
+SHARD = None  # or the set of (NAME, item index or None) of this shard
+def each(name, items):
+    if SHARD is None: return items
+    if [u[1] for u in UNITS if u[0] == name] != list(range(len(items))): between(); shard_error(f"each({name!r}): {len(items)} items, the #@seg line does not say x{len(items)}")
+    return [x for i, x in enumerate(items) if (name, i) in SHARD]
+def shard_error(msg):
+    print("upstream.py: " + msg, file=sys.stderr); sys.exit(2)
+def between():  # a group of another shard was here: stop the server that the group before it left running
+    if p.poll() is None: stop(p)
+class NoServer:  # "p" before the first group of a shard: stop(p) does nothing
+    def terminate(self): pass
+    def wait(self, timeout=None): return 0
+    def poll(self): return 0
+if "WST_CASES" in os.environ:
+    import re
+    LINES, UNITS, MARKS = open(__file__, encoding="utf-8").read().split("\n"), [], {}  # MARKS: line index -> NAME, None for "#@all"
+    for i, l in enumerate(LINES):
+        if not l.startswith("#@"): continue
+        m = re.fullmatch(r"#@all|#@seg ([\w-]+)(?: (\d+(?:\.\d+)?)(?:x([1-9]\d*))?)?", l)
+        if not m or (m[1] is not None and (m[2] is None) != any(u[0] == m[1] for u in UNITS)) or (m[2] and float(m[2]) <= 0):
+            shard_error(f"line {i + 1}: bad section line {l!r}")
+        MARKS[i] = m[1]
+        if m[2]: UNITS += [(m[1], j if m[3] else None, float(m[2])) for j in range(int(m[3] or 1))]
+    m = re.fullmatch(r"([1-9][0-9]*)/([1-9][0-9]*)", os.environ["WST_CASES"])
+    if not m or not int(m[1]) <= int(m[2]) <= len(UNITS):
+        shard_error(f"WST_CASES={os.environ['WST_CASES']!r}: want k/n with 1 <= k <= n <= {len(UNITS)}")
+    # the longest unit first, each to the shard with the smallest sum so far (ties: file order, then the lowest shard)
+    load, SHARD = [0.0] * int(m[2]), set()
+    for name, item, sec in sorted(UNITS, key=lambda u: -u[2]):
+        j = load.index(min(load)); load[j] += sec
+        if j == int(m[1]) - 1: SHARD.add((name, item))
+    keep = False  # the lines above ran already
+    for i, l in enumerate(LINES):
+        if i in MARKS:
+            keep = MARKS[i] is None or any(u[0] == MARKS[i] for u in SHARD)
+            if not keep: LINES[i] = "between()"
+        elif not keep: LINES[i] = ""
+    p = NoServer()
+    exec(compile("\n".join(LINES), __file__, "exec"))
+    shard_error("the last section did not end the script")
 # ---- SOCKS5, no auth, local DNS
+#@all
 s1 = Socks()
+#@seg socks5-basic 12.8
 p = start("--upstream", f"socks5://127.0.0.1:{s1.port}")
 ok("upstream socks5://127.0.0.1:%d" % s1.port in srvlog(p) and "UDP off" in srvlog(p), "capability line: upstream + UDP off")
 ok(metric(p, "upstream_ok") == 0 and metric(p, "upstream_dns_age_s") is None, "an IP-literal proxy: no refresh fields in the line")
@@ -243,6 +295,7 @@ case_close(w, "10.1.2.3", 0x48, msg="C1 private address before the proxy")
 ok(len(s1.log) == n0, "C1 refusal: the proxy saw nothing")
 sid = w.connect("127.0.0.1", E, udp=True)
 ok(w.result(sid) == ("close", 0x48), "UDP with an upstream: 0x48")
+#@seg socks5-combine 10.6
 # banner in the same segment as the reply (no over-read)
 s2 = Socks(combine=True)
 stop(p); p = start("--upstream", f"socks5://127.0.0.1:{s2.port}")
@@ -254,6 +307,7 @@ sid = w.connect("127.0.0.1", BYE)
 pk = w.packets(4, until=lambda o: any(s == sid and ty == 4 for ty, s, _ in o))
 gotd = b"".join(b for ty, s, b in pk if s == sid and ty == 2); cl = [b[0] for ty, s, b in pk if s == sid and ty == 4]
 ok(gotd == b"221 bye\r\n" and cl != [], f"socks5: banner + FIN with the reply: DATA then CLOSE ({gotd!r}, close {cl})")
+#@seg socks5-early-data 10.4
 # DATA before the reply, proxy delays 300 ms
 s3 = Socks(delay=0.3)
 stop(p); p = start("--upstream", f"socks5://127.0.0.1:{s3.port}")
@@ -261,8 +315,10 @@ w = Wisp(); sid = w.connect("127.0.0.1", E, data=b"early-1")
 w.send(2, sid, b"early-2")
 got = w.data(sid, 14)
 ok(got == b"early-1early-2", f"DATA sent during the handshake arrives in order after it ({got!r})")
+#@all
 # retry: REP 04 for 127.0.0.1, OK for ::1 (fake proxy routes both to the echo)
 s4 = Socks(rep=lambda d: 4 if d == "127.0.0.1" else 0)
+#@seg socks5-retry 0.2
 stop(p); p = start("--upstream", f"socks5://127.0.0.1:{s4.port}")
 w = Wisp()
 has_v6 = any(a[0] == socket.AF_INET6 for a in socket.getaddrinfo("localhost", E))
@@ -271,29 +327,36 @@ if has_v6:
     ok([x[2] for x in s4.log if x[0] == "connect"][-2:] == ["127.0.0.1", "::1"], f"retry order v4 then v6 ({s4.log[-2:]})")
 else:
     print("SKIP retry (localhost has no ::1)")
+#@seg socks5-rep 1.6x8
 # REP codes
-for rep, want in [(1, 0x03), (2, 0x48), (3, 0x42), (4, 0x42), (5, 0x44), (6, 0x43), (7, 0x03), (8, 0x03)]:
+for rep, want in each("socks5-rep", [(1, 0x03), (2, 0x48), (3, 0x42), (4, 0x42), (5, 0x44), (6, 0x43), (7, 0x03), (8, 0x03)]):
     s = Socks(rep=lambda d, r=rep: r)
     stop(p); p = start("--upstream", f"socks5://127.0.0.1:{s.port}")
     w = Wisp(); case_close(w, "127.0.0.1", want, msg=f"SOCKS REP {rep:#04x}")
     n = metric(p, "upstream_fail")
     ok(n == (0 if rep in (3, 4, 5, 6) else 1), f"REP {rep:#04x}: upstream_fail {n} (a refusal about the target is not the proxy's failure)")
+#@all
 # auth
 sa = Socks(auth=(b"us er", b"p@ss"))
+#@seg socks5-auth 10.2
 stop(p); p = start("--upstream", f"socks5://us%20er:p%40ss@127.0.0.1:{sa.port}")
 w = Wisp(); echo_ok(w, "127.0.0.1", "socks5 user/pass (percent-decoded)")
 ok(("auth", b"us er", b"p@ss") in sa.log and sa.log[0] == ("greet", b"\x00\x02"), f"RFC 1929 bytes; greeting offers 00+02 ({sa.log[:2]})")
 ok("p@ss" not in srvlog(p) and "p%40ss" not in srvlog(p) and "us%20er" not in srvlog(p) and "us er" not in srvlog(p) and "***@" in srvlog(p), "user and password not in the server log")
+#@seg socks5-auth-wrong 1.5
 stop(p); p = start("--upstream", f"socks5://us%20er:wrong@127.0.0.1:{sa.port}")
 w = Wisp(); case_close(w, "127.0.0.1", 0x03, msg="socks5 wrong password")
 ok(metric(p, "upstream_fail") >= 1, "upstream_fail counted")
+#@seg socks5-auth-unused 10.2
 sn = Socks(auth=(b"x", b"y"), noauth_pick=True)
 stop(p); p = start("--upstream", f"socks5://x:y@127.0.0.1:{sn.port}")
 w = Wisp(); echo_ok(w, "127.0.0.1", "creds set, proxy picks no-auth (wispurr parity)")
+#@seg proxy-dead 0.2
 # failures of the proxy itself
 dead = socket.socket(); dead.bind(("127.0.0.1", 0)); dport = dead.getsockname()[1]
 stop(p); p = start("--upstream", f"socks5://127.0.0.1:{dport}")
 w = Wisp(); case_close(w, "127.0.0.1", 0x44, msg="proxy port closed (parity: 0x44)")
+#@seg proxy-stall 3.9
 ss = Socks(stall=True)
 stop(p); p = start("--upstream", f"socks5://127.0.0.1:{ss.port}", "--connect-timeout", "2")
 w = Wisp(); t0 = time.time(); sid = w.connect("127.0.0.1"); r = w.result(sid, 6); dt = time.time() - t0
@@ -303,9 +366,11 @@ for _ in range(20): w.connect("127.0.0.1")
 time.sleep(0.3)
 for sid in range(2, w.sid + 1): w.send(4, sid, b"\x02")
 ok(metric(p, "streams") == 0, "client CLOSE during the handshake: streams gauge back to 0")
+#@seg proxy-closes 0.2
 sc = Socks(close_after_greeting=True)
 stop(p); p = start("--upstream", f"socks5://127.0.0.1:{sc.port}")
 w = Wisp(); case_close(w, "127.0.0.1", 0x03, msg="proxy closes after the greeting")
+#@seg socks5h 10.6
 # socks5h
 stop(p); p = start("--upstream", f"socks5h://127.0.0.1:{s1.port}")
 ok(p.poll() is not None and "--upstream-trust-dns" in srvlog(p), "socks5h without --upstream-trust-dns: refuses to start")
@@ -326,12 +391,14 @@ case_close(w, "10.0.0.1", 0x48, msg="socks5h private literal refused locally")
 stop(p); p = start("--upstream", f"socks5h://127.0.0.1:{s1.port}", "--upstream-trust-dns", "--allow-private")
 p2log = srvlog(p)
 stop(p)
+#@seg socks5h-no-loopback 0.7
 # no --allow-loopback: localhost names refused under socks5h
 pp = subprocess.Popen([BIN, str(P), "--host", "127.0.0.1", "--upstream", f"socks5h://127.0.0.1:{s1.port}", "--upstream-trust-dns"],
                       stdout=open(os.path.join(D, "nl.log"), "w+"), stderr=subprocess.STDOUT); time.sleep(0.5)
 w = Wisp(); case_close(w, "localhost", 0x48, msg="socks5h: localhost refused without --allow-loopback")
 case_close(w, "a.localhost", 0x48, msg="socks5h: *.localhost refused")
 pp.terminate(); pp.wait()
+#@seg http-auth 10.4
 # ---- HTTP CONNECT
 h1 = Http(auth=(b"a", b"b:c"))
 p = start("--upstream", f"http://a:b%3Ac@127.0.0.1:{h1.port}")
@@ -339,26 +406,33 @@ w = Wisp(); echo_ok(w, "127.0.0.1", "http CONNECT with Basic auth")
 ok(h1.log[-1].startswith(b"CONNECT 127.0.0.1:%d HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nProxy-Authorization: Basic " % (E, E)), f"request bytes ({h1.log[-1][:80]!r})")
 stop(p); p = start("--upstream", f"http://a:bad@127.0.0.1:{h1.port}")
 w = Wisp(); case_close(w, "127.0.0.1", 0x03, msg="http 407")
-for code, want in [(403, 0x48), (502, 0x03), (503, 0x03), (504, 0x43), (500, 0x03)]:
+#@seg http-status 0.3x5
+for code, want in each("http-status", [(403, 0x48), (502, 0x03), (503, 0x03), (504, 0x43), (500, 0x03)]):
     h = Http(status=lambda d, c=code: c)
     stop(p); p = start("--upstream", f"http://127.0.0.1:{h.port}")
     w = Wisp(); case_close(w, "127.0.0.1", want, msg=f"http {code}")
+#@seg http-dribble 10.3
 hd = Http(dribble=True)
 stop(p); p = start("--upstream", f"http://127.0.0.1:{hd.port}")
 w = Wisp(); echo_ok(w, "127.0.0.1", "http reply head dribbled byte by byte")
+#@all
 hc = Http(combine=True)
+#@seg http-combine 10.3
 stop(p); p = start("--upstream", f"http://127.0.0.1:{hc.port}")
 w = Wisp(); sid = w.connect("127.0.0.1", BAN); got = w.data(sid, 11)
 ok(got == b"220 hello\r\n", f"http: banner in the same segment as the 200 arrives as first DATA ({got!r})")
+#@seg http-bighead 0.3
 hb = Http(bighead=True)
 stop(p); p = start("--upstream", f"http://127.0.0.1:{hb.port}")
 w = Wisp(); case_close(w, "127.0.0.1", 0x03, msg="http head over 8 KiB")
+#@seg http-bulk 6.8
 # bulk download through the proxy: integrity (+ splice checked by strace in the doc run)
 stop(p); p = start("--upstream", f"http://127.0.0.1:{hc.port}")
 w = Wisp(); sid = w.connect("127.0.0.1", BULK)
 got = w.data(sid, len(BULK_DATA), t=30)
 ok(hashlib.sha256(got).digest() == hashlib.sha256(BULK_DATA).digest(), f"32 MiB download through the HTTP proxy intact ({len(got)} bytes)")
 ok(metric(p, "upstream_ok") is not None, "upstream_ok metric present")
+#@all
 # ---- 60.32: the try cap (PROXY_TRIES 4) and no early DNS answers, with a fake DNS server (--dns-server)
 def dns_server():
     d = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); d.bind(("127.0.0.1", 0))
@@ -379,20 +453,24 @@ def dns_server():
     threading.Thread(target=loop, daemon=True).start()
     return d.getsockname()[1]
 DNSP = dns_server()
+#@seg dns-try-cap 0.3
 sall = Socks(rep=lambda d: 4)
 stop(p); p = start("--upstream", f"socks5://127.0.0.1:{sall.port}", "--dns-server", f"127.0.0.1:{DNSP}")
 w = Wisp(); case_close(w, "many.test", 0x42, msg="6 target addresses, REP 04 for each")
 tried = [x[2] for x in sall.log if x[0] == "connect"]
 ok(tried == ["127.0.0.1", "127.0.0.2", "127.0.0.3", "127.0.0.4"], f"at most 4 target addresses tried through the proxy ({tried})")
+#@seg dns-retry 12.8
 stop(p); p = start("--upstream", f"socks5://127.0.0.1:{s4.port}", "--dns-server", f"127.0.0.1:{DNSP}")
 w = Wisp(); n0 = len(s4.log); echo_ok(w, "many.test", "REP 04 on 127.0.0.1, the retry on 127.0.0.2 succeeds")
 ok([x[2] for x in s4.log[n0:] if x[0] == "connect"] == ["127.0.0.1", "127.0.0.2"], f"retry: the next target address over a new proxy connection ({s4.log[n0:]})")
 ok(metric(p, "upstream_fail") == 0 and metric(p, "upstream_ok") == 1, "a retried open: upstream_ok 1, upstream_fail 0")
+#@seg dns-late6 10.5
 stop(p); p = start("--upstream", f"socks5://127.0.0.1:{s1.port}", "--dns-server", f"127.0.0.1:{DNSP}")
 w = Wisp(); n0 = len(s1.log); t0 = time.time()
 echo_ok(w, "late6.test", "--dns-own: the final answer (A now, AAAA 300 ms later)")
 ok(time.time() - t0 >= 0.25 and [x for x in s1.log[n0:] if x[0] == "connect"] == [("connect", 1, "127.0.0.1", E)],
    f"no early answer with an upstream: one CONNECT after the final answer, IPv4 first ({s1.log[n0:]})")
+#@seg loopback-names 30.8
 # ---- 60.32: loopback names under socks5h (the /etc/hosts aliases), refused without --allow-loopback
 stop(p)
 pp = subprocess.Popen([BIN, str(P), "--host", "127.0.0.1", "--upstream", f"socks5h://127.0.0.1:{s1.port}", "--upstream-trust-dns"],
@@ -402,16 +480,21 @@ for name in ("localhost.localdomain", "LOCALHOST6", "ip6-localhost", "ip6-loopba
     case_close(w, name, 0x48, msg=f"socks5h: {name} refused")
 ok(len(s1.log) == n0, "loopback names never reach the proxy")
 echo_ok(w, "93.184.216.34", "a proxy on 127.0.0.1 without --allow-loopback (the proxy address is the operator's choice)")
+#@all
 # the refresh thread: only for a proxy given by name
 tasks = lambda pid: [open(f"/proc/{pid}/task/{t}/comm").read().strip() for t in os.listdir(f"/proc/{pid}/task")]
+#@seg loopback-names
 ok("upstream-dns" not in tasks(pp.pid), "an IP-literal proxy: no upstream-dns thread")
-pp.terminate(); pp.wait()
+stop(pp) if TRIM else (pp.terminate(), pp.wait())  # w is still open: without --trim this is the 30 s drain
+#@seg proxy-by-name 12.8
 p = start("--upstream", f"socks5://localhost:{s1.port}")
 ok("upstream-dns" in tasks(p.pid), "a proxy given by name: the upstream-dns thread runs")
 w = Wisp(); echo_ok(w, "127.0.0.1", "proxy given by name (localhost)")
 ok(metric(p, "upstream_dns_fail") == 0 and metric(p, "upstream_dns_age_s") is not None, "a proxy by name: upstream_dns_fail / upstream_dns_age_s in the line")
 stop(p)
+#@seg no-upstream 0.2
 p0 = start(); ok("upstream-dns" not in tasks(p0.pid) and "upstream" not in srvlog(p0), "no --upstream: no thread, no capability note"); stop(p0)
+#@seg startup-refusals 0.4
 # ---- 60.32: startup refusals (every unsupported form fails loudly; no message quotes the credentials)
 for args, want in [(["--upstream", "https://u:hunter2@127.0.0.1:1"], "not supported"),
                    (["--upstream", "socks5h://u:hunter2@127.0.0.1:1"], "--upstream-trust-dns"),
@@ -420,6 +503,7 @@ for args, want in [(["--upstream", "https://u:hunter2@127.0.0.1:1"], "not suppor
                    (["--upstream", "socks5://u:hunter2@no-such-host.invalid"], "no address")]:
     q = start(*args); q.wait(30); out = srvlog(q)  # 30 s: no-such-host.invalid goes to the host's resolver at startup (60.33)
     ok(q.returncode not in (None, 0) and want in out and "hunter2" not in out, f"refused at startup: {args[-1]} ({out.strip()[-90:]!r})")
+#@seg config-secret 10.2
 # ---- 60.32: --upstream with credentials in a group-readable --config: the C8 secret warning (and no password shown)
 cf = os.path.join(D, "fw.conf")
 with open(cf, "w") as f: f.write(f"upstream socks5://us%20er:p%40ss@127.0.0.1:{sa.port}\n")
@@ -427,8 +511,10 @@ os.chmod(cf, 0o644)
 p = start("--config", cf)
 ok("holds a secret" in srvlog(p) and "p%40ss" not in srvlog(p) and "/proc/PID/cmdline" not in srvlog(p), "--config 0644 with --upstream: secret warning; no cmdline warning")
 w = Wisp(); echo_ok(w, "127.0.0.1", "--upstream from --config")
+#@seg cmdline-secret 0.2
 stop(p); p = start("--upstream", f"socks5://us%20er:p%40ss@127.0.0.1:{sa.port}")
 ok("/proc/PID/cmdline" in srvlog(p) and "clear text" in srvlog(p), "credentials on the command line: both warnings")
 stop(p)
+#@all
 print("upstream:", "ALL PASS" if fails == 0 else f"{fails} FAIL", flush=True)
 sys.exit(1 if fails else 0)

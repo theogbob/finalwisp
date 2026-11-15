@@ -33,6 +33,7 @@ usage: wst compat --bin FINALWISP [--base-port 8300] [--out DIR] [--matrix] [--s
                 scrapers, off = no thread, --config form, startup refusals)                       base+68, +69
   proxyproto    tests/compat/proxyproto.py (60.34 --proxy-protocol tcp|unix: v1/v2/LOCAL, source list, per-IP by
                 source, bad / split / late headers, TLS after it, trusted source + XFF, --balance, unix, drain)  base+96
+  (base+95: nothing ever listens here; wispjs.mjs connects to it for its refused check)
   unix          tests/compat/unix.py (60.31 C7 --listen-unix: mode, both listeners, TLS beside it, XFF from the unix
                 peer, hand-over spread, stale/live/crash/flock cases; strace / caddy optional)    base+65
   drain         tests/compat/drain.py (60.12 SIGTERM/SIGINT graceful shutdown, --drain-timeout)       base+80..+89
@@ -78,14 +79,19 @@ class Gate:
 
     def step(self, name, cmd, cwd=ROOT, timeout=900, shell=False, judge=None, env=None):
         """Run one test command (own process group, killed on timeout); record status PASS/FAIL/SKIP."""
-        t0 = time.time()
+        t0, c0 = time.time(), os.times()
+        env = {**(env or {}), "WST_STEP": name}  # the step's name, for tools that hook the test processes (wait counters)
         rc, out, err = proc.run(cmd, timeout=timeout, shell=shell, cwd=cwd, env=env)
+        c1 = os.times()  # CPU of the step's own process tree (what it reaped); the servers compat.py starts are not in it
         text = (out or "") + (err or "")
         with open(os.path.join(self.out, name.replace(" ", "_").replace("/", "_") + ".log"), "w") as f:
             f.write(text)
         fails = [l for l in text.splitlines() if l.startswith("FAIL")]
         status = "PASS" if rc == 0 and not fails else "FAIL"
         why = "" if rc is not None else f"timeout {timeout}s"
+        if rc is None and text.strip().splitlines()[-1:] == ["ALL PASS"]:
+            # 80.03: seen once (wispjs, node v24.19): the script printed its verdict and then did not exit. Still a FAIL
+            why += ": hang after ALL PASS (the test printed its verdict and did not exit)"
         if judge:
             status, why = judge(rc, text, fails)
         if proc.INCOMPLETE in text:  # review: lost output must not pass (a judge may not look at FAIL lines)
@@ -94,12 +100,27 @@ class Gate:
         self.say(f"== {name}: {status} rc={rc} {time.time() - t0:.0f}s FAIL-lines={len(fails)}" + (f" ({why})" if why else "")
                  + (f"\n{tail}" if tail else "") + ("\n" + "\n".join(fails[:10]) if fails else ""))
         self.steps.append({"step": name, "status": status, "rc": rc, "secs": round(time.time() - t0, 1),
-                           "fail_lines": fails[:50], "why": why})
+                           "fail_lines": fails[:50], "why": why,
+                           "cpu_s": round(c1.children_user + c1.children_system - c0.children_user - c0.children_system, 1)})
         return status
 
     def broken(self, name, why):
         self.say(f"== {name}: FAIL ({why})")
         self.steps.append({"step": name, "status": "FAIL", "rc": None, "secs": 0, "fail_lines": [], "why": why})
+
+
+FORM_PARTS = {1: ["A,B,C,D,E"], 2: ["A,B,C,D", "E"], 3: ["A,B,C", "D", "E"]}  # the groups of v13-form-fn.py, in its order
+
+
+def form_part():
+    """80.03: WST_FORM_PART=k/n (set by pcompat.py for a shard of the step `form`): the groups of part k. Unset: all."""
+    v = os.environ.get("WST_FORM_PART")
+    if not v:
+        return []
+    m = re.fullmatch(r"(\d+)/(\d+)", v)
+    if not m or int(m.group(2)) not in FORM_PARTS or not 1 <= int(m.group(1)) <= int(m.group(2)):
+        sys.exit(f"compat: WST_FORM_PART={v}: k/n with n in {sorted(FORM_PARTS)}")
+    return ["--only", FORM_PARTS[int(m.group(2))][int(m.group(1)) - 1]]
 
 
 def cargo_judge(rc, text, fails):
@@ -147,8 +168,12 @@ def fuzz_replay(a, g):
         g.steps.append({"step": "fuzz-replay", "status": "SKIP", "rc": None, "secs": 0, "fail_lines": [], "why": why})
         return
     # 60.18 #11: one build (the pool is the only allocator path; the --no-default-features lane is gone)
-    if g.step("fuzz-build", ["cargo", "fuzz", "build", "-O"], cwd=fz, timeout=1800) != "PASS":
+    # 80.02: the fuzz workspace always builds into server/fuzz/target, where the replays below look for the targets. A
+    # CARGO_TARGET_DIR of the caller (a gate driver with its own build directory for `cargo test`) is dropped here:
+    # with it the build went elsewhere and the replays ran the OLD binaries of server/fuzz/target, or none
+    if g.step("fuzz-build", ["env", "-u", "CARGO_TARGET_DIR", "-u", "CARGO_BUILD_TARGET_DIR", "-u", "CARGO_BUILD_BUILD_DIR", "cargo", "fuzz", "build", "-O"], cwd=fz, timeout=1800) != "PASS":
         return
+    todo = []
     for d in sorted(glob.glob(os.path.join(fz, "regress", "*"))):
         if not os.path.isdir(d):  # regress/README.md
             continue
@@ -157,8 +182,48 @@ def fuzz_replay(a, g):
         if not bins:
             g.broken(f"fuzz-{t}", "fuzz target binary not built")
             continue
-        g.step(f"fuzz-{t}", ["bwrap", "--unshare-net", "--die-with-parent", "--dev-bind", "/", "/", bins[0], "-runs=0",
-                             "-rss_limit_mb=4096", "-timeout=60", d], cwd=fz, timeout=900, judge=fuzz_judge)
+        todo.append((f"fuzz-{t}", ["bwrap", "--unshare-net", "--die-with-parent", "--dev-bind", "/", "/", bins[0], "-runs=0",
+                                   "-rss_limit_mb=4096", "-timeout=60", d]))
+    jobs = getattr(a, "fuzz_jobs", 1)
+    if jobs > 1 and not getattr(g, "dry", False):  # EXPERIMENT (80.02): the replays side by side; cpu_s of these steps is then mixed
+        from concurrent.futures import ThreadPoolExecutor
+        first = len(g.steps)
+        ex = ThreadPoolExecutor(max_workers=jobs)
+        try:
+            list(ex.map(lambda x: g.step(x[0], x[1], cwd=fz, timeout=900, judge=fuzz_judge), todo))
+        finally:  # also on SIGTERM (SystemExit in this thread): the replays that have not started do not start
+            ex.shutdown(wait=True, cancel_futures=True)
+        order = {name: i for i, (name, _) in enumerate(todo)}
+        g.steps[first:] = sorted(g.steps[first:], key=lambda s: order.get(s["step"], -1))  # the order of the serial run
+        return
+    for name, cmd in todo:
+        g.step(name, cmd, cwd=fz, timeout=900, judge=fuzz_judge)
+
+
+# 80.03: wispjs.mjs under `timeout 300` in run_tls.sh, and now here too (it was the default 900): its own waits add up to
+# less, and a node process that hangs in its exit (seen once, after "ALL PASS") costs 5 minutes, not 15
+WISPJS_TIMEOUT = 300
+
+
+def DEAD_ENV(B):
+    """80.02: base+95 is the port of the block where nothing ever listens; wispjs.mjs uses it for its refused check
+    (before: a port that was free a moment ago, which any process on the host could take)."""
+    return {"WISPJS_DEAD": str(B + 95)}
+
+
+def check_port_range(lo, hi):
+    """80.02: the ports of the gate must lie outside the kernel's range for outgoing connections: else a client socket of
+    any process on the host can take a port that a step is about to listen on."""
+    if hi > 65535:
+        sys.exit(f"compat: ports {lo}-{hi} end above 65535; use a lower --base-port")
+    try:
+        with open("/proc/sys/net/ipv4/ip_local_port_range") as f:
+            e_lo, e_hi = (int(x) for x in f.read().split())
+    except (OSError, ValueError):
+        return
+    if lo <= e_hi and hi >= e_lo:
+        sys.exit(f"compat: ports {lo}-{hi} overlap the kernel's range for outgoing connections {e_lo}-{e_hi} "
+                 f"(/proc/sys/net/ipv4/ip_local_port_range); use a --base-port so that the gate's ports end below {e_lo}")
 
 
 def fw(binp, port, args=""):
@@ -188,7 +253,7 @@ def gate_finalwisp(a, g):
             g.step(name, [sys.executable, adv, str(port)])
             proc.stop(p)
     if want("tls"):
-        g.step("tls", ["bash", os.path.join(COMPAT, "run_tls.sh"), binp, str(B + 2)], timeout=1500)
+        g.step("tls", ["bash", os.path.join(COMPAT, "run_tls.sh"), binp, str(B + 2)], timeout=1500, env=DEAD_ENV(B))
     if want("v2ext"):
         g.step("v2ext", [sys.executable, os.path.join(COMPAT, "v2ext.py"), binp, str(B + 10)])
     if want("dns-own"):  # 70.09 own resolver against a fake DNS server (ports B+40..B+49)
@@ -221,6 +286,8 @@ def gate_finalwisp(a, g):
         g.step("unix", [sys.executable, os.path.join(COMPAT, "unix.py"), binp, str(B + 65)], timeout=300)
     if want("drain"):  # 60.12 graceful shutdown (ports B+80..B+89)
         g.step("drain", [sys.executable, os.path.join(COMPAT, "drain.py"), binp, str(B + 80)], timeout=300)
+    if want("late"):  # 80.02 explicit cases for what older tests saw only by waiting: late reset, long drain (ports B+60..B+62)
+        g.step("late", [sys.executable, os.path.join(COMPAT, "late.py"), binp, str(B + 60)], timeout=180)
     if want("upstream"):  # 60.32 C6 upstream proxy (ports B+90..B+94; the fake proxies take ephemeral ports)
         g.step("upstream", [sys.executable, os.path.join(COMPAT, "upstream.py"), binp, str(B + 90)], timeout=400)
     if want("udp") or want("wispjs-udp") or want("wispjs"):
@@ -239,7 +306,7 @@ def gate_finalwisp(a, g):
                 if b1 is None:
                     g.broken("wispjs", f"server did not listen on :{B + 21}")
                 else:
-                    g.step("wispjs", ["node", "wispjs.mjs", f"ws://127.0.0.1:{B + 20}/", f"ws://127.0.0.1:{B + 21}/"], cwd=COMPAT)
+                    g.step("wispjs", ["node", "wispjs.mjs", f"ws://127.0.0.1:{B + 20}/", f"ws://127.0.0.1:{B + 21}/"], cwd=COMPAT, env=DEAD_ENV(B), timeout=WISPJS_TIMEOUT)
         proc.stop(a1)
         proc.stop(b1)
     if want("credit-v2"):  # 20.30 upload credit v2 (default on since 60.13): every ping behaviour of a client
@@ -250,7 +317,7 @@ def gate_finalwisp(a, g):
             g.broken("wispjs-v2c", f"server did not listen on :{B + 67}")
         else:
             if want("wispjs-v2c"):
-                g.step("wispjs-v2c", ["node", "wispjs.mjs", f"ws://127.0.0.1:{B + 67}/"], cwd=COMPAT)
+                g.step("wispjs-v2c", ["node", "wispjs.mjs", f"ws://127.0.0.1:{B + 67}/"], cwd=COMPAT, env=DEAD_ENV(B), timeout=WISPJS_TIMEOUT)
             if want("adv-v2c"):
                 g.step("adv-v2c", [sys.executable, adv, str(B + 67)])
             proc.stop(p)
@@ -263,6 +330,10 @@ def gate_finalwisp(a, g):
         g.step("metrics", [sys.executable, os.path.join(COMPAT, "metrics.py"), binp, "--port", str(B + 66)], timeout=120)
     if a.proxy:
         g.step("proxy", [sys.executable, os.path.join(COMPAT, "proxy.py"), binp, str(B + 90)], timeout=900, judge=proxy_judge)
+    if getattr(a, "form", False):  # 80.02 opt-in: the form checks of the release gates as one step (ports B+0..B+69; its docker
+        # image tag and container names carry the port). Its own driver call (bench/v13-form-fn.py ...) stays as it is.
+        g.step("form", [sys.executable, os.path.join(report.BENCH, "v13-form-fn.py"), "--bin", binp, "--out", os.path.join(a.out, "form-fn"),
+                        "--base-port", str(B), "--docker"] + form_part(), timeout=900)
     if a.fuzz_replay:
         fuzz_replay(a, g)
     if a.matrix:
@@ -282,7 +353,7 @@ def gate_finalwisp(a, g):
             if run_adv:
                 g.step(name, [sys.executable, adv, str(port)])
             if run_js:
-                g.step(jname, ["node", "wispjs.mjs", f"ws://127.0.0.1:{port}/"], cwd=COMPAT)
+                g.step(jname, ["node", "wispjs.mjs", f"ws://127.0.0.1:{port}/"], cwd=COMPAT, env=DEAD_ENV(B), timeout=WISPJS_TIMEOUT)
             proc.stop(p)
 
 
@@ -331,14 +402,64 @@ def main(argv):
     ap.add_argument("--membudget-master", default="", help="informational: also run membudget check 1 on this binary")
     ap.add_argument("--wbench", default=None)
     ap.add_argument("--proxy", action="store_true", help="--bin: also finalwisp behind nginx + Caddy (docker; 40.02)")
+    ap.add_argument("--form", action="store_true", help="--bin: also the form checks (bench/v13-form-fn.py --docker) as the step `form`")
     ap.add_argument("--fuzz-replay", action="store_true", help="--bin: also replay the fuzz regression corpora (server/fuzz/regress)")
+    ap.add_argument("--jobs", type=int, default=0, help="--bin: run the steps in parallel on N workers (pcompat.py: each unit in its "
+                    "own block of 100 ports from --base-port, the serial lane first). 0 (default): the serial gate")
+    ap.add_argument("--serial-lane", default=None, help="--jobs: comma list of steps whose unit runs alone, before the parallel "
+                    "lane (default: pcompat.SERIAL_LANE; '' = none)")
+    ap.add_argument("--trim", action="store_true", help="--bin: the tests end the waits that an event ends (WST_TRIM=1: no extra read "
+                    "after the last frame, a second SIGTERM for a server that would drain, a port probe with SO_REUSEADDR). No "
+                    "assertion differs; default off until the owner decides (80.01)")
+    ap.add_argument("--late-lane", default="", help="--jobs: EXPERIMENT (80.02): comma list of steps whose unit runs AFTER the "
+                    "parallel lane instead of in the serial lane before it (e.g. cargo,fuzz-build,membudget)")
+    ap.add_argument("--late-jobs", type=int, default=1, help="--late-lane: how many of those units run at a time (default 1)")
+    ap.add_argument("--fuzz-jobs", type=int, default=1, help="--fuzz-replay: EXPERIMENT (80.02): run N fuzz replays side by side "
+                    "(default 1: one after another)")
+    ap.add_argument("--quiet-par", action="store_true", help="--jobs: 80.03: no serial lane. The quiet units run beside the "
+                    "parallel lane; the units that only burn CPU (cargo, the fuzz replays) are bound to the CPUs of --heavy-cpus")
+    ap.add_argument("--heavy-cpus", default="", help="--quiet-par: CPU list (taskset form, e.g. 12-15) for the CPU-bound units "
+                    "(default: the last quarter of the CPUs this process may use)")
+    ap.add_argument("--shards", default="", help="--jobs: 80.03: run a long step as N units, each with a part of its cases on a "
+                    "server and a port block of its own: comma list of NAME=N with NAME one of upstream, adv (every adversarial "
+                    "step), tls, form. The records of the parts are merged into the one step (pcompat.py)")
+    ap.add_argument("--fast", action="store_true", help="--bin: 80.03: the fast gate = --quiet-par --form --shards "
+                    "pcompat.FAST_SHARDS, the fuzz replays side by side on the heavy CPUs, and --jobs 24 when --jobs is "
+                    "not given. Every step and case of the plain gate runs")
+    ap.add_argument("--plan", action="store_true", help="--jobs: print the units and lanes of this run and exit")
+    ap.add_argument("--netns", action="store_true", help="--jobs: experiment: each unit in its own network namespace (bwrap "
+                    "--unshare-net) instead of its own port block. Not equal to the serial gate on every host: see pcompat.py")
     a = ap.parse_args(argv)
+    if a.trim:
+        os.environ["WST_TRIM"] = "1"  # read by tests/compat/*.py; inherited by every step (and by the units of --jobs)
     a.only = [x for x in a.only.split(",") if x]
     a.skip = [x for x in a.skip.split(",") if x]
+    a.late_lane = [x for x in a.late_lane.split(",") if x]
+    if a.fast:
+        if not a.bin:
+            ap.error("--fast needs --bin")
+        from . import pcompat as _pc
+        a.quiet_par = a.form = True
+        a.shards = a.shards or _pc.FAST_SHARDS
+        a.jobs = a.jobs or 24
+    try:
+        a.shards = {k: int(v) for k, v in (x.split("=") for x in a.shards.split(",") if x)}
+    except ValueError:
+        ap.error("--shards: NAME=N[,NAME=N...]")
+    if set(a.shards) - {"upstream", "adv", "tls", "form"} or any(n < 1 for n in a.shards.values()):
+        ap.error("--shards: the names are upstream, adv, tls, form; N >= 1")
+    if a.shards.get("tls", 1) not in (1, 5) or a.shards.get("form", 1) not in FORM_PARTS:
+        ap.error(f"--shards: tls=5 (the parts of run_tls.sh) and form=N with N in {sorted(FORM_PARTS)}")
+    if a.heavy_cpus and not re.fullmatch(r"\d+(-\d+)?(,\d+(-\d+)?)*", a.heavy_cpus):
+        ap.error("--heavy-cpus: a list like 12-15 or 0,2,4-6 (no strides)")
+    if (a.shards or a.quiet_par) and not (a.jobs or a.plan):
+        ap.error("--shards / --quiet-par need --jobs")
     a.wbench = wbench.find(a.wbench)
     a.out = os.path.abspath(a.out or os.path.join(report.BENCH, "results", f"compat-{report.stamp()}"))
     ports = range(a.base_port, a.base_port + (80 if a.bin else 1))
-    bad = proc.strays(ports, cmdline=False)
+    if not a.netns and not a.jobs:
+        check_port_range(a.base_port, a.base_port + (99 if a.bin else 0))
+    bad = [] if a.netns else proc.strays(ports, cmdline=False)  # --netns: the ports are those of the units' namespaces
     if bad:
         sys.exit("compat: " + "; ".join(bad[:5]) + f" (ports {ports.start}-{ports.stop - 1} must be free; use --base-port)")
     proc.install_handlers()
@@ -347,6 +468,11 @@ def main(argv):
         a.bin = os.path.abspath(a.bin)
         if not os.access(a.bin, os.X_OK):
             sys.exit(f"compat: not executable: {a.bin}")
+        if a.jobs or a.plan:
+            from . import pcompat
+            a.serial_lane = pcompat.SERIAL_LANE if a.serial_lane is None else [x for x in a.serial_lane.split(",") if x]
+            g.summary.close()
+            sys.exit(pcompat.run(a))
         gate_finalwisp(a, g)
     else:
         gate_any(a, g)

@@ -4,7 +4,7 @@ reload, close_notify both ways, TLS 1.3 KeyUpdate (client-initiated via openssl 
 server's proactive KeyUpdate via --tls-rekey-records), --tls-cipher-order, startup errors.
 Starts its own servers on PORT, PORT+1, PORT+2.  usage: tls_extras.py FINALWISP_BINARY PORT
 Needs: `tls` kernel module, openssl, python3 (stdlib only)."""
-import base64, hashlib, os, shutil, signal, socket, ssl, subprocess, sys, tempfile, threading, time
+import base64, fcntl, hashlib, os, shutil, signal, socket, ssl, subprocess, sys, tempfile, threading, time
 
 BIN, PORT = os.path.abspath(sys.argv[1]), int(sys.argv[2])
 fails = 0
@@ -96,6 +96,21 @@ def tls_stat():
         return {l.split()[0]: int(l.split()[1]) for l in open("/proc/net/tls_stat")}
     except FileNotFoundError:
         return {}
+# 80.02: the rekey counters of /proc/net/tls_stat are per network namespace = host-wide for every gate on this
+# kernel. Two runs of the KeyUpdate cases at the same moment count each other's rekeys (seen 2026-11-13: 3 of 5 gates
+# failed "RX rekeys +6 TX rekeys +5"). So the cases that take a difference of these counters hold a host lock. Every
+# entry point takes it, because it is taken here: the serial gate, `wst compat --jobs`, run_tls.sh by hand.
+KTLS_LOCK = "/tmp/wst-ktls-counters.lock"
+def ktls_lock():
+    try: fd = os.open(KTLS_LOCK, os.O_RDONLY)
+    except FileNotFoundError:
+        try: fd = os.open(KTLS_LOCK, os.O_RDONLY | os.O_CREAT, 0o644)
+        except OSError: fd = os.open(KTLS_LOCK, os.O_RDONLY)  # another user made it in between
+    t0 = time.monotonic(); fcntl.flock(fd, fcntl.LOCK_EX)  # blocks; run_tls.sh bounds this script with `timeout`
+    return fd, time.monotonic() - t0, time.monotonic()
+def ktls_unlock(lk, what):
+    os.close(lk[0])  # closing the descriptor releases the lock (also when the script dies)
+    print(f"note: kTLS counter lock ({what}): waited {lk[1]:.1f} s, held {time.monotonic() - lk[2]:.1f} s", flush=True)
 STAT = bool(tls_stat())
 if not STAT:
     print("note: /proc/net/tls_stat missing (old kernel): stat n/a; the functional checks still run", flush=True)
@@ -231,27 +246,45 @@ try:
     # ---------------------------------------------------------------- client KeyUpdate (openssl s_client k / K)
     # Kernels before 6.14 (e.g. 6.8) have no kTLS rekey (no TlsRxRekeyOk in tls_stat): the new RX key
     # cannot be installed, so the documented behaviour there is a prompt close (no stall), server alive.
+    lk = ktls_lock()
     ku_t0 = time.monotonic()  # 60.12: the rate-limit check below needs all refusals inside one 60 s window
+    # 80.02: the TX counter also grows by 1 for EVERY finalwisp that starts with a TLS 1.3 certificate anywhere on the
+    # host (its startup probe sets TLS_TX twice: server/src/tls.rs probe_rekey), and such starts do not take the lock
+    # above (other steps of a parallel gate, unit-test runs). So the two TX checks do not rest on the host counter alone:
+    #  - update_not_requested wants TX +0: a +1 can be another server's start. If this connection saw no KeyUpdate from
+    #    the server (s_client -msg), the case runs again (3 tries); it fails if no try shows +0. A server that answers
+    #    with a KeyUpdate of its own fails at the first try.
+    #  - update_requested wants TX >= 1, which another server's start could give: the server's own KeyUpdate record must
+    #    also be seen on this connection (s_client -msg).
     for cmd, req in ((b"k\n", False), (b"K\n", True)):
-        st0 = tls_stat()
-        sc = SClient(PORT, "-tls1_3", "-msg")
-        sc.send(upgrade_req())
-        got101 = sc.wait_for(b"101 Switching Protocols")
-        sc.send(frame(9, b"pre1")); pre = sc.wait_for(b"\x8a\x04pre1")
-        sc.send(cmd); time.sleep(0.3)
-        what = f"client KeyUpdate {'update_requested' if req else 'update_not_requested'}: 101={got101} ping before={pre}"
-        if not REKEY:
-            closed = sc.gone(); cn = sc.wait_for(CLOSE_NOTIFY_IN, 1)
-            sc.close()
-            ok(got101 and pre and closed and cn, f"{what}, no kernel rekey -> connection closed={closed} with close_notify={cn}")
-            continue
-        sc.send(frame(9, b"aft1")); aft = sc.wait_for(b"\x8a\x04aft1")
-        sc.send(frame(9, b"aft2")); aft2 = sc.wait_for(b"\x8a\x04aft2")
-        alive = sc.p.poll() is None
-        sc.close(); st1 = tls_stat()
-        drx = st1["TlsRxRekeyOk"] - st0["TlsRxRekeyOk"]; dtx = st1["TlsTxRekeyOk"] - st0["TlsTxRekeyOk"]
-        ok(got101 and pre and aft and aft2 and alive and drx >= 1 and (dtx >= 1) == req,
-           f"{what} after={aft},{aft2} alive={alive} kernel RX rekeys +{drx} TX rekeys +{dtx}")
+        for attempt in (1, 2, 3):
+            st0 = tls_stat()
+            sc = SClient(PORT, "-tls1_3", "-msg")
+            sc.send(upgrade_req())
+            got101 = sc.wait_for(b"101 Switching Protocols")
+            sc.send(frame(9, b"pre1")); pre = sc.wait_for(b"\x8a\x04pre1")
+            sc.send(cmd); time.sleep(0.3)
+            what = f"client KeyUpdate {'update_requested' if req else 'update_not_requested'}: 101={got101} ping before={pre}"
+            if not REKEY:
+                closed = sc.gone(); cn = sc.wait_for(CLOSE_NOTIFY_IN, 1)
+                sc.close()
+                ok(got101 and pre and closed and cn, f"{what}, no kernel rekey -> connection closed={closed} with close_notify={cn}")
+                break
+            sc.send(frame(9, b"aft1")); aft = sc.wait_for(b"\x8a\x04aft1")
+            sc.send(frame(9, b"aft2")); aft2 = sc.wait_for(b"\x8a\x04aft2")
+            sku = sc.wait_for(b"<<< TLS 1.3, Handshake [length 0005], KeyUpdate", 1 if req else 0.2)  # the server's own KeyUpdate, on this connection
+            alive = sc.p.poll() is None
+            sc.close(); st1 = tls_stat()
+            drx = st1["TlsRxRekeyOk"] - st0["TlsRxRekeyOk"]; dtx = st1["TlsTxRekeyOk"] - st0["TlsTxRekeyOk"]
+            rest = got101 and pre and aft and aft2 and alive and drx >= 1   # everything but the TX counter
+            if rest and not req and dtx >= 1 and not sku and attempt < 3:   # only a try that is good but for the host's TX counter runs again
+                print(f"note: client KeyUpdate update_not_requested, try {attempt}: TX rekeys +{dtx} on the host and no KeyUpdate from this "
+                      f"server on the connection (another server's start): the case runs again", flush=True)
+                continue
+            ok(rest and (dtx >= 1) == req and sku == req,
+               f"{what} after={aft},{aft2} alive={alive} kernel RX rekeys +{drx} TX rekeys +{dtx} server KeyUpdate seen={sku}"
+               + (f" (try {attempt})" if attempt > 1 else ""))
+            break
 
     # ---------------------------------------------------------------- 40.09 KeyUpdate right behind application data
     # Records [ping A][KeyUpdate][ping B (new key)] arrive in ONE TCP segment and nothing follows. kTLS
@@ -304,6 +337,7 @@ try:
         want = len(kul) == 1 if took < 55 else 1 <= len(kul) <= 2
         ok(want and "6.14" in kul[0] and "reverse proxy" in kul[0] and "1 such close(s)" in kul[0],
            f"KeyUpdate refused 6x in {took:.0f} s: {len(kul)} log line(s) (rate-limited, 1 per 60 s): {kul[:1]}")
+    ktls_unlock(lk, "client KeyUpdate cases")
 
     # ---------------------------------------------------------------- SIGHUP reload
     d2 = f"{D}/live"; os.mkdir(d2); shutil.copy(A[0], f"{d2}/c.pem"); shutil.copy(A[1], f"{d2}/k.pem")
@@ -328,6 +362,7 @@ try:
 
     # ---------------------------------------------------------------- server KeyUpdate + cipher order
     start(PORT + 2, "--tls-cert", A[0], "--tls-key", A[1], "--tls-rekey-records", "64", "--tls-cipher-order", "server")
+    lk = ktls_lock()
     st0 = tls_stat()
     w = Ws(PORT + 2); good = 0
     try:
@@ -360,6 +395,7 @@ try:
     ok(c == "ECDHE-ECDSA-AES256-GCM-SHA384", f"cipher order server, TLS 1.2: -> {c}")
     w = Ws(PORT + 2, maxv=ssl.TLSVersion.TLSv1_2); good = sum(w.ping(b"t%04d" % i) for i in range(200)); w.s.close()
     ok(good == 200, "TLS 1.2 with --tls-rekey-records 64: no KeyUpdate (1.3 only), 200 ping/pong ok")
+    ktls_unlock(lk, "server KeyUpdate cases")
     for p in procs:
         ok(p.poll() is None, f"server pid {p.pid} alive at the end")
 finally:

@@ -53,10 +53,12 @@ pub fn key(ip: IpAddr) -> IpKey {
 }
 
 /// The client state a connection keeps (the worker side vector Worker::peers_of, by slab slot): its IP and the key it charged (None: not charged, e.g.
-/// a trusted proxy before its HTTP request, an untracked key, or no per-IP limit).
+/// a trusted proxy before its HTTP request, an untracked key, or no per-IP limit). `slot_freed`: the connection was
+/// refused per address (429) and gave its --max-conns slot back at that moment, so its close does not give it again.
 pub struct Peer {
     pub ip: IpAddr,
     pub key: Option<IpKey>,
+    pub slot_freed: bool,
 }
 
 /// What the header gave (for the realip_* counters).
@@ -1127,7 +1129,7 @@ mod tests {
         assert_eq!(t.charge_share(big, 0, 0, 0, rule), Charge::Charged);
         t.add_fds(probe, 1, 1);
         assert_eq!(t.charge_share(big, 0, 0, 0, rule), Charge::Share);
-        t.add_fds(probe, -1017, 1);
+        t.add_fds(probe, -1023, 1); // all it published (6 + 1016 + 1): the caller contract of add_fds, before the release (80.02)
         t.release_share(probe, 0, 1);
         // (ii) a small site: 30 users, each one connection and 40 stream fds = 1230 fds on other addresses
         let users: Vec<IpKey> = (0..30u32).map(|i| key(IpAddr::V4(std::net::Ipv4Addr::from(0xc633_6400 + i)))).collect();

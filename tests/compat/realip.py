@@ -40,8 +40,12 @@ def start(*args):
     return p
 def srvlog(p):
     with open(p.logf.name) as f: return f.read()
+TRIM = bool(os.environ.get("WST_TRIM"))  # wst compat --trim (80.01)
 def stop(p):
     p.terminate()
+    if TRIM:  # a second SIGTERM = exit now (60.12). Without it a server that still has this test's connections drains (30 s), and the wait below ends in SIGKILL after 10 s
+        try: p.wait(0.5)
+        except subprocess.TimeoutExpired: p.terminate()
     try: p.wait(10)
     except subprocess.TimeoutExpired: p.kill(); p.wait()
 def metric(p, key):

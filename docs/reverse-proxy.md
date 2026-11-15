@@ -48,7 +48,7 @@ through user space, while finalwisp's own TLS path stays in the kernel.
 
 Two things matter with any proxy:
 
-1. **Idle timeouts.** finalwisp never closes an idle Wisp connection and sends no Wisp pings while a connection is idle (one known issue after a mass reconnect: see [known limits](troubleshooting.md#known-limits)). Proxies do close
+1. **Idle timeouts.** finalwisp never closes an idle Wisp connection and sends no Wisp pings while a connection is idle. Proxies do close
    idle connections: nginx after `proxy_read_timeout` (60 s by default), even while the client is still sending.
    Raise the timeout.
 2. **Client addresses.** Without help, finalwisp sees every client as the proxy's address, so per-IP limits would

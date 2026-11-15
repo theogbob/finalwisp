@@ -4,6 +4,10 @@
 #        FEATURES="a b" bench/release.sh   (extra cargo features; none exist for a release today)
 #        The built features are recorded in BUILDINFO ("features: none" normally) beside "allocator: pool".
 #        NOFEAT=1 (the old glibc + 70.11 block cache build) was removed with that path (60.18 #11): it is refused.
+#        bench/release.sh --compare-ci FILE   (before a tag) FILE = CI's BUILDINFO of the commit, or the saved log of its
+#        release step: its "libc6-dev:" line must equal this host's package, else the build is not started (the md5
+#        follows the static libc.a of that package: 40.02 "Build image drift"); when FILE names this commit ("git:"),
+#        its "md5:" must equal the md5 built here.
 # Output: server/target/x86_64-unknown-linux-gnu/release/{finalwisp,BUILDINFO}
 # Fails if the build host's glibc is older than 2.34: below that the files/dns NSS modules are not built into
 # libc and are dlopened from the host at runtime, which nss_builtin_only (main.rs) cannot prevent (70.12).
@@ -13,7 +17,42 @@ MIN_GLIBC=2.34
 TARGET=x86_64-unknown-linux-gnu
 here=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
 root=$(git -C "$here" rev-parse --show-toplevel)
+# (review) --compare-ci FILE is read after the cd below: a relative FILE is made absolute first (an absolute
+# FILE is kept as given); FILE must be a regular file (a pipe or /dev/stdin would be read before the build and gone)
+if [ "${1:-}" = --compare-ci ] && [ -n "${2:-}" ]; then
+    case "$2" in /*) ;; *) set -- "$1" "$PWD/$2" ;; esac
+    [ -f "$2" ] || { echo "release.sh: --compare-ci: $2 is not a regular file" >&2; exit 2; }
+fi
 cd "$root/server"
+
+# the package of the static libc.a that is linked in (BUILDINFO "libc6-dev:")
+libc6dev=$(dpkg-query -W -f='${Version}' libc6-dev 2>/dev/null) || libc6dev=
+libc6dev=${libc6dev:-unknown (no dpkg-query or no libc6-dev package)}
+ci_info=
+case "${1:-}" in
+    "") ;;
+    --compare-ci)
+        ci_info=${2:?usage: bench/release.sh [--compare-ci CI_BUILDINFO_OR_LOG]}
+        [ -r "$ci_info" ] || { echo "release.sh: --compare-ci: cannot read $ci_info" >&2; exit 2; }
+        ci_pkg=$(sed -n 's/^.*libc6-dev: \([^ ]*\).*$/\1/p' "$ci_info" | tail -n1)
+        if [ -z "$ci_pkg" ]; then
+            echo "release.sh: --compare-ci: $ci_info has no \"libc6-dev:\" line (a BUILDINFO of a build before v1.3.1?)" >&2
+            exit 1
+        fi
+        # (review) "unknown" on either side proves nothing: two hosts without the package would compare equal
+        if [ "$ci_pkg" = unknown ] || [ "${libc6dev%% *}" = unknown ]; then
+            echo "release.sh: --compare-ci: the libc6-dev package is unknown here ($libc6dev) or in CI ($ci_pkg): no compare, no build" >&2
+            exit 1
+        fi
+        if [ "$ci_pkg" != "${libc6dev%% *}" ]; then
+            echo "release.sh: libc6-dev here is $libc6dev, CI built with $ci_pkg: the md5 would differ (the static libc.a" >&2
+            echo "release.sh: is linked in). Update this host's libc6-dev to $ci_pkg first (or find why CI's changed); no build" >&2
+            exit 1
+        fi
+        echo "release.sh: libc6-dev $ci_pkg here and in CI ($ci_info)"
+        ;;
+    *) echo "usage: bench/release.sh [--compare-ci CI_BUILDINFO_OR_LOG]" >&2; exit 2 ;;
+esac
 
 glibc=$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}') || true
 if [ -z "$glibc" ]; then
@@ -91,6 +130,7 @@ now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     echo "dirty: $dirty"
     echo "rustc: $rustc_v"
     echo "glibc: $glibc (link version; runtime needs no glibc, hosts lookups via built-in files dns)"
+    echo "libc6-dev: $libc6dev (the package of the linked static libc.a: the md5 follows it)"
     echo "cc: $(cc --version | head -n1)"
     echo "ld: $(ld --version | head -n1)"
     echo "target: $TARGET +crt-static"
@@ -101,3 +141,12 @@ now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 } > "$out/BUILDINFO"
 echo "release.sh: $bin"
 cat "$out/BUILDINFO"
+# (a saved CI log has a time stamp before each line: the patterns are not anchored at the line start)
+if [ -n "$ci_info" ] && grep -q "git: $hash\$" "$ci_info"; then
+    ci_md5=$(sed -n 's/^.*md5: \([0-9a-f]\{32\}\).*$/\1/p' "$ci_info" | tail -n1)
+    if [ "$ci_md5" != "$md5" ]; then
+        echo "release.sh: CI built md5 ${ci_md5:-?} for this commit, this host built $md5: do not tag before the cause is known" >&2
+        exit 1
+    fi
+    echo "release.sh: md5 $md5 here and in CI for $hash"
+fi

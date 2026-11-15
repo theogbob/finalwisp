@@ -6,6 +6,11 @@ usage: wst ab VARIANTS.json REPS [suite options] WBENCH-RUN-ARGS...   (e.g. --te
     --port P (PORT, 6901)  --tport P (TPORT, 6902)  --tmode M (TMODE; default by test)  --dur S (DUR, 4)
     --warmup S (WARMUP, 1)  --raw FILE (RAW: one JSON record per run)  --link LABEL (LINK, lo)  --tls (AB_TLS=1)
     --fixed-order (FW_AB_ROTATE=0)
+    --order rotate|random|balanced (AB_ORDER, rotate): the slot order of the arms in a round. rotate = the start arm
+      moves one place per round (as always). random = a shuffle per round (seeded with the round number: the same
+      command gives the same orders). balanced = all orders of the arms in turn (2 to 4 arms; 3 arms = 6 orders).
+    --settle S (AB_SETTLE, 0 = off): before each run wait until the host's TCP memory is back at its value before
+      the first run (+ 64 pages), at most S seconds; the record gets settle_s.
     --client-ssh [USER@]HOST [--server-ip IP] [--force-clean]: cross-host (root; bench/wispsuite/xhost.py): server +
       target on this box bound to its address facing HOST (variants get --host IP), wbench on HOST via ssh, iptables
       lets only HOST reach the ports during the run
@@ -13,6 +18,8 @@ usage: wst ab VARIANTS.json REPS [suite options] WBENCH-RUN-ARGS...   (e.g. --te
 Every rep runs every variant once; the start variant rotates per rep (position bias). The server and the wbench
 client each run in their own process group; a SIGTERM/SIGINT stops both (no strays). A stray process or listener
 on PORT/TPORT stops the run before it starts (a leftover reuseport target silently takes half the streams).
+Every raw record has t0 / tw0 / win_s / t1 (unix times: server start, client start, client wall, record written),
+steal (host steal ticks during the client's run), slot (place in the round) and tcp_mem0 (host TCP pages before the run).
 Prints one JSON line per variant: median + all values of the key metric (rps for rr/churn/connchurn/browse/udp-rr,
 mib_s_up for upload, else mib_s_down), median server CPU% and RSS; browse adds latency and bulk.
 --test connchurn: a new WebSocket connection per request (wbench; rps = connections/s).
@@ -20,7 +27,7 @@ mib_s_up for upload, else mib_s_down), median server CPU% and RSS; browse adds l
   (suite-side, --dur/--warmup not used); mib_s_down = median burst, plus per-burst MiB/s and server CPU% for
   every burst and idle gap.
 """
-import contextlib, json, os, sys, time
+import contextlib, itertools, json, os, random, sys, time
 from . import proc, sample, wbench
 from .stats import median
 
@@ -31,7 +38,7 @@ class AbError(Exception):
 
 def run_ab(variants, reps, wb_args, *, wb, port="6901", tport="6902", tmode=None, dur="4", warmup="1", tls=False,
            raw=None, link="lo", srv_prefix=(), cli_prefix=(), srv_host="127.0.0.1", srv_bind="", rotate=True,
-           verbose=True, client_ssh=None, tgt_host="127.0.0.1"):
+           verbose=True, client_ssh=None, tgt_host="127.0.0.1", order="rotate", settle=0.0):
     """Returns {variant: [record per rep]}. Raises AbError before starting anything if a port is taken.
     client_ssh (cross-host): wbench run executes on that host over ssh; the target binds tgt_host and the server
     is reached at srv_host (both this box's address facing the client; the caller sets the firewall)."""
@@ -53,11 +60,30 @@ def run_ab(variants, reps, wb_args, *, wb, port="6901", tport="6902", tmode=None
     tcp_max = sample.tcp_mem_max()  # 50.02 D
     pre = [*srv_prefix, *cli_prefix]
     nss = sorted({pre[i + 2] for i in range(len(pre) - 2) if pre[i] == "netns" and pre[i + 1] == "exec"})
+    if order not in ("rotate", "random", "balanced"):
+        raise AbError(f"--order {order}: rotate, random or balanced")
+    if order == "balanced" and not 2 <= len(names) <= 4:
+        raise AbError("--order balanced is for 2 to 4 arms")
+    perms = list(itertools.permutations(names)) if order == "balanced" else None
+    mem_idle = sample.tcp_mem_pages()
     try:
         for rep in range(reps):
             k = rep % len(names) if rotate else 0
-            for name in names[k:] + names[:k]:
+            round_order = names[k:] + names[:k]
+            if rotate and order == "random":
+                round_order = list(names)
+                random.Random(rep).shuffle(round_order)
+            elif rotate and order == "balanced":
+                round_order = list(perms[rep % len(perms)])
+            for slot, name in enumerate(round_order):
                 cmd = " ".join(srv_prefix) + " " + variants[name] + f" --port {port} {srv_bind}"
+                settle_s = None
+                if settle > 0 and mem_idle is not None:  # 80.03: TCP memory of the run before must not be this run's start state
+                    ts = time.time()
+                    while (sample.tcp_mem_pages() or 0) > mem_idle + 64 and time.time() - ts < settle:
+                        time.sleep(0.1)
+                    settle_s = round(time.time() - ts, 2)
+                mem0 = sample.tcp_mem_pages()
                 t_start = time.time()
                 p = proc.spawn(cmd, shell=True)
                 try:
@@ -70,6 +96,7 @@ def run_ab(variants, reps, wb_args, *, wb, port="6901", tport="6902", tmode=None
                     pr0 = sample.tcp_pressure_both(nss)  # 60.42 verify: before the CPU window (review: subprocesses)
                     cpu0, _, _ = sample.group_usage(p.pid)
                     cg0 = cgroup_usage_s()
+                    st0 = sample.steal_ticks()
                     t0 = time.time()
                     # 50.02 D: host TCP memory peak during the rep (this box: the server's; review: also cross-host)
                     mempk = sample.TcpMemPeak()
@@ -89,6 +116,7 @@ def run_ab(variants, reps, wb_args, *, wb, port="6901", tport="6902", tmode=None
                         j["tcp_mem_peak"] = mempk.max_seen
                         j["at_tcp_mem_max"] = sample.at_tcp_mem_max(mempk.max_seen, tcp_max)
                     wall = time.time() - t0
+                    st1 = sample.steal_ticks()
                     cg1 = cgroup_usage_s()  # before the /proc scan below, so its CPU stays outside the window
                     cpu1, rss, hwm = sample.group_usage(p.pid)
                 finally:
@@ -115,6 +143,15 @@ def run_ab(variants, reps, wb_args, *, wb, port="6901", tport="6902", tmode=None
                 j["loadavg"] = [float(x) for x in open("/proc/loadavg").read().split()[:3]]  # host-wide inside a container
                 j["rss_mib"] = round(rss, 1)
                 j["hwm_mib"] = round(hwm, 1)
+                # 80.03 (P6 of the performance audit): when the run was, so that the time budget of a round is a table and
+                # a noisy run can be seen. t0 = the server's start, tw0 = the client's start (the window is inside
+                # tw0..tw0+win_s), t1 = this record (after the stop and the settle); steal = host steal ticks over the
+                # client's time (None where /proc/stat has no such column)
+                # slot = the place of this run in its round (0 = first); tcp_mem0 = host TCP memory pages before the server start
+                j.update(t0=round(t_start, 3), tw0=round(t0, 3), win_s=round(wall, 3), t1=round(time.time(), 3),
+                         steal=None if st0 is None or st1 is None else st1 - st0, slot=slot, tcp_mem0=mem0)
+                if settle_s is not None:
+                    j["settle_s"] = settle_s
                 if rawf:
                     rawf.write(json.dumps({"rep": rep, "v": name, "extra": " ".join(wb_args), "tls": tls, "link": link, **j}) + "\n")
                     rawf.flush()
@@ -203,7 +240,8 @@ def main(argv):
     env = os.environ
     o = {"--port": env.get("PORT", "6901"), "--tport": env.get("TPORT", "6902"), "--tmode": env.get("TMODE") or None,
          "--dur": env.get("DUR", "4"), "--warmup": env.get("WARMUP", "1"), "--raw": env.get("RAW") or None,
-         "--link": env.get("LINK", "lo"), "--client-ssh": None, "--server-ip": None}
+         "--link": env.get("LINK", "lo"), "--client-ssh": None, "--server-ip": None,
+         "--order": env.get("AB_ORDER", "rotate"), "--settle": env.get("AB_SETTLE", "0")}
     flags = {"--tls": env.get("AB_TLS", "0") == "1", "--fixed-order": env.get("FW_AB_ROTATE", "1") == "0", "--force-clean": False}
     variants = json.load(open(argv[0]))
     reps = int(argv[1])
@@ -238,7 +276,7 @@ def main(argv):
         with fw:
             res = run_ab(variants, reps, extra, wb=wb, port=o["--port"], tport=o["--tport"], tmode=o["--tmode"],
                          dur=o["--dur"], warmup=o["--warmup"], tls=flags["--tls"], raw=o["--raw"],
-                         rotate=not flags["--fixed-order"], **kw)
+                         rotate=not flags["--fixed-order"], order=o["--order"], settle=float(o["--settle"]), **kw)
     except AbError as e:
         sys.exit(f"ab: {e}")
     except Exception as e:  # xhost.XhostError from the firewall setup

@@ -104,6 +104,16 @@ ch = client_hello()
 stalls = [threading.Thread(target=stall, args=(n, p)) for n, p in
           (("silent", b""), ("half ClientHello", ch[:len(ch) // 2]), ("header only", ch[:5]))]
 for t in stalls: t.start()
+# 80.02: ONE explicit case for what the 3 s read after a partial ClientHello in case 6 saw by waiting: the server must
+# neither answer nor close in the first 3 s (it waits for the rest until its handshake timer). In the background, once.
+quiet3 = {}
+def partial_quiet():
+    s = raw(); s.sendall(ch[:37]); s.settimeout(3.0); t0 = time.time()
+    try: d = s.recv(100); quiet3["got"] = f"{len(d)} byte(s) {d[:7].hex()}" if d else "closed"
+    except socket.timeout: quiet3["got"] = "nothing"
+    except OSError as e: quiet3["got"] = e.__class__.__name__
+    quiet3["dt"] = time.time() - t0; s.close()
+stalls.append(threading.Thread(target=partial_quiet)); stalls[-1].start()
 
 # 1. baseline: TLS 1.3 and 1.2 upgrade
 st, s, _ = wss_101(ctx(minv=ssl.TLSVersion.TLSv1_3)); v = s.version(); s.close()
@@ -122,7 +132,12 @@ c, seen, dt = closed_within(s, 2); s.close()
 ok(c and dt < 1.5, f"random garbage -> closed in {dt:.2f}s")
 
 # 4. TLS-looking records with garbage inside -> closed (rustls sends a decode_error alert when it can)
-s = raw(); s.sendall(bytes([22, 3, 1, 0, 200]) + os.urandom(200))
+# 80.03: byte 2 of the body is the top byte of the handshake message length. With 0 there (1 draw in 256) and a length
+# above 196 the 200 bytes are an INCOMPLETE message: the server rightly waits for the rest and this case failed
+# (seen once in a gate). The top bit set: a length above 8 MiB, which no handshake message has, so every draw is the
+# case this line was written for (a record that must be refused at once).
+g = bytearray(os.urandom(200)); g[1] |= 0x80
+s = raw(); s.sendall(bytes([22, 3, 1, 0, 200]) + bytes(g))
 c, seen, dt = closed_within(s, 2); s.close()
 ok(c and dt < 1.5, f"handshake record with random body -> closed (alert {seen[:7].hex() or 'none'})")
 s = raw(); s.sendall(bytes([22, 3, 1, 0, 200, 1, 0, 0, 196]) + os.urandom(196))
@@ -138,6 +153,7 @@ ok(c and dt < 1.5, "record length 65535 -> closed")
 for i in range(60):
     s = raw(); s.sendall(ch if i % 2 else ch[:37])
     if i % 3 == 0:
+        if os.environ.get("WST_TRIM") and i % 2 == 0: s.settimeout(0.3)  # wst compat --trim (80.01): after a PARTIAL ClientHello no reply can come (the server waits for the rest, its timer is 10 s): this read is a pause (was: the 3 s socket timeout, 10 times)
         try: s.recv(100)
         except OSError: pass
     if i % 4 == 0:
@@ -249,6 +265,7 @@ for ver, flag, suite in matrix:
 for t in stalls: t.join()
 for name, (c, _, dt) in sorted(stall_res.items()):
     ok(c and HS_TIMEOUT - 1 <= dt <= HS_TIMEOUT + 4, f"stalled handshake ({name}) closed by server after {dt:.1f}s")
+ok(quiet3.get("got") == "nothing", f"partial ClientHello (37 bytes): no answer and no close in 3 s (got {quiet3.get('got')} after {quiet3.get('dt', 0):.1f} s)")
 
 # 13. no fd leak
 if pid:

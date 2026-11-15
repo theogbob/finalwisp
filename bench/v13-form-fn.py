@@ -489,7 +489,7 @@ def group_e(a):
     shutil.copy(a.bin, os.path.join(ctx, "finalwisp"))
     bi = os.path.join(os.path.dirname(a.bin), "BUILDINFO")
     open(os.path.join(ctx, "BUILDINFO"), "w").write(open(bi).read() if os.path.exists(bi) else "test build\n")
-    tag = "v13form-fn:test"
+    tag = "v13form-fn:test-%d" % a.port  # 80.02: the tag and the container names carry the base port, so two runs (two gates) do not collide
     b = subprocess.run(["docker", "build", "-q", "-f", os.path.join(ROOT, "contrib", "docker", "Dockerfile"), "-t", tag, ctx],
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=300)
     record("E0 docker build of contrib/docker/Dockerfile", b.returncode == 0, exit=b.returncode, out=b.stdout.decode()[-300:])
@@ -520,7 +520,7 @@ def group_e(a):
         ("E7 docker run IMAGE --port 7000 (CMD replaced: the default host again, the preset stays)",
          ["--port", "7000"], P + "public: block-smtp on, max-streams-per-conn 1024" + T, "127.0.0.1:7000"),
     ]:
-        cname = "v13form-fn-" + name.split()[0].lower()
+        cname = "v13form-fn-%d-%s" % (a.port, name.split()[0].lower())
         subprocess.run(["docker", "run", "-d", "--rm", "--name", cname, "--network", "none", "--stop-timeout", "2", tag] + (extra + ["--drain-timeout", "0"] if extra else []),  # E3: no argument at all, so the image's CMD applies
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
         time.sleep(2.0)

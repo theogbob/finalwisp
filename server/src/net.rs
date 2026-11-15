@@ -33,22 +33,43 @@ pub fn delivery_rate(fd: RawFd) -> Option<(u64, bool)> {
 
 /// 70.02 dead-peer detection on client sockets (`Config::keepalive`): TCP keepalive after KEEP_IDLE s
 /// without traffic, every KEEP_INTVL s, KEEP_CNT unanswered probes => the kernel closes the socket
-/// (ETIMEDOUT): an idle peer that vanished (no FIN/RST: power loss, NAT drop) is gone after ~3 min.
+/// (ETIMEDOUT): an idle peer that vanished (no FIN/RST: power loss, NAT drop) is gone after 3 to 4 min (v1.3.1 K1:
+/// the idle time is spread, `keep_idle`).
 /// Set on the listener: accepted sockets inherit the options (checked on Linux 7.0). Keepalive does
 /// not run while data is unacknowledged; `peer_gone` covers that case.
 /// 70.13 also on open TCP target sockets (armed by `Worker::sweep`, within IDLE_SWEEP_MS): a site
 /// that vanished while the stream is idle or only downloading (nothing unacked on our side) ends with
-/// CLOSE 0x47 after ~3 min.
+/// CLOSE 0x47 after 3 to 4 min (the idle time spread by `keep_idle`, as on clients).
 /// A live idle target ACKs the probes. Unacked upload data still waits for the retransmission timeout.
 pub const KEEP_IDLE: i32 = 120;
 pub const KEEP_INTVL: i32 = 15;
 pub const KEEP_CNT: i32 = 4;
+/// v1.3.1 K1: each connection's idle time is KEEP_IDLE plus an offset in 0..KEEP_SPREAD s (`keep_idle`). Connections
+/// that went idle together otherwise probe together: on a real path between two 2-core hosts a burst of 10,000 probes
+/// lost a share of every round and 887 live idle clients were closed (60.67). Spread over 60 s, a burst of N idle
+/// connections sends about N / 60 probes per second.
+pub const KEEP_SPREAD: u32 = 60;
 
-pub fn set_keepalive(fd: RawFd) -> bool {
+/// v1.3.1 K1 the idle time of a connection: KEEP_IDLE + an offset from its slot number (Fibonacci hash, then a
+/// multiply-shift into 0..KEEP_SPREAD): slots taken one after the other (a burst of accepts) get offsets spread evenly
+pub fn keep_idle(slot: u32) -> i32 {
+    KEEP_IDLE + ((slot.wrapping_mul(0x9E37_79B9) as u64 * KEEP_SPREAD as u64) >> 32) as i32
+}
+
+/// `idle`: KEEP_IDLE on the listener (accepted sockets inherit it; the idle sweep spreads it, `set_keep_idle`),
+/// `keep_idle(slot)` on a target
+pub fn set_keepalive(fd: RawFd, idle: i32) -> bool {
     setsockopt_int(fd, libc::SOL_SOCKET, libc::SO_KEEPALIVE, 1)
-        && setsockopt_int(fd, libc::IPPROTO_TCP, libc::TCP_KEEPIDLE, KEEP_IDLE)
+        && setsockopt_int(fd, libc::IPPROTO_TCP, libc::TCP_KEEPIDLE, idle)
         && setsockopt_int(fd, libc::IPPROTO_TCP, libc::TCP_KEEPINTVL, KEEP_INTVL)
         && setsockopt_int(fd, libc::IPPROTO_TCP, libc::TCP_KEEPCNT, KEEP_CNT)
+}
+
+/// v1.3.1 K1 a new idle time on a socket that has keepalive on. Linux (tcp_sock_set_keepidle) re-arms the running
+/// timer from the last received segment, so a call before the first probe moves that probe. A failed call only loses
+/// the spread.
+pub fn set_keep_idle(fd: RawFd, idle: i32) -> bool {
+    setsockopt_int(fd, libc::IPPROTO_TCP, libc::TCP_KEEPIDLE, idle)
 }
 
 /// 70.02 Shortest time without any ACK from the peer while we have data out before the peer counts as
@@ -398,7 +419,7 @@ pub fn listen(addr: &SocketAddr, keepalive: bool, pacing: u32) -> io::Result<Raw
             libc::setsockopt(fd, libc::SOL_SOCKET, opt, &one as *const _ as *const _, 4);
         }
         // 70.02 inherited by every accepted socket
-        if keepalive && !set_keepalive(fd) {
+        if keepalive && !set_keepalive(fd, KEEP_IDLE) {
             let e = io::Error::last_os_error();
             libc::close(fd);
             return Err(io::Error::new(e.kind(), format!("TCP keepalive on the listener ({e}); --no-keepalive turns it off")));

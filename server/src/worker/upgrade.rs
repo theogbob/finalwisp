@@ -41,6 +41,7 @@ impl Worker {
             self.meter_keyed(ci); // 60.25 C10b the key is final now: charge the bootstrap bytes
         }
         if !ip_ok {
+            self.free_slot(ci); // 60.69 S1: the refusal frees the --max-conns slot now, not when the 429 has gone out
             let c = self.clients.at(ci);
             http::simple(&mut c.obuf, "429 Too Many Requests", "too many connections from this address\n");
             self.begin_close(ci, Why::Limit);
@@ -136,6 +137,19 @@ impl Worker {
 }
 
 impl Worker {
+    /// 60.69 S1 a connection refused per address gives its --max-conns slot back when the server decides to refuse, so a
+    /// client that has read the 429 finds the slot free; the close (close_client: Peer::slot_freed) does not give it a
+    /// second time. Every refusal here has a peer (client_ip refuses only with one); without one the close releases.
+    #[inline(never)]
+    fn free_slot(&mut self, ci: u32) {
+        let Some(g) = &self.cfg.conn_gate else { return };
+        if let Some(p) = self.peers_of.get_mut(ci as usize).and_then(Option::as_mut) {
+            if !std::mem::replace(&mut p.slot_freed, true) {
+                g.release();
+            }
+        }
+    }
+
     /// 60.20 C2/C3b after the HTTP request: a trusted proxy's client gets its real IP from the header and is charged
     /// now (a direct peer was charged at accept). false = over --max-conns-per-ip or (60.40) --conn-rate-per-ip (429).
     fn client_ip(&mut self, ci: u32, fwd: &[Vec<u8>]) -> bool {

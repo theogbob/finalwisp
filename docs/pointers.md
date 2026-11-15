@@ -110,6 +110,7 @@ repository; the comments carry their reasoning inline. This index gives the topi
 | 60.60 | Command line usability: one option table, short help, plain errors, --show-config, start block |
 | 60.63 | Section E: bounds on what the server can see on its host |
 | 60.67 | Acceptance tests T1 to T8 of the preset design, on the final v1.3.0 build |
+| 60.69 | v1.3.1 build (the lead's SPEC, 2026-11-14): S1 a per-address 429 frees its --max-conns slot at the refusal, S2 BUILDINFO libc6-dev line + release.sh --compare-ci, S3 help texts; K1 keepalive spread, K2 dead_peers counter, C1 preset cost |
 | 70.01 | Fuzzing base-1.1 network parsers |
 | 70.02 | dead-peer detection |
 | 70.03 | glibc mmap threshold 16 KiB + M_MMAP_MAX |
@@ -131,3 +132,5 @@ repository; the comments carry their reasoning inline. This index gives the topi
 | 70.27 | base-4 RC1 battle tests: long fuzz campaign + real-browser suite |
 | 70.28 | base-6 fuzz campaign: the code added since base-4 |
 | 80.01 | ops hardening round |
+| 80.02 | Test pipeline: where the time goes and the design of a faster suite |
+| 80.03 | Test throughput phase |

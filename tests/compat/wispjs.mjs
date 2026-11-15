@@ -57,8 +57,15 @@ function streamDownload(conn, host) {
       res({ ok, why: ok ? "" : `reason ${r} got ${got} first-bad ${bad}` }); };
   });
 }
-const closed = net.createServer(); await new Promise(r => closed.listen(0, "127.0.0.1", r));
-const DEAD = closed.address().port; await new Promise(r => closed.close(r));
+// DEAD: a port where nothing listens (the refused check). 80.02: the gate gives a port of its own block (WISPJS_DEAD, below
+// the kernel's range for outgoing connections), so no other process can take it. Without it: a port that was free a moment
+// ago (listen on 0, close): any process on the host can take it before the check, the connect then succeeds and the
+// check fails with a timeout (seen once, beside unit-test runs that listen on ephemeral ports).
+let DEAD = Number(process.env.WISPJS_DEAD || 0);
+if (!DEAD) {
+  const closed = net.createServer(); await new Promise(r => closed.listen(0, "127.0.0.1", r));
+  DEAD = closed.address().port; await new Promise(r => closed.close(r));
+}
 
 function connect(u, version) {
   return new Promise((res, rej) => {

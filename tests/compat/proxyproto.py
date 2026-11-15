@@ -10,6 +10,9 @@ import base64, os, re, signal, socket, ssl, struct, subprocess, sys, tempfile, t
 
 BIN, BASE = os.path.abspath(sys.argv[1]), int(sys.argv[2])
 D = tempfile.mkdtemp(prefix="fw-pp-")
+# wst compat --trim (80.01): the "port is free" probe binds with SO_REUSEADDR, as the server does. Without it the probe
+# fails while a closed connection of the last server is in TIME_WAIT, and each probe loop runs to its end (5 or 10 s).
+TRIM = bool(os.environ.get("WST_TRIM"))
 U = os.path.join(D, "fw.sock")
 CERT, KEY = os.path.join(D, "cert.pem"), os.path.join(D, "key.pem")  # test-only self-signed (as run_tls.sh)
 subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes", "-days", "2",
@@ -56,7 +59,7 @@ class Srv:
         try: rc = self.p.wait(15)
         except subprocess.TimeoutExpired: self.p.kill(); rc = self.p.wait()
         for _ in range(100):  # the port is free again before the next server
-            try: t = socket.socket(); t.bind(("127.0.0.1", BASE)); t.close(); break
+            try: t = socket.socket(); TRIM and t.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); t.bind(("127.0.0.1", BASE)); t.close(); break
             except OSError: time.sleep(0.05)
         return rc
 
@@ -221,7 +224,7 @@ t0 = time.time(); s.p.send_signal(signal.SIGTERM); rc = s.p.wait(15); el = time.
 ok(rc == 0 and el < 4, "SIGTERM with a header still missing: exit 0 without waiting for its timeout", f"rc={rc} {el:.1f}s")
 x.close()
 for _ in range(200):  # the port is free again before the next server (TIME_WAIT of the closed pending connection)
-    try: t = socket.socket(); t.bind(("127.0.0.1", BASE)); t.close(); break
+    try: t = socket.socket(); TRIM and t.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); t.bind(("127.0.0.1", BASE)); t.close(); break
     except OSError: time.sleep(0.05)
 
 # ---- startup

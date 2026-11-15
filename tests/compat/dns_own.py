@@ -341,6 +341,11 @@ for p in procs:
         os.killpg(p.pid, 15)
     else:
         p.terminate()
+if os.environ.get("WST_TRIM"):  # wst compat --trim (80.01): a second SIGTERM = exit now (60.12); without it the read below
+    time.sleep(0.5)             # waits for the 30 s drain of a server that still has this test's connections
+    for p in procs:
+        if p.poll() is None:
+            os.killpg(p.pid, 15) if getattr(p, "group", False) else p.terminate()
 for port, p in errs.items():
     err = p.stderr.read()
     ok("DNS own resolver" in err, f"server :{port} capability line names the own resolver")

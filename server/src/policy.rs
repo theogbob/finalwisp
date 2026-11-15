@@ -160,6 +160,9 @@ pub struct Policy {
     block_hosts: HashSet<Box<str>>,
     direct_ip: bool,
     ipv6: bool,
+    /// only port rules: no address rule (direct IP and IPv6 targets allowed) and no host list, so a request whose port
+    /// passes is allowed without looking at the host (--preset public: --block-smtp only)
+    ports_only: bool,
     pub summary: String,
 }
 
@@ -231,6 +234,7 @@ impl Policy {
             block_hosts: set(&r.block_hosts),
             direct_ip: r.direct_ip,
             ipv6: r.ipv6,
+            ports_only: r.direct_ip && r.ipv6 && r.allow_hosts.is_empty() && r.block_hosts.is_empty(),
             summary: s.join(", "),
         })
     }
@@ -246,6 +250,9 @@ impl Policy {
     pub fn allows(&self, udp: bool, host: &str, port: u16) -> bool {
         if self.port_blocked(udp, port) {
             return false;
+        }
+        if self.ports_only {
+            return true; // (what the two tests below give for every host when no address or name rule is set)
         }
         if is_ip_literal(host) {
             // a scoped literal counts as v6; an IPv4-mapped one as v4
@@ -360,6 +367,9 @@ mod tests {
                 }
             }
         }
+        // the shortcut of allows() is taken by the port-only policies above (--preset public: --block-smtp only)
+        assert!(Policy::new(&Rules { block_smtp: true, ..rules() }).unwrap().ports_only);
+        assert!(!Policy::new(&Rules { block_smtp: true, direct_ip: false, ..rules() }).unwrap().ports_only);
         let p = Policy::new(&Rules { block_hosts: hosts(&["evil.org"]), direct_ip: false, block_smtp: true, ..rules() }).unwrap();
         assert_eq!(p.refusal(false, "a.evil.org", 443), Some("block_host"));
         assert_eq!(p.refusal(false, "1.2.3.4", 443), Some("direct_ip"));

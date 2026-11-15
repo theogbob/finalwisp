@@ -394,6 +394,10 @@ pub struct Worker {
     /// 60.20 C2/C3b per client slot: its peer and charged key (empty when C2/C3b are off; beside the slab so the
     /// Client slot stays 512 bytes, 60.22)
     peers_of: Vec<Option<clientip::Peer>>,
+    /// v1.3.1 K1 per client slot: true once the idle sweep gave the connection in it its own keepalive idle time;
+    /// cleared when the slot is freed (reap_dead). Beside the slab (no Client growth); grows when the sweep first needs a
+    /// slot, so it stays empty with --no-keepalive or when no connection was ever idle for a sweep
+    ka_spread: Vec<bool>,
     /// 60.24 --log-conns per client slot (empty when off), the queue to the log thread, scratch, sequence, and the
     /// conn_refused window (second, lines in it)
     connlog: Vec<Option<connlog::ConnLog>>,
@@ -570,6 +574,7 @@ impl Worker {
             next_sweep: Instant::now() + first_sweep,
             ip_sweep: idx * clientip::SWEEP_SHARDS % clientip::SHARDS,
             peers_of: Vec::new(),
+            ka_spread: Vec::new(),
             connlog: Vec::new(),
             outbox,
             logline: Vec::new(),
@@ -731,6 +736,9 @@ impl Worker {
     fn reap_dead(&mut self) {
         for ci in self.dead.drain(..) {
             self.clients.remove(ci);
+            if let Some(k) = self.ka_spread.get_mut(ci as usize) {
+                *k = false; // v1.3.1 K1 the next connection in this slot gets its own idle time again
+            }
         }
         #[cfg(test)]
         assert_eq!(self.stats.fds.get(), self.fds_held(), "60.57 A2 the fd count is not what the connections and streams hold");

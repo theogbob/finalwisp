@@ -578,7 +578,16 @@ fn show_config(
         ),
         ("listen backlog", some(host.somaxconn, &|n| format!("somaxconn {n}"))),
         ("TCP fast open", some(host.tcp_fastopen, &|v| format!("net.ipv4.tcp_fastopen={v}"))),
-        ("dead peers", format!("closed after {} s idle + {} probes {} s apart", net::KEEP_IDLE, net::KEEP_CNT, net::KEEP_INTVL)),
+        (
+            "dead peers",
+            format!(
+                "closed after {} to {} s idle (spread per connection) + {} probes {} s apart",
+                net::KEEP_IDLE,
+                net::KEEP_IDLE + net::KEEP_SPREAD as i32 - 1,
+                net::KEEP_CNT,
+                net::KEEP_INTVL
+            ),
+        ),
         ("socket buffer lock", format!("{} (SO_BUF_LOCK)", buflock_text())),
         ("cgroup", mem::cgroup_mode(&std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default()).to_string()),
         ("allocator", malloc_text(pinned, pool_max, o.threads.max(1))),
@@ -1289,7 +1298,7 @@ fn main() {
         _ => on(cfg.tfo).to_string(),
     };
     let keep_note = if cfg.keepalive {
-        format!("dead peers {}s+{}x{}s", net::KEEP_IDLE, net::KEEP_CNT, net::KEEP_INTVL)
+        format!("dead peers {}-{}s+{}x{}s", net::KEEP_IDLE, net::KEEP_IDLE + net::KEEP_SPREAD as i32 - 1, net::KEEP_CNT, net::KEEP_INTVL)
     } else {
         "dead peers off".to_string()
     };

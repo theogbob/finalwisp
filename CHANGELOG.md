@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.3.1
+
+Fixed:
+
+- A connection that is refused per client address with `429 Too Many Requests` (behind a trusted proxy or on
+  `--listen-unix`: over `--max-conns-per-ip`, `--conn-rate-per-ip` or `conn-share`) now gives its `--max-conns` place
+  back when the server refuses it. Before, it held the place until the 429 had been sent and the connection closed,
+  so a new client that came in just then could be reset at accept although the limit was not really reached.
+- Idle connections accepted together no longer send their keepalive probes in the same second. Each client gets its
+  own idle time, 120 s plus up to 59 s, so a burst of idle clients is no longer cut by its own probe burst. In the
+  test runs for this release (10,000 and 20,000 idle clients opened at once between two 2-core hosts), 1.3.0 closed
+  1,139 and 2,411 of them (11 to 12%) and 1.3.1 none; the loss of 1.3.0 varies from run to run (its own tests, in the
+  1.3.0 notes below, saw 887 of 10,000). Streams opened together get the same spread on their target sockets.
+- `dead_peers` now counts a client whose read or write failed with a timeout (`ETIMEDOUT` or `EHOSTUNREACH`).
+  Before, it stayed 0 although `--log-conns` said `why=dead_peer`.
+
+Changed:
+
+- An idle dead peer is now closed after 3 to 4 minutes (before: about 180 s).
+- `--preset public` costs less per stream: a destination rule set made only of port rules (such as `--block-smtp`)
+  no longer looks at the host name, and a worker in hold mode makes one guarded call per file descriptor it takes,
+  with no extra clock read (about 300 fewer user instructions per stream opened and closed, counted).
+- `BUILDINFO` records the `libc6-dev` package beside `glibc:` (the release binary links the static C library of that
+  package, so the md5 follows it).
+- Help texts: `--fd-admission` says that the room it keeps is not a guarantee (the open connections' own streams can
+  use it up); `--dns-own` gives the time per try (1-2 s) and for a whole lookup (6 s at most, 4 to 6 s with the
+  defaults of `/etc/resolv.conf`).
+
 ## v1.3.0
 
 Changed defaults of the Docker image and the systemd unit (a plain `finalwisp` still starts with no preset and no

@@ -219,18 +219,25 @@ ok(len(per) >= 4 and sum(per) == 40 and per[0] <= 12, "40 unix clients spread ov
 for x in held: x.close()
 s.stop()
 
-# ---- splice into the unix client (download path)
-if shutil.which("strace"):
-    trace = os.path.join(D, "splice.trace")
-    s = Srv("--listen-unix", U, "--threads", "1", wrap=("strace", "-f", "-qq", "-c", "-e", "trace=splice", "-o", trace))
-    if s.p.poll() is None and os.path.exists(U):
-        w = Wisp(unix_sock()); got = w.download(); w.close(); s.stop(); time.sleep(0.3)
-        calls = [int(l.split()[3]) for l in open(trace).read().splitlines() if l.split()[-1:] == ["splice"]]
-        ok(got == BLAST and calls and calls[0] > 100, "the download uses splice into the unix socket", f"splice calls {calls}")
-    else:
-        s.p.kill(); skip("splice into the unix socket", "strace could not run the server")
-else:
-    skip("splice into the unix socket", "no strace")
+# ---- splice into the unix client (download path). Counted from /proc, not with strace: a server that ptrace stops at
+# every syscall reads its target too slowly for the kernel to open the target's receive window, every read then empties
+# the socket, no stream gets marked bulk and the server never splices (pf-splice: 0 splice calls in 23 of 30 runs in a
+# KVM guest). rchar in /proc/PID/io = the bytes the server took with read(); spliced bytes are not in it.
+def rchar(pid):
+    return int(re.search(r"^rchar: (\d+)", open(f"/proc/{pid}/io").read(), re.M).group(1))
+def pipe_fds(pid):
+    n = 0
+    for fd in os.listdir(f"/proc/{pid}/fd"):  # the server lives (else listdir raises: a FAIL by traceback, as it should be)
+        try: n += os.readlink(f"/proc/{pid}/fd/{fd}").startswith("pipe:")
+        except FileNotFoundError: pass  # review: an fd the server closed between listdir and readlink (the target, after the last byte)
+    return n
+s = Srv("--listen-unix", U, "--threads", "1")
+pid = s.pid(); r0, p0 = rchar(pid), pipe_fds(pid)
+w = Wisp(unix_sock()); got = w.download(); r1, p1 = rchar(pid), pipe_fds(pid)  # before the close: the client's pipe is still open
+w.close(); s.stop()
+# > 100 splice calls (the strace rule) meant at most 50 x 256 KiB = 12.5 MiB through the pipe; this asks for 8 MiB at least
+ok(got == BLAST and p1 - p0 == 2 and got - (r1 - r0) >= 8 << 20, "the download uses splice into the unix socket",
+   f"read() took {r1 - r0} of {got} bytes, splice pipe fds {p1 - p0}")
 
 # ---- Caddy -> unix socket -> finalwisp (the C7 use case)
 CADDY = shutil.which("caddy")

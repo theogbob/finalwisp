@@ -56,8 +56,12 @@ def start(port, soft, hard, *args, threads=2):
 def srvlog(p):
     with open(p.logf.name) as f:
         return f.read()
+TRIM = bool(os.environ.get("WST_TRIM"))  # wst compat --trim (80.01)
 def stop(p):
     p.terminate()
+    if TRIM:  # a second SIGTERM = exit now (60.12). Without it a server that still has this test's connections drains (30 s), and the wait below ends in SIGKILL after 10 s
+        try: p.wait(0.5)
+        except subprocess.TimeoutExpired: p.terminate()
     try: p.wait(10)
     except subprocess.TimeoutExpired: p.kill(); p.wait()
 def nfd(p):
@@ -263,10 +267,13 @@ r = w.closed(1)
 ok(r == 0x49, f"A4: a stream at the limit closes with {r if r is None else hex(r)} (0x49)")
 ws.pop().close(); ws.pop().close(); time.sleep(0.3)
 w.connect(2); ok(w.echo(2), "A4: after two connections closed a stream opens and echoes")
-w.connect(3); w.connect(4)
-cl = {s: b[0] for ty, s, b in w.packets(2, lambda out: any(ty == 4 and s == 4 for ty, s, _ in out)) if ty == 4}
+w.connect(3); e3 = w.echo(3)  # 80.03 stream 3 holds the 2nd fd before stream 4 asks. Two CONNECTs that the server reads in ONE read are
+# started last first: on a loaded host stream 4 got the fd and stream 3 the 0x49 (r3 = 0x49, r4 = None; refuse_fd still 2)
+w.connect(4)
+# a deadline, not a fixed wait: packets() returns as soon as the CLOSE of stream 4 is there
+cl = {s: b[0] for ty, s, b in w.packets(10, lambda out: any(ty == 4 and s == 4 for ty, s, _ in out)) if ty == 4}
 r3, r4 = cl.get(3), cl.get(4)
-ok(r3 is None and r4 == 0x49 and w.echo(2) and w.echo(3), f"A4: the 2nd fd goes to stream 3, stream 4 is refused ({r4}); streams 2 and 3 go on")
+ok(r3 is None and r4 == 0x49 and e3 and w.echo(2) and w.echo(3), f"A4: the 2nd fd goes to stream 3, stream 4 is refused ({r4}); streams 2 and 3 go on")
 ok(metric(p, "refuse_fd") == 2, f"A4: refuse_fd={metric(p, 'refuse_fd', False)} (2)")
 warn = [l for l in srvlog(p).splitlines() if "new streams are refused" in l]
 ok(len(warn) == 1 and "Fix:" in warn[0], f"A4: {len(warn)} warning line for the refused streams, without --log-streams")

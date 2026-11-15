@@ -3262,6 +3262,77 @@ fn trusted_proxy_client_charged_at_upgrade_and_spoofing_ignored() {
     std::mem::forget(w);
 }
 
+/// 60.69 S1 a connection refused per address (429 after the HTTP request) gives its --max-conns slot back when the
+/// server refuses it, not when the 429 has been written and the connection closed; the close does not give it twice,
+/// whether the client closes before the 429 is flushed or the server closes after the flush.
+#[test]
+fn refused_per_address_frees_its_slot_at_the_refusal() {
+    use super::*;
+    use std::io::{Read as _, Write as _};
+    use std::os::fd::FromRawFd;
+    assert_eq!(std::mem::size_of::<Option<clientip::Peer>>(), 64, "slot_freed sits in the padding: peers_of does not grow");
+    let gate = Arc::new(net::ConnGate::new(3));
+    let mut cfg = Arc::into_inner(clientip_cfg(&["127.0.0.1"], 1, false, 1, None)).unwrap();
+    cfg.conn_gate = Some(gate.clone());
+    let cfg = Arc::new(cfg);
+    let (tx, _rx) = mpsc::channel();
+    let mut w = Worker::new(cfg.clone(), tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
+    let tab = cfg.clientip.as_ref().unwrap().table.as_ref().unwrap();
+    let port = unsafe { std::net::TcpListener::from_raw_fd(libc::dup(w.lfd)) }.local_addr().unwrap().port();
+    let up = "GET / HTTP/1.1\r\nHost: x\r\nX-Forwarded-For: 9.9.9.9\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
+              Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n";
+    let open = |w: &mut Worker, n: usize| -> Vec<std::net::TcpStream> {
+        let s: Vec<_> = (0..n)
+            .map(|_| {
+                let mut s = connect_from([127, 0, 0, 1], port);
+                s.write_all(up.as_bytes()).unwrap();
+                s
+            })
+            .collect();
+        std::thread::sleep(Duration::from_millis(20));
+        w.accept_all();
+        s
+    };
+    // the first client of 9.9.9.9 is admitted; the second is refused per address and frees its slot at once
+    let mut socks = open(&mut w, 2);
+    assert_eq!(gate.used(), 2);
+    for i in 0..2u32 {
+        w.clients.at(i).readable = true;
+        w.read_client(i);
+    }
+    assert_eq!((w.stats.refuse_ip_conns.get(), tab.conns(clientip::key("9.9.9.9".parse().unwrap()))), (1, 1));
+    assert!(w.clients.at(1).obuf.starts_with(b"HTTP/1.1 429") || w.clients.at(1).closing, "refused with 429");
+    assert_eq!(gate.used(), 1, "the refused connection holds no --max-conns slot after the refusal");
+    // the client goes away before the 429 is flushed: its close does not release a second time
+    w.close_client(1, Why::ClientClose);
+    w.reap_dead();
+    assert_eq!(gate.used(), 1, "one release per connection (closed before the flush)");
+    // the same again, now the server flushes the 429 and closes the connection itself
+    socks.extend(open(&mut w, 1));
+    let ci = (0..w.clients.slots.len() as u32).find(|&i| i != 0 && w.clients.get(i, w.clients.gen(i)).is_some_and(|c| !c.dead)).unwrap();
+    assert_eq!(gate.used(), 2);
+    w.clients.at(ci).readable = true;
+    w.read_client(ci);
+    assert_eq!(gate.used(), 1, "freed at the refusal");
+    w.flush_dirty();
+    w.reap_dead();
+    assert!(w.clients.get(ci, w.clients.gen(ci)).is_none_or(|c| c.dead), "closed after the 429 went out");
+    assert_eq!(gate.used(), 1, "one release per connection (closed after the flush)");
+    let mut b = [0u8; 64];
+    socks[2].set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    let n = socks[2].read(&mut b).unwrap();
+    assert!(b[..n].starts_with(b"HTTP/1.1 429"), "{:?}", String::from_utf8_lossy(&b[..n]));
+    // the admitted client closes: every slot and key is back
+    w.close_client(0, Why::ClientClose);
+    w.reap_dead();
+    assert_eq!((gate.used(), tab.keys(), w.inbox.load.load(Relaxed)), (0, 0, 0));
+    for fd in [w.ep, w.lfd, w.inbox.efd] {
+        unsafe { libc::close(fd) };
+    }
+    drop(socks);
+    std::mem::forget(w);
+}
+
 /// 60.40 --conn-rate-per-ip: a direct peer over its rate is reset at accept (refuse_ip_connrate, not refuse_ip_conns),
 /// closing its connections does not give its tokens back, and behind a trusted proxy the header's client over its rate
 /// gets 429 after the HTTP request (the proxy itself is not charged).
@@ -4036,7 +4107,7 @@ fn upload_bootstrap_bytes_charged_to_the_key() {
     let k = clientip::key("10.1.2.3".parse().unwrap());
     assert_eq!(table.charge(k, 0, clientip::now_ms()), clientip::Charge::Charged);
     w.peers_of.resize_with(1, || None);
-    w.peers_of[0] = Some(clientip::Peer { ip: "10.1.2.3".parse().unwrap(), key: Some(k) });
+    w.peers_of[0] = Some(clientip::Peer { ip: "10.1.2.3".parse().unwrap(), key: Some(k), slot_freed: false });
     w.meter_keyed(ci); // (handle_http after client_ip) the 30014 bootstrap bytes are charged once
     w.meter_keyed(ci);
     assert!((burst - table.upload_left(k).unwrap() - read as f64).abs() < 5.0, "charged once, at the key");
@@ -4080,7 +4151,7 @@ fn upload_lease_top_up_in_room() {
     let k = clientip::key("10.1.2.4".parse().unwrap());
     assert_eq!(table.charge(k, 0, clientip::now_ms()), clientip::Charge::Charged);
     w.peers_of.resize_with(1, || None);
-    w.peers_of[0] = Some(clientip::Peer { ip: "10.1.2.4".parse().unwrap(), key: Some(k) });
+    w.peers_of[0] = Some(clientip::Peer { ip: "10.1.2.4".parse().unwrap(), key: Some(k), slot_freed: false });
     w.meter_keyed(ci);
     let room = |w: &mut Worker, space: usize| {
         let c = w.clients.at(ci);
@@ -4920,6 +4991,138 @@ fn proxy_chain_hints_count_and_change_nothing() {
 // 60.57 the fd count and the refusals when fds are short (its own file)
 #[path = "fdtests.rs"]
 mod fd;
+
+/// v1.3.1 K1: the first sweep that finds a TCP client idle gives it its own keepalive idle time (net::keep_idle of its
+/// slot), once per connection (a reused slot gets it again); a unix client and --no-keepalive are left alone
+#[test]
+fn sweep_spreads_the_keepalive_idle_time_once_per_connection() {
+    use super::*;
+    let idle_of = |fd: RawFd| {
+        let (mut v, mut l) = (0i32, 4 as libc::socklen_t);
+        assert_eq!(unsafe { libc::getsockopt(fd, libc::IPPROTO_TCP, libc::TCP_KEEPIDLE, &mut v as *mut i32 as *mut _, &mut l) }, 0);
+        v
+    };
+    let set_idle = |fd: RawFd, v: i32| {
+        assert_eq!(unsafe { libc::setsockopt(fd, libc::IPPROTO_TCP, libc::TCP_KEEPIDLE, &v as *const i32 as *const _, 4) }, 0);
+    };
+    for keepalive in [true, false] {
+        let mut cfg = fd::fd_cfg();
+        cfg.keepalive = keepalive;
+        let (tx, _rx) = mpsc::channel();
+        let mut w = Worker::new(Arc::new(cfg), tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut held = Vec::new();
+        let mut accept = |w: &mut Worker| {
+            held.push(std::net::TcpStream::connect(l.local_addr().unwrap()).unwrap());
+            let (s, _) = l.accept().unwrap();
+            s.set_nonblocking(true).unwrap();
+            let fd = std::os::fd::IntoRawFd::into_raw_fd(s);
+            assert!(net::set_keepalive(fd, net::KEEP_IDLE), "as the listener's options, inherited at accept");
+            w.inbox.load.fetch_add(1, Relaxed);
+            assert!(w.fd_take(1));
+            w.adopt(net::Handoff::bare(fd));
+            fd
+        };
+        let fd0 = accept(&mut w);
+        let fd1 = accept(&mut w);
+        assert_eq!((idle_of(fd0), idle_of(fd1)), (net::KEEP_IDLE, net::KEEP_IDLE), "nothing on the accept path");
+        w.clients.at(0).active = true; // read during this period: not idle yet
+        w.clients.at(1).active = false; // (adopt counts a new connection as active: its first sweep only clears that)
+        w.sweep();
+        let want0 = if keepalive { net::keep_idle(0) } else { net::KEEP_IDLE };
+        let want1 = if keepalive { net::keep_idle(1) } else { net::KEEP_IDLE };
+        assert_eq!((idle_of(fd0), idle_of(fd1)), (net::KEEP_IDLE, want1), "only the idle one, at its first idle sweep");
+        w.sweep();
+        assert_eq!(idle_of(fd0), want0, "client 0 idle at the next sweep");
+        if keepalive {
+            assert_ne!(net::keep_idle(0), net::keep_idle(1), "neighbouring slots get different idle times");
+        }
+        assert_ne!(net::keep_idle(1), net::KEEP_IDLE, "(slot 1 has an offset: the checks below can tell)");
+        // once per connection: a later idle sweep does not set it again
+        set_idle(fd1, 7);
+        w.sweep();
+        assert_eq!(idle_of(fd1), 7, "set once per connection");
+        // the slot is freed and reused by a new connection (next generation): it gets its own idle time again
+        w.close_client(1, Why::ClientClose);
+        w.reap_dead();
+        assert!(!w.ka_spread.get(1).copied().unwrap_or(false), "cleared when the slot is freed");
+        let fd2 = accept(&mut w);
+        assert!(w.clients.get(1, 1).is_some(), "the new connection took slot 1 (generation 1)");
+        w.sweep(); // (active from adopt)
+        assert_eq!(idle_of(fd2), net::KEEP_IDLE);
+        w.sweep();
+        assert_eq!(idle_of(fd2), want1, "a reused slot: a new connection, set again");
+        // a unix client: no TCP, nothing set (the call would fail; it must not be made)
+        let mut fds = [0; 2];
+        assert_eq!(unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_NONBLOCK, 0, fds.as_mut_ptr()) }, 0);
+        w.inbox.load.fetch_add(1, Relaxed);
+        assert!(w.fd_take(1));
+        w.adopt(net::Handoff { fd: fds[0], peer: None, key: None, kind: net::L_UNIX });
+        let ui = w.clients.slots.iter().rposition(|s| s.1.as_ref().is_some_and(|c| c.fd == fds[0])).unwrap();
+        assert_eq!(w.clients.at(ui as u32).local, LOCAL_UNIX);
+        w.sweep();
+        w.sweep();
+        assert!(!w.ka_spread.get(ui).copied().unwrap_or(false), "a unix client is not marked");
+        std::mem::forget(w); // as the tests above
+        drop(held);
+    }
+}
+
+/// v1.3.1 K1: idle times 120..=179 s; slots taken one after the other spread evenly over the 60 seconds
+#[test]
+fn keep_idle_spreads_consecutive_slots() {
+    use crate::net;
+    let mut per_s = [0u32; net::KEEP_SPREAD as usize];
+    for slot in 0..12_000u32 {
+        let v = net::keep_idle(slot);
+        assert!((net::KEEP_IDLE..net::KEEP_IDLE + net::KEEP_SPREAD as i32).contains(&v), "{v}");
+        per_s[(v - net::KEEP_IDLE) as usize] += 1;
+    }
+    // 12,000 slots: 200 per second if even; the Fibonacci hash keeps every second within a few of that
+    assert!(per_s.iter().all(|&n| (190..=210).contains(&n)), "{per_s:?}");
+    // any 1,000 consecutive slots (a burst of accepts on one worker) too: about 17 per second, none above 30
+    for start in [0u32, 4_321, 65_000] {
+        let mut s = [0u32; net::KEEP_SPREAD as usize];
+        for slot in start..start + 1_000 {
+            s[(net::keep_idle(slot) - net::KEEP_IDLE) as usize] += 1;
+        }
+        assert!(s.iter().all(|&n| (8..=30).contains(&n)), "{start}: {s:?}");
+    }
+}
+
+/// v1.3.1 K2: a client read or write that failed with a keepalive or retransmission timeout (ETIMEDOUT, EHOSTUNREACH)
+/// counts in dead_peers, with and without --log-conns; a reset (ECONNRESET) does not; a close already named DeadPeer
+/// (the sweep's own dead-peer path, which counts it there) is not counted again
+#[test]
+fn a_client_timeout_counts_as_a_dead_peer() {
+    use super::*;
+    for log in [false, true] {
+        let mut cfg = fd::fd_cfg();
+        cfg.log_conns = log;
+        cfg.want_peer = log; // (Config::want_peer: --log-conns asks accept4 for the peer)
+        let (tx, _rx) = mpsc::channel();
+        let mut w = Worker::new(Arc::new(cfg), tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
+        let close_with = |w: &mut Worker, errno: i32, why: Why| {
+            let mut fds = [0; 2];
+            assert_eq!(unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_NONBLOCK, 0, fds.as_mut_ptr()) }, 0);
+            w.inbox.load.fetch_add(1, Relaxed);
+            assert!(w.fd_take(1));
+            w.adopt(net::Handoff::bare(fds[0]));
+            let ci = w.clients.slots.iter().rposition(|s| s.1.as_ref().is_some_and(|c| c.fd == fds[0])).unwrap() as u32;
+            unsafe { *libc::__errno_location() = errno }; // errno of the failed read or write, as close_client finds it
+            w.close_client(ci, why);
+            w.reap_dead();
+            unsafe { libc::close(fds[1]) };
+            w.stats.dead_peers.get()
+        };
+        assert_eq!(close_with(&mut w, libc::ETIMEDOUT, Why::Io), 1, "keepalive timeout (log {log})");
+        assert_eq!(close_with(&mut w, libc::EHOSTUNREACH, Why::Io), 2, "retransmission timeout, ICMP unreachable");
+        assert_eq!(close_with(&mut w, libc::ECONNRESET, Why::Io), 2, "a reset is not a dead peer");
+        assert_eq!(close_with(&mut w, libc::ETIMEDOUT, Why::ClientClose), 2, "only a failed read or write (Why::Io)");
+        assert_eq!(close_with(&mut w, libc::ETIMEDOUT, Why::DeadPeer), 2, "named DeadPeer by the sweep: counted there");
+        std::mem::forget(w);
+    }
+}
 
 // 60.63 section E (its own file)
 #[path = "bdtests.rs"]

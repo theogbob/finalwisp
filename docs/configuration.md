@@ -60,7 +60,7 @@ Before the topics: [how options are read](#how-options-are-read), the [config fi
 | `--print-preset` | `NAME` |  | Print the preset's settings on stdout and exit with status 0. See [presets](#presets). |
 | `--show-config` |  |  | Check the options, print every setting in effect with the layer that set it and what this host allows, then exit. Nothing is started. |
 | `--help` | `[TOPIC]` |  | Print a short overview and exit with status 0. With a topic (the section names of this page, or `all`): the options of that topic. Short form: `-h`. |
-| `--version` |  |  | Print the version (`finalwisp 1.3.0`) and exit. Short form: `-V`. |
+| `--version` |  |  | Print the version (`finalwisp 1.3.1`) and exit. Short form: `-V`. |
 
 ## Config file
 
@@ -273,7 +273,7 @@ limits that you choose.
 | `--upload-rate-per-stream` | `RATE` | off | The most the server sends to one TCP target per second, per stream. Uses kernel TCP pacing. Range 16K to 4095M. |
 | `--upload-rate` | `R[/B]` | off | The most finalwisp reads from one client connection per second (all its TCP and UDP streams). R is 8K to 1T. Burst B defaults to max(R, 16K) and must be at least 16K and at least R/10. Over the limit the client is not read until it is under again; nothing is dropped. |
 | `--upload-rate-per-ip` | `R[/B]` | off | The same as `--upload-rate`, shared by all connections of one client address. |
-| `--fd-admission` |  | off | Keep room for the connections that are already open. `--no-fd-admission` turns it off again. [Details](#--fd-admission). |
+| `--fd-admission` |  | off | Keep some room for the connections that are already open (room, not a guarantee: their own new streams can use it up). `--no-fd-admission` turns it off again. [Details](#--fd-admission). |
 | `--no-fd-admission` |  |  | Turns `--fd-admission` off again. Of the two, the later one wins. |
 | `--conn-share` |  | off | Stop one client address from taking the file descriptors that other clients use. `--no-conn-share` turns it off again. [Details](#--conn-share). |
 | `--no-conn-share` |  |  | Turns `--conn-share` off again. Of the two, the later one wins. |
@@ -536,7 +536,7 @@ line it is visible to other users of the host. Logs show it as `scheme://***@hos
 | option | value | default | what it does |
 |---|---|---|---|
 | `--dns-threads` | `N` | `16` | Resolver threads (both resolvers). Each thread runs one lookup at a time, so at most N new names are looked up at once: with a 20 ms name server, 16 threads answer about 750 new names per second and further lookups wait. Identical names looked up at the same time share one lookup. `0` counts as 1. |
-| `--dns-own` |  | off | Use the built-in resolver instead of the system's (`getaddrinfo`). It gives up on a dead name server after 1-2 s instead of about 10 s. The public preset sets it. [What it reads](#--dns-own). |
+| `--dns-own` |  | off | Use the built-in resolver instead of the system's (`getaddrinfo`). It waits 1-2 s for each try (at most 3 tries over the name servers), so a name whose name servers never answer is given up after 6 s at most (4 to 6 s with the defaults of `/etc/resolv.conf`) instead of about 10 s. The public preset sets it. [What it reads](#--dns-own). |
 | `--dns-server` | `IP[:PORT]` | from `/etc/resolv.conf` | Name servers for the built-in resolver. At most 3, repeatable. Implies `--dns-own`. IPv6: `[addr]:port`. |
 | `--dns-share` |  | off | Share the resolver threads between clients. Nothing is refused, no thread is kept free, and a client alone uses every thread. Best with `--dns-own`. [Details](#--dns-share). |
 | `--no-dns-share` |  |  | Turns `--dns-share` off again. Of the two, the later one wins, also across a config file and the command line. Refused together with `--dns-reserve`, which needs it. |
@@ -673,7 +673,7 @@ Leave these at the default unless a problem points at one of them.
 | `--no-splice` |  | splice on | Copy downloads through user space instead of the kernel's zero-copy `splice`. [Details](#--no-splice). |
 | `--balance` |  | off | Hand each new connection to the least busy thread instead of letting the kernel choose. Helps a few busy long-lived connections on big machines (4-11 % on 36-72 threads) and costs 1-7 % when many short connections come and go. |
 | `--no-tfo` |  | TFO on | Do not use TCP Fast Open to targets. Try it if a middlebox drops SYN packets that carry data. |
-| `--no-keepalive` |  | on | Turn off dead-peer detection on clients and targets (TCP keepalive). With it on, an idle dead peer is closed after about 180 s. |
+| `--no-keepalive` |  | on | Turn off dead-peer detection on clients and targets (TCP keepalive). With it on, an idle dead peer is closed after 3 to 4 minutes. |
 | `--no-credit-v2` |  | credit v2 on | Turn off the upload credit scheme that pings the client after a CONTINUE. A compatibility fallback; leave it on. |
 | `--notsent-lowat` | `BYTES` | `131072` | `TCP_NOTSENT_LOWAT` on client sockets: how much unsent data the kernel holds per socket. `0` leaves it to the kernel. |
 | `--no-prio` |  | two lanes | Use one output queue per client. By default data of bulk streams waits in a second lane, so small replies on other streams can go first. |

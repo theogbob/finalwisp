@@ -4,7 +4,8 @@
 # without end), lets the downloads fill the queues, then marks every connection (IP_TOS 0x28 + one WS ping): nft drops
 # all its later packets both ways. The client sockets stay open (a close would send FIN/RST). Polls `ss` for the
 # server-side sockets (sport = WS_PORT) and reports when each one disappears.
-# Expect (default keepalive): idle gone at ~180 s (120 s + 4 x 15 s), download gone at ~150-155 s (TCP_INFO check).
+# Expect (default keepalive): idle gone at 180 to 239 s (120 s + 0..59 s spread per connection + 4 x 15 s), download gone
+# at ~150-155 s (TCP_INFO check).
 # 70.07 --tls: the connections use TLS (server with --tls-cert/--tls-key; kTLS needs the `tls` module): checks that
 # every server socket is kTLS (ss: tcp-ulp-tls) before the cut; --pid: the server's open fds are back at their
 # count before the test once all are gone (a reset socket is closed, not kept by the TLS ULP).
@@ -65,7 +66,8 @@ while time.time() - t0 < a.limit:
 res = {k: [gone.get(p) for p in ps] for k, ps in ports.items()}
 print(f"seconds until the server dropped each connection (None = still open after {a.limit:.0f} s): {res}")
 if a.expect == "on":
-    ok = all(t is not None and 170 <= t <= 200 for t in res["idle"]) and all(t is not None and 145 <= t <= 200 for t in res["dl"])
+    # 60.69 K1: idle = 120 + 0..59 s spread per connection + 4 x 15 s (+ poll; up to ~16 s of timer granularity at HZ 250)
+    ok = all(t is not None and 170 <= t <= 260 for t in res["idle"]) and all(t is not None and 145 <= t <= 200 for t in res["dl"])
 else:
     ok = all(t is None for v in res.values() for t in v)
 if a.pid and a.expect == "on":

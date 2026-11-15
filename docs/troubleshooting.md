@@ -89,7 +89,8 @@ On a small host this is often kernel TCP memory pressure. See
 
 ### Name lookups are slow when a name server is down
 
-The system resolver waits about 10 s per dead server. `--dns-own` (or `--dns-server`) gives up after 1-2 s.
+The system resolver waits about 10 s per dead server. `--dns-own` (or `--dns-server`) waits 1-2 s for each try, at most 3
+tries, so it gives up on a name after 6 s at most (4 to 6 s with the defaults of `/etc/resolv.conf`).
 The public preset sets `--dns-own`.
 
 ### A name resolves on the host but not through finalwisp
@@ -140,16 +141,8 @@ has it. The start output has one line for it, for example
   same connection.
 - Idle memory creeps up a little after load peaks (allocator retention, under 2 MiB in our longest tests). It resets
   on restart. Long soak tests found no leak.
-- When several thousand connections are accepted within a second or two and then stay idle, the server can reset
-  some of them after about 3 minutes although the clients are alive. This is in every release so far. The cause is
-  the TCP keepalive that finds dead peers (120 s idle, then 4 probes 15 s apart): connections that were accepted
-  together send their probes together, part of such a burst is lost on the way, and a connection whose 4 probes all
-  stay unanswered is closed (`--log-conns` shows `dead_peer`; the `dead_peers` counter does not count these). In our
-  tests between two 2-core hosts, 5,000 idle connections opened at once lost none, 10,000 lost 887, 20,000 lost
-  545 and 638 in two runs (about 10,000 of them arrived in the first seconds), and 20,000 opened over 60 seconds lost
-  none; on loopback, 30,000 at once lost 8,495 and 30,000 over 60 seconds none. In the
-  test with the slower arrival the probes left in groups about 4 seconds apart, so what counts is how many
-  connections arrive within a few seconds; the numbers depend on the hosts and the network between them. A
-  connection with any traffic is not affected. The case to expect is a restart of a large site whose idle tabs all
-  reconnect at once. `--no-keepalive` avoids it; the price is that a client that vanished without closing (power
-  loss, a NAT that dropped it) is no longer found while its connection is idle. A fix is planned for 1.3.1.
+- A client whose socket reports an error while it is paused or closing is logged as `client_close`; such a timeout
+  is not counted in `dead_peers`.
+- A client that vanished without closing (power loss, a NAT that dropped it) is found by TCP keepalive after 3 to 4
+  minutes of idle time. `--no-keepalive` turns this off; the price is that such a client is no longer found while its
+  connection is idle.

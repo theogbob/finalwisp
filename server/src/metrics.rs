@@ -129,7 +129,8 @@ stats! {
     shed_holder,
     /// clients reset (RST): level 3 without progress (l3_sweep) or a wsproxy backlog over pend_cap
     shed_client,
-    /// 70.02 clients reset as dead peers (no ACK for 150 s with output queued)
+    /// 70.02 clients reset as dead peers (no ACK for 150 s with output queued); v1.3.1 K2 and clients whose read or
+    /// write failed with a keepalive or retransmission timeout (ETIMEDOUT, EHOSTUNREACH)
     dead_peers,
     /// HTTP upgrade handshakes expired (HS_SWEEPS)
     hs_expired,
@@ -333,6 +334,11 @@ pub static UPSTREAM_DNS: OnceLock<Arc<crate::upstream::ProxyAddrs>> = OnceLock::
 /// Milliseconds since the first call (main calls it at startup).
 pub fn now_ms() -> u64 {
     EPOCH.get_or_init(Instant::now).elapsed().as_millis() as u64
+}
+
+/// now_ms at the instant `t` (a time read already, such as a worker's loop turn): no clock read
+pub fn ms_at(t: Instant) -> u64 {
+    t.saturating_duration_since(*EPOCH.get_or_init(Instant::now)).as_millis() as u64
 }
 
 /// One logfmt line: `finalwisp: ev=<ev> up=<s> ...`. Counters summed over the workers, the memory level and

@@ -44,7 +44,7 @@ impl Worker {
         let ev = (libc::EPOLLIN | libc::EPOLLRDHUP | libc::EPOLLET) as u32;
         if !ep_add(self.ep, h.fd, tok(K_LISTEN, PENDING0 + h.fd as u32, 0), ev) {
             unsafe { libc::close(h.fd) };
-            self.unload(None);
+            self.unload(None, true);
             if self.cfg.log_conns {
                 self.log_refused(h.peer, Why::ServerClose);
             }
@@ -64,7 +64,7 @@ impl Worker {
             net::linger_zero(fd);
         }
         unsafe { libc::close(fd) };
-        self.unload(None);
+        self.unload(None, true);
         if self.cfg.log_conns && why != Why::ClientClose {
             self.log_refused(p.peer, why);
         }

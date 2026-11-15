@@ -2,6 +2,40 @@
 # usage: python3 adversarial.py PORT [--tls]   (--tls: 20.13, the server runs with --tls-cert/--tls-key)
 import itertools, os, socket, ssl, struct, sys, time, base64
 
+# Shards: WST_CASES="k/n" (k = 1..n, n = 1..20) runs only the cases of shard k, against a server of its own; unset:
+# all cases, as before. A case is the text from its "# N." comment (or from a "#@ case N" line) to the next such
+# line; "#@ all" starts text that every shard runs (helpers and state that more than one case uses). The script
+# compiles its own text with the lines of the other shards' cases left empty (same line numbers, same order: a
+# case sees the same globals as in a full run). The cases of a shard: the longest case first, each to the shard
+# that has the fewest seconds so far. A new case needs its seconds here.
+CASE_SECS = {1: 0.1, 2: 0.1, 3: 0.1, 4: 0.1, 5: 0.3, 6: 0.8, 7: 0.1, 8: 1.3, 9: 2.1, 10: 1.1,
+             11: 1.4, 12: 1.2, 13: 4.6, 14: 4.6, 15: 1.6, 16: 40.1, 17: 14.1, 18: 3.1, 19: 1.6, 20: 0.1}  # each case alone on --threads 2 (16: 69 s with --no-prio), for the balance only
+WST_CASES = os.environ.get("WST_CASES")
+if WST_CASES is not None and "_shard_text" not in globals():
+    import re
+    def _shard_error(why):
+        print(f"adversarial.py: WST_CASES={WST_CASES!r}: {why}", file=sys.stderr); sys.exit(2)
+    _m = re.fullmatch(r"([0-9]{1,3})/([0-9]{1,3})", WST_CASES)
+    if not _m or not 1 <= int(_m[1]) <= int(_m[2]) <= len(CASE_SECS):
+        _shard_error(f"want k/n with 1 <= k <= n <= {len(CASE_SECS)}")
+    _load = [0.0] * int(_m[2]); _mine = set()
+    for _c in sorted(CASE_SECS, key=lambda c: (-CASE_SECS[c], c)):
+        _i = _load.index(min(_load)); _load[_i] += CASE_SECS[_c]
+        if _i == int(_m[1]) - 1: _mine.add(_c)
+    _lines = []; _case = None; _marked = set()  # _case None: text of every shard
+    for _l in open(__file__, encoding="utf-8").read().split("\n"):
+        _m = re.match(r"# ([0-9]+)\. |#@ case ([0-9]+)\b|#@ (all)\b|#@", _l)
+        if _m and _m.group(1, 2, 3) == (None, None, None):
+            _shard_error(f"unknown marker line {_l!r}")
+        if _m:
+            _case = None if _m[3] else int(_m[1] or _m[2]); _marked.add(_case)
+        _lines.append(_l if _case is None or _case in _mine else "")
+    if _marked - {None} != set(CASE_SECS):
+        _shard_error(f"the cases in the text {sorted(_marked - {None})} are not the cases of CASE_SECS")
+    _shard_text = "\n".join(_lines)
+    exec(compile(_shard_text, __file__, "exec"))  # ends with sys.exit() on the last line
+    sys.exit(2)
+
 PORT = int([a for a in sys.argv[1:] if not a.startswith("--")][0])
 TLS = "--tls" in sys.argv
 _ctx = ssl.create_default_context()
@@ -134,9 +168,11 @@ ok(d.startswith(b"HTTP/1.1 400"), "HTTP/1.0 upgrade -> 400")
 
 # 8. slow-reading client during a big verified download (client socket fills up again and again;
 #    catches lost wakeups when the server stops reading a target because the client is full)
+#@ all: the modules are used from here on; this pattern by the cases 8, 9, 10
 import threading, hashlib
 SRC_N = 32 << 20
 pattern = hashlib.sha256(b"seed").digest() * 32768  # 1 MiB
+#@ case 8
 srv = socket.socket(); srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 srv.bind(("127.0.0.1", 0)); srv.listen(4); SRC_PORT = srv.getsockname()[1]
 def source():
@@ -170,6 +206,7 @@ try:
                 digest.update(p[5:]); got += len(p) - 5
             elif p[0] == 0x04 and p[1:5] == b"\x07\x00\x00\x00":
                 closed_reason = p[5]
+        if closed_reason is not None: s.settimeout(0.5)  # 80.01: the loop's end condition holds; the last read waits 0.5 s, not 20 s (a reset in it still fails the script)
         d = s.recv(65536)
         if not d: break
         buf += d
@@ -342,12 +379,14 @@ def urgent_behind_bulk(window=5.0):
 dt, intact, n2 = urgent_behind_bulk()
 ok(dt is not None and dt < 3 and intact, f"20.25 urgent mark on a resumed target held open: all 64 KiB before the FIN (after {dt} s, got {n2}, intact {intact})")
 
+#@ case 9
 for total in (8 << 20, 24 << 20):
     got, reason, same = frozen_reader_download(total, 1.0)
     ok(got == total and reason == 2 and same, f"frozen-reader {total >> 20} MiB download completes (got {got >> 20} MiB, close {reason})")
 
 # 11. fragmented DATA messages back to back in one write (upload batching must not keep pointers
 #     into the reassembly buffer, which is freed and reused by the next fragmented message)
+#@ all: recv_wisp_data and the echo target are used by the cases 11, 13, 15, 19
 def recv_wisp_data(s, sid, want, timeout=5):
     buf = bytearray(); got = bytearray(); s.settimeout(timeout); end = time.time() + timeout
     try:
@@ -388,6 +427,7 @@ def echo_loop():
         threading.Thread(target=serve, daemon=True).start()
 threading.Thread(target=echo_loop, daemon=True).start()
 
+#@ case 11
 bad = 0
 for trial in range(20):
     s, h, rest = ws_connect()
@@ -409,6 +449,7 @@ ok(bad == 0, f"fragmented DATA + batching: echo intact in {20 - bad}/20 trials")
 
 # 12. DATA + WS close in one write while the target has just reset the connection (write error during
 #     teardown must not re-enter close_target and kill the worker)
+#@ all: the last line of the script closes rst_srv
 rst_srv = socket.socket(); rst_srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 rst_srv.bind(("127.0.0.1", 0)); rst_srv.listen(64); RST_PORT = rst_srv.getsockname()[1]
 def rst_loop():
@@ -421,6 +462,7 @@ def rst_loop():
         time.sleep(0.02)
         c.close()  # RST
 threading.Thread(target=rst_loop, daemon=True).start()
+#@ case 12
 for trial in range(40):
     try:
         s, h, rest = ws_connect()
@@ -452,7 +494,9 @@ ok(got1 == first and got2 == second, f"echo intact before and after idle buffer 
 # 14. 30.09: a client idle past two sweeps after a bulk download (splice pipe closed) downloads intact again
 src_srv = socket.socket(); src_srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 src_srv.bind(("127.0.0.1", 0)); src_srv.listen(4); SRC_PORT = src_srv.getsockname()[1]
+#@ all: this pattern is used by the cases 14, 15, 16
 pattern = bytes(range(256)) * 4096  # 1 MiB
+#@ case 14
 def src_loop():
     while True:
         try:
@@ -534,6 +578,8 @@ while time.time() < end and (bulk_close is None or any(len(got[k]) < len(small[k
             if sid == BSID: bulk_close = p[5]
         elif p[0] != 0x03:
             order_ok = False
+    if bulk_close is not None and all(len(got[k]) >= len(small[k]) for k in small):
+        s.settimeout(0.5)  # 80.01: the loop's end condition holds; the last read waits 0.5 s, not 10 s (a reset in it still fails the script)
     try:
         d = s.recv(4096)  # small sips: the server's send() calls are split often
     except socket.timeout:
@@ -772,6 +818,11 @@ data, closed = read_all(s)
 ok(b"\x88\x02\x03\xe8" in rest + data and b"\x88\x02\x03\xea" not in rest + data and closed,
    "v2 client CLOSE(0) during the handshake -> WS close 1000")
 
+#@ all
+if WST_CASES is not None:  # a shard has no next case that would find a server that its last case killed
+    try: _up = alive()
+    except OSError: _up = False
+    if not _up: ok(False, f"server answers at the end of shard {WST_CASES}")
 rst_srv.close(); echo_srv.close()
 
 print("ALL PASS" if not fails else f"{fails} FAILURES"); sys.exit(1 if fails else 0)

@@ -7,3 +7,10 @@ artifacts-run1
 target-tls
 coverage-*
 target-*
+# libFuzzer writes an artifact into the current directory when a run has no -artifact_prefix (one was committed by
+# accident, removed in 1cc7ab00); inputs worth keeping go to regress/<target>/
+/crash-*
+/leak-*
+/oom-*
+/timeout-*
+/slow-unit-*
