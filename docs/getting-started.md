@@ -16,13 +16,13 @@ finalwisp          # after the install below: serves ws://127.0.0.1:6001/
 ## Install
 
 ```sh
-V=v1.3.2
+V=v1.3.3
 curl -LO https://github.com/theogbob/finalwisp/releases/download/$V/finalwisp-$V-x86_64-linux.tar.gz
 curl -LO https://github.com/theogbob/finalwisp/releases/download/$V/SHA256SUMS
 tar -xzf finalwisp-$V-x86_64-linux.tar.gz
 sha256sum -c SHA256SUMS      # must print OK twice: the download, and the binary inside it
 sudo install -m 0755 finalwisp-$V-x86_64-linux/finalwisp /usr/local/bin/finalwisp
-finalwisp --version          # finalwisp 1.3.2
+finalwisp --version          # finalwisp 1.3.3
 ```
 
 finalwisp is one static binary for Linux on x86_64. It has no runtime dependencies and no minimum glibc version.

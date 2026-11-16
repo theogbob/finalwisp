@@ -20,6 +20,7 @@ pub(super) fn fd_cfg() -> Config {
         abort_close: true,
         splice: true,
         balance: false,
+        auto_balance: false,
         tfo: false,
         tls: None,
         udp: true,
@@ -84,16 +85,31 @@ pub(super) fn pump(w: &mut Worker, ms: i32) {
     w.reap_dead();
 }
 
-/// pump until `done` (at most 3 s)
+/// pump until `done`. A guard against a hang, not a time limit (30 s): it returns as soon as `done` holds. (It was 600
+/// pumps, about 3 s, and less when the pumps had events: on a loaded host a test failed at it with the work still
+/// coming.)
 pub(super) fn until(w: &mut Worker, what: &str, mut done: impl FnMut(&mut Worker) -> bool) {
-    for _ in 0..600 {
-        if done(w) {
-            return;
-        }
+    let end_at = Instant::now() + UNTIL;
+    while !done(w) {
+        assert!(Instant::now() < end_at, "not reached in {} s: {what}", UNTIL.as_secs());
         pump(w, 5);
     }
-    panic!("not reached in 3 s: {what}");
 }
+
+/// [`until`] for a count: `get(w) == want`, and a failure names the last count seen
+pub(super) fn until_eq(w: &mut Worker, what: &str, want: usize, mut get: impl FnMut(&mut Worker) -> usize) {
+    let end_at = Instant::now() + UNTIL;
+    loop {
+        let seen = get(w);
+        if seen == want {
+            return;
+        }
+        assert!(Instant::now() < end_at, "not reached in {} s: {what} (last seen {seen}, want {want})", UNTIL.as_secs());
+        pump(w, 5);
+    }
+}
+
+const UNTIL: Duration = Duration::from_secs(30);
 
 pub(super) fn fds(w: &Worker) -> u64 {
     assert_eq!(w.stats.fds.get(), w.fds_held());

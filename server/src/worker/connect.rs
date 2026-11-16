@@ -254,6 +254,11 @@ impl Worker {
             self.fd_recv(); // 60.57 A2 the fd came with its unit of the sender's allowance
             self.take(h); // load (and the per-IP key, if any) was counted by the sender; 60.34 PROXY: wait for the header
         }
+        if self.inbox.mig.cmd.load(Relaxed) != 0 {
+            self.mig_cmd(); // 60.64 --auto-balance: a connection arrives, or the observer asks (before the stop scan)
+        }
+        #[cfg(feature = "pooltest")]
+        self.mig_force_at(super::migrate::FORCE_EVERY.load(Relaxed), false); // 60.64 test hook: where a request is handled
         let stop = self.inbox.stop.load(Relaxed);
         if stop != 0 && (stop != self.stop_seen || Instant::now() >= self.stop_scan_at) {
             // 60.12 (main wakes the inbox every 100 ms while it drains; DNS answers wake it too: scan at most every 100 ms)

@@ -121,6 +121,27 @@ pub fn bytes_received(fd: RawFd) -> Option<u64> {
     (r == 0 && len as usize >= 136).then(|| u64::from_ne_bytes(b[128..136].try_into().unwrap()))
 }
 
+/// 60.64 TCP_INFO: (bytes acked + bytes received, data segments in + out; tcpi_data_segs_in at 152, _out at 156,
+/// Linux 4.6+) of a client socket: what a connection moved, read from counters the kernel keeps anyway. None = not
+/// TCP or an older kernel.
+pub fn traffic(fd: RawFd) -> Option<(u64, u32)> {
+    let mut b = [0u8; 160];
+    let mut len = b.len() as libc::socklen_t;
+    let r = unsafe { libc::getsockopt(fd, libc::IPPROTO_TCP, libc::TCP_INFO, b.as_mut_ptr() as *mut _, &mut len) };
+    let u = |o: usize| u64::from_ne_bytes(b[o..o + 8].try_into().unwrap());
+    let w = |o: usize| u32::from_ne_bytes(b[o..o + 4].try_into().unwrap());
+    (r == 0 && len as usize >= 160).then(|| (u(120).wrapping_add(u(128)), w(152).wrapping_add(w(156))))
+}
+
+/// 60.74 SO_COOKIE (Linux 4.14+): the socket's number, unique while the kernel runs; it stays with the socket when a
+/// connection moves to another worker (the observer pairs one connection's censuses by it). None = not available.
+pub fn cookie(fd: RawFd) -> Option<u64> {
+    let mut v = 0u64;
+    let mut len = size_of::<u64>() as libc::socklen_t;
+    let r = unsafe { libc::getsockopt(fd, libc::SOL_SOCKET, libc::SO_COOKIE, &mut v as *mut u64 as *mut _, &mut len) };
+    (r == 0 && len as usize == size_of::<u64>() && v != 0).then_some(v)
+}
+
 /// 60.24 TCP_INFO (tcpi_bytes_received at 128, tcpi_bytes_acked at 120; Linux 4.1+): the connection's wire bytes in
 /// and out (for --log-conns at close), without the peer's FIN. None = not TCP or an older kernel.
 pub fn bytes_rx_tx(fd: RawFd) -> Option<(u64, u64)> {
@@ -1152,6 +1173,8 @@ pub struct Inbox {
     pub stop: std::sync::atomic::AtomicU8,
     /// 60.12 set by the worker once its listener is closed (every connection it accepted is in `load` by then)
     pub stopped: std::sync::atomic::AtomicBool,
+    /// 60.64 --auto-balance: requests to this worker, its answers, connections on their way to it (all zero when off)
+    pub mig: crate::worker::MigBox,
 }
 pub const STOP_DRAIN: u8 = 1;
 pub const STOP_CLOSE: u8 = 2;
@@ -1168,6 +1191,7 @@ impl Inbox {
             dns_live: Default::default(),
             stop: Default::default(),
             stopped: Default::default(),
+            mig: Default::default(),
         })
     }
     pub fn wake(&self) {

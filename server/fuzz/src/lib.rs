@@ -2,6 +2,8 @@
 //! server's own files (#[path]), unchanged; worker/mod.rs adds `fuzz_hooks` under --cfg fuzzing only.
 #![allow(dead_code, unused_imports, clippy::all)]
 #![feature(linkage)] // 70.27 weak LSan symbols (pool.rs lsan, lsan_pool_check)
+#[path = "../../src/balance.rs"]
+pub mod balance; // 60.64
 #[path = "../../src/bounds.rs"]
 pub mod bounds; // 60.63
 #[path = "../../src/cli.rs"]

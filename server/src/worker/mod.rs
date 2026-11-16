@@ -33,6 +33,7 @@ mod input;
 mod ktls;
 mod levels;
 mod meter;
+mod migrate; // 60.64
 mod pace;
 mod proxy;
 mod rcvlock;
@@ -52,6 +53,12 @@ use ktls::{client_hello, starve_delay, starve_step, Starve};
 #[cfg(test)]
 use ktls::{ku_after_peer_update, starve_room};
 use levels::{free_drained, pend_keep};
+#[cfg(feature = "pooltest")]
+pub use migrate::FORCE_EVERY;
+#[cfg(test)]
+pub use migrate::R_NOTED;
+pub use migrate::{answer, request, Census, MigBox};
+pub use migrate::{M_BACK, M_CENSUS, M_END, M_IMPORT, M_MOVE, R_BUSY, R_GONE, R_MOVED, R_NONE};
 use streamlog::SWhy;
 pub use target::LAZY_CAP;
 use target::{tcp_only_local, TState, Target, LOCAL_UNIX, NOT_LISTED};
@@ -148,6 +155,9 @@ pub struct Config {
     /// 60.39 --stream-rate-per-dest / --stream-rate-per-dest-minute (None = off): the process-wide per-destination
     /// table, taken once per stream in start_connect (or proxy_name for socks5h names)
     pub dest_rate: Option<Box<crate::destrate::DestTable>>,
+    /// 60.64 --auto-balance (default off): the observer thread (crate::balance) may ask a thread-bound worker
+    /// to hand one busy connection to an idle one (worker/migrate.rs); a worker tells it of a busy sweep period
+    pub auto_balance: bool,
 }
 
 // ---- tuning (deliberate constants; benchmark before changing)
@@ -314,6 +324,7 @@ impl<T> Slab<T> {
         mem::SLAB_UNTOUCHED.fetch_add(untouched as isize, Relaxed);
         Slab { slots: Vec::with_capacity(n), free: Vec::new(), untouched }
     }
+    #[inline(always)] // 60.64 (adopt and new_target keep their code now that a moved connection is a second caller)
     fn insert(&mut self, v: T) -> (u32, u32) {
         if let Some(i) = self.free.pop() {
             let s = &mut self.slots[i as usize];
@@ -496,6 +507,8 @@ pub struct Worker {
     /// 60.63 section E (crate::bounds): None = no option of it is on. Beside the fd fields: its code runs only on the
     /// out-of-line side of the fd count (worker/bounds.rs)
     bd: Option<Box<bounds::Wb>>,
+    /// 60.64 --auto-balance: this worker's part of a move (None until the first request; worker/migrate.rs)
+    mig: Option<Box<migrate::Mig>>,
 }
 
 #[must_use]
@@ -644,6 +657,7 @@ impl Worker {
             sfds: Vec::new(),
             fd_pool: 0,
             bd: crate::bounds::global().map(bounds::Wb::new),
+            mig: None,
         })
     }
 
@@ -723,6 +737,8 @@ impl Worker {
                 self.accept_all();
             }
             self.reap_dead();
+            #[cfg(feature = "pooltest")]
+            self.mig_force(migrate::FORCE_EVERY.load(Relaxed)); // 60.64 test hook
             if swept {
                 // after the sweep and reap_dead, which free idle and closed clients' buffers (into the pool's dirty
                 // set); 60.09 M4b / 70.25: release only what the dirty set did not need since the last sweep

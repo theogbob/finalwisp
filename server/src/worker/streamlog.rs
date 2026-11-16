@@ -124,6 +124,24 @@ pub(super) struct Closed {
 const REFUSED_PER_SEC: u32 = 20;
 
 impl Worker {
+    /// 60.64 stream `ti` leaves this worker: its entry, stamped with its connection's origin (connlog::seq_origin) ...
+    pub(super) fn slog_out(&mut self, ti: u32) -> Option<StreamLog> {
+        let mut l = self.streamlog.get_mut(ti as usize).and_then(Option::take)?;
+        l.seq = connlog::seq_stamp(l.seq, self.idx);
+        Some(l)
+    }
+
+    /// ... and arrives here in slot `ti`
+    pub(super) fn slog_in(&mut self, ti: u32, l: Option<StreamLog>) {
+        let ui = ti as usize;
+        if l.is_some() && self.streamlog.len() <= ui {
+            self.streamlog.resize_with(ui + 1, || None);
+        }
+        if let Some(e) = self.streamlog.get_mut(ui) {
+            *e = l;
+        }
+    }
+
     /// Target `ti`'s entry; None when the log is off (one length check)
     #[inline]
     pub(super) fn slog(&mut self, ti: u32) -> Option<&mut StreamLog> {

@@ -48,6 +48,25 @@ pub(super) struct LockSt {
 }
 
 impl Worker {
+    /// 60.64 stream `ti` (generation `tg`, the token's 30 bits) leaves this worker: its entry, if it has one, and
+    /// whether no caps episode ran here since its lock (`caps` is this worker's counter) ...
+    pub(super) fn rcvlock_out(&mut self, ti: u32, tg: u32) -> Option<(LockSt, bool)> {
+        let caps = self.stats.cap_apply.get() as u32;
+        let s = self.rcvlock.get(ti as usize).copied().filter(|s| s.g1 == tg.wrapping_add(1))?;
+        Some((s, s.caps == caps))
+    }
+
+    /// ... and arrives here as (`ti`, `tg`): the same statement about this worker's counter
+    pub(super) fn rcvlock_in(&mut self, ti: u32, tg: u32, (mut s, same): (LockSt, bool)) {
+        let (caps, i) = (self.stats.cap_apply.get() as u32, ti as usize);
+        if self.rcvlock.len() <= i {
+            self.rcvlock.resize(i + 1, LockSt { g1: 0, up: 0, at: self.now, caps: 0, state: UNLOCKED });
+        }
+        s.g1 = tg.wrapping_add(1);
+        s.caps = if same { caps } else { caps.wrapping_sub(1) };
+        self.rcvlock[i] = s;
+    }
+
     /// Worker::resume after read_target of an Open TCP target (Config::park_rcvlock != 0): parked again = lock a
     /// download-only stream's receive buffer; not parked = lift our lock
     #[inline(never)]

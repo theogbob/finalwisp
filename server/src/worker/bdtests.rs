@@ -1,7 +1,7 @@
 //! 60.63 worker tests for section E (crate::bounds, worker/bounds.rs). Each test drives a real Worker through its own
 //! epoll (the helpers of fdtests.rs); the host state is set by hand (Bounds::set_state), as the guard thread would.
 use super::super::*;
-use super::fd::{client_with, closed_with, connect, drain, fd_cfg, fds, pump, rig, until, wisp};
+use super::fd::{client_with, closed_with, connect, drain, fd_cfg, fds, pump, rig, until, until_eq, wisp};
 use crate::bounds::{
     self as bd, Bounds, TcpForm, Unread, OPT_DEAD, OPT_PORT, OPT_TCPMEM, OPT_UNREAD, ST_PT_BUSY, ST_PT_SHORT, ST_TM_SHARE,
 };
@@ -89,7 +89,7 @@ fn streams(w: &mut Worker, c: &mut TcpStream, sid: u32, n: u32, l: &TcpListener)
     for s in sid..sid + n {
         c.write_all(&connect(s, false, l.local_addr().unwrap().port())).unwrap();
     }
-    until(w, "the streams are open", |w| open_streams(w) == want);
+    until_eq(w, "the streams are open", want, |w| open_streams(w));
     (0..n)
         .map(|_| {
             let t = l.accept().unwrap().0;
@@ -105,7 +105,7 @@ fn park(w: &mut Worker, targets: &mut [TcpStream]) {
     let want = unread(w) + targets.len();
     let mut left = vec![256usize << 10; targets.len()];
     let chunk = [7u8; 65536];
-    until(w, "the downloads are parked on the client's output", |w| {
+    until_eq(w, "the downloads are parked on the client's output", want, |w| {
         for (t, l) in targets.iter_mut().zip(left.iter_mut()) {
             if *l > 0 {
                 if let Ok(n) = t.write(&chunk[..chunk.len().min(*l)]) {
@@ -113,7 +113,7 @@ fn park(w: &mut Worker, targets: &mut [TcpStream]) {
                 }
             }
         }
-        unread(w) == want
+        unread(w)
     });
 }
 

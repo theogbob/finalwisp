@@ -1,6 +1,7 @@
 //! 20.01 finalwisp — entry point. See note 10.01 and the roadmap (60.01).
 //! unsafe (60.16): blocks without their own SAFETY comment are plain libc calls whose pointer arguments come from a
 //! live local or slice with the length taken from the same value (or are plain integers); no pointer outlives the call.
+mod balance; // 60.64
 mod bounds; // 60.63
 mod cli;
 mod clientip;
@@ -1155,7 +1156,8 @@ fn main() {
         abort_close: o.abort_close,
         splice: paced_client.0, // 60.30 C10a (60.18 #17): splice off with a download cap
         balance: o.balance,
-        tfo: o.tfo && upstream.is_none(), // 60.27 C6 no TFO to the proxy
+        auto_balance: o.auto_balance && o.threads > 1, // 60.64 (one worker: nowhere to move to)
+        tfo: o.tfo && upstream.is_none(),              // 60.27 C6 no TFO to the proxy
         keepalive: o.keepalive,
         tls,
         udp: udp_on,
@@ -1261,15 +1263,30 @@ fn main() {
     } else if o.stream_pool {
         fdg.set_marks(fdgate::MARK_POOL); // 60.72 the pool needs no readable open-file limit
     }
+    let mut clocks = Vec::new(); // 60.64
     for (i, w) in workers.into_iter().enumerate() {
         // detached: the workers run forever (a panic aborts the process, panic = "abort")
-        std::thread::Builder::new()
+        let h = std::thread::Builder::new()
             .name(format!("w{i}"))
             .spawn(move || {
                 mem::cache_on(); // 70.25 the pool for this worker (its dirty set is trimmed by each idle sweep)
                 w.run()
             })
             .unwrap();
+        if cfg.auto_balance {
+            clocks.extend(balance::cpu_clock(&h));
+        }
+    }
+    if cfg.auto_balance {
+        if clocks.len() == cfg.threads {
+            balance::start(peers.clone(), clocks); // 60.64 the observer (asleep until a worker tells it of a busy period)
+        } else {
+            warn("--auto-balance is not in effect: a worker thread's CPU clock is not readable");
+        }
+    }
+    #[cfg(feature = "pooltest")]
+    if let Some(n) = std::env::var("FW_FORCE_MOVE").ok().and_then(|v| v.parse::<u32>().ok()) {
+        worker::FORCE_EVERY.store(n, std::sync::atomic::Ordering::Relaxed); // 60.64 test hook (never in a release)
     }
     if let Some(b) = &bd {
         bounds::start(b.clone()); // 60.63

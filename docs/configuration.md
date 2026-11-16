@@ -62,7 +62,7 @@ Before the topics: [how options are read](#how-options-are-read), the [config fi
 | `--print-preset` | `NAME` |  | Print the preset's settings on stdout and exit with status 0. See [presets](#presets). |
 | `--show-config` |  |  | Check the options, print every setting in effect with the layer that set it and what this host allows, then exit. Nothing is started. |
 | `--help` | `[TOPIC]` |  | Print a short overview and exit with status 0. With a topic (the section names of this page, or `all`): the options of that topic. Short form: `-h`. |
-| `--version` |  |  | Print the version (`finalwisp 1.3.2`) and exit. Short form: `-V`. |
+| `--version` |  |  | Print the version (`finalwisp 1.3.3`) and exit. Short form: `-V`. |
 
 ## Config file
 
@@ -792,6 +792,7 @@ Leave these at the default unless a problem points at one of them.
 | `--graceful-close` |  | reset | Close a finished target connection with FIN instead of a TCP reset when the client closes the stream. The reset is much faster under connection churn and leaves no `TIME_WAIT` sockets behind. |
 | `--no-splice` |  | splice on | Copy downloads through user space instead of the kernel's zero-copy `splice`. A diagnostic switch: the one case where it may help is far clients behind a reverse proxy on the same small host. [Details](#--no-splice). |
 | `--balance` |  | off | Hand each new connection to the least busy thread instead of letting the kernel choose. Helps a few busy long-lived connections on big machines (4-11 % on 36-72 threads) and costs 1-7 % when many short connections come and go. |
+| `--auto-balance` |  | off | When one thread is fully busy with two or more busy connections while another thread is idle, move one of those connections to the idle thread for a trial of about 2.5 seconds: measure, move, measure, move back, measure. The move is kept only if the server as a whole carried more bytes or more packets with it than before and after it, and less of neither. When it helps: a host with many cores and many short connections (in one test, 9% more connections per second with 8 clients of 32 short streams each on 16 threads). On a host with two cores it finds nothing to move. On a host with up to 4 worker threads it checks less and less often while it finds nothing to do (every 5 seconds, doubling up to every 160 seconds); with more threads it keeps watching. No effect on light traffic or when every thread is busy. Not seen: a process on the same host that loses CPU without it showing in this server's traffic. Counted as `moved_conns`, `moved_back` and `moved_reset` (a connection the new thread could not take over, which is then closed); the metrics line also has `balance_naps` (pauses so far) and `balance_nap_s` (the current pause in seconds, 0: watching; always 0 with more than 4 threads). |
 | `--no-tfo` |  | TFO on | Do not use TCP Fast Open to targets. Try it if a middlebox drops SYN packets that carry data. |
 | `--no-keepalive` |  | on | Turn off dead-peer detection on clients and targets (TCP keepalive). With it on, an idle dead peer is closed after 3 to 4 minutes. |
 | `--no-credit-v2` |  | credit v2 on | Turn off the upload credit scheme that pings the client after a CONTINUE. A compatibility fallback; leave it on. |

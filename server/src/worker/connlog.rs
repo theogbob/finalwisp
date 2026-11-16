@@ -76,6 +76,24 @@ pub(super) struct ConnLog {
     pub(super) via: Option<IpAddr>,
 }
 
+/// 60.64 a cid is `worker:sequence` of the worker that accepted the connection. A connection that moves to another
+/// worker (--auto-balance) carries that worker's index + 1 in the bits above SEQ_BITS of its sequence number; 0
+/// there = it never moved (the worker that writes the line is its origin).
+const SEQ_BITS: u32 = 48;
+pub(super) fn seq_origin(seq: u64, me: usize) -> (usize, u64) {
+    match seq >> SEQ_BITS {
+        0 => (me, seq),
+        w => (w as usize - 1, seq & ((1 << SEQ_BITS) - 1)),
+    }
+}
+pub(super) fn seq_stamp(seq: u64, me: usize) -> u64 {
+    if seq >> SEQ_BITS == 0 {
+        seq | ((me as u64 + 1) << SEQ_BITS)
+    } else {
+        seq
+    }
+}
+
 /// Client `ci`'s entry; None when the log is off (one length check)
 pub(super) fn entry(log: &mut [Option<ConnLog>], ci: u32) -> Option<&mut ConnLog> {
     log.get_mut(ci as usize).and_then(Option::as_mut)
@@ -124,6 +142,24 @@ const REFUSED_PER_SEC: u32 = 20;
 
 impl Worker {
     /// adopt (with --log-conns or --log-streams): the entry for slot `i`, and `ev=conn_open` at debug (--log-conns)
+    /// 60.64 client `ci` leaves this worker: its entry, stamped with its origin ...
+    pub(super) fn log_out(&mut self, ci: u32) -> Option<ConnLog> {
+        let mut l = self.connlog.get_mut(ci as usize).and_then(Option::take)?;
+        l.seq = seq_stamp(l.seq, self.idx);
+        Some(l)
+    }
+
+    /// ... and arrives here in slot `ci` (None: the log is off; the slot's old entry goes either way)
+    pub(super) fn log_in(&mut self, ci: u32, l: Option<ConnLog>) {
+        let ui = ci as usize;
+        if l.is_some() && self.connlog.len() <= ui {
+            self.connlog.resize_with(ui + 1, || None);
+        }
+        if let Some(e) = self.connlog.get_mut(ui) {
+            *e = l;
+        }
+    }
+
     pub(super) fn log_open(&mut self, i: u32, tls: bool, peer: Option<IpAddr>) {
         let ui = i as usize;
         if self.connlog.len() <= ui {
@@ -222,7 +258,9 @@ impl Worker {
         logs::ts(b);
         let _ = write!(b, " w={}", self.idx);
         if let Some(s) = seq {
-            let _ = write!(b, " cid={}:{s}", self.idx);
+            // 60.64 a connection that moved keeps the cid of the worker that accepted it (seq_origin)
+            let (w, s) = seq_origin(s, self.idx);
+            let _ = write!(b, " cid={w}:{s}");
         }
         b.extend_from_slice(b" ip=");
         match ip {

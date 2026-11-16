@@ -13,7 +13,7 @@
 use finalwisp_fuzz::{cli, ui};
 use libfuzzer_sys::fuzz_target;
 
-const FLAGS: [&str; 114] = [
+const FLAGS: [&str; 115] = [
     "--log-level", // 60.24 C4 (missing here since C4/C5)
     "--log-conns",
     "--log-streams",    // 60.35
@@ -128,6 +128,7 @@ const FLAGS: [&str; 114] = [
     "--no-stream-pool",
     "--unread-close", // 60.73
     "--no-unread-close",
+    "--auto-balance", // 60.64 (last: the selectors of the entries above keep their flags)
 ];
 // 1- to 4-byte selector tokens reach 4 x 31 entries
 const _: () = assert!(FLAGS.len() <= 124);

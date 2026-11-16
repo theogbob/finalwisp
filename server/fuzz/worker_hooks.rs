@@ -40,6 +40,10 @@ pub struct Harness {
     late: Vec<net::DnsResp>, // 70.10 final answers held back one resolver() call
     evs: Vec<libc::epoll_event>,
     pub tls: bool,
+    /// 60.64 FW_FUZZ_MOVE=N: every N turns a connection at rest leaves the worker and comes back (Worker::mig_force);
+    /// `moved` maps the slot a Conn was opened with (or last had) to the one it has now
+    force: u32,
+    moved: HashMap<(u32, u32), (u32, u32)>,
 }
 
 fn fixed_key() -> [u8; 32] {
@@ -136,6 +140,7 @@ fn config(v: u8) -> Option<Config> {
         abort_close: true,
         splice: v != 2,
         balance: false,
+        auto_balance: false,
         tfo: false,
         tls,
         udp: v != 2,
@@ -246,7 +251,17 @@ impl Harness {
         let w = Worker::new(Arc::new(cfg), tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).ok()?;
         mem::cache_on(); // 70.25: the fuzzing thread is a pool thread
         lsan_pool_check();
-        Some(Harness { w, dns_rx: rx, late: Vec::new(), evs: vec![libc::epoll_event { events: 0, u64: 0 }; 256], tls })
+        static FORCE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+        let force = *FORCE.get_or_init(|| std::env::var("FW_FUZZ_MOVE").ok().and_then(|v| v.parse().ok()).unwrap_or(0));
+        Some(Harness {
+            w,
+            dns_rx: rx,
+            late: Vec::new(),
+            evs: vec![libc::epoll_event { events: 0, u64: 0 }; 256],
+            tls,
+            force,
+            moved: HashMap::new(),
+        })
     }
 
     /// Memory pressure level for the next turns (as mem's sampler publishes it).
@@ -499,8 +514,18 @@ impl Harness {
         }
     }
 
+    /// 60.64 the slot and generation `c` has now (it may have moved: FW_FUZZ_MOVE)
+    fn at(&self, c: &Conn) -> (u32, u32) {
+        let mut k = (c.ci, c.g);
+        while let Some(&n) = self.moved.get(&k) {
+            k = n;
+        }
+        k
+    }
+
     pub fn alive(&mut self, c: &Conn) -> bool {
-        self.w.clients.get(c.ci, c.g).is_some_and(|cl| !cl.dead)
+        let (ci, g) = self.at(c);
+        self.w.clients.get(ci, g).is_some_and(|cl| !cl.dead)
     }
 
     /// One event-loop turn, in Worker::run order, without blocking (epoll_wait timeout 0). The fake
@@ -539,6 +564,12 @@ impl Harness {
         let swept = self.w.idle_sweep(self.w.now);
         self.w.tls_timeouts();
         self.w.reap_dead();
+        if self.force > 0 {
+            // 60.64 forced moves: every list and count of the connection is rebuilt under new slots
+            if let Some((oi, og, ni, ng)) = self.w.mig_force(self.force) {
+                self.moved.insert((oi, og), (ni, ng));
+            }
+        }
         if swept {
             crate::pool::sweep();
         }
@@ -690,7 +721,8 @@ impl Harness {
     /// Server-side invariants for a live client.
     pub fn check(&mut self, c: &Conn) {
         let sent = c.sent;
-        let Some(cl) = self.w.clients.get(c.ci, c.g) else { return };
+        let (ci, g) = self.at(c);
+        let Some(cl) = self.w.clients.get(ci, g) else { return };
         if cl.dead {
             return;
         }
@@ -726,7 +758,8 @@ impl Harness {
             self.turn(false);
         }
         if self.alive(&c) {
-            self.w.close_client(c.ci, super::Why::ClientClose); // paused/mpaused clients do not read their EOF: the idle sweep's job
+            let (ci, _) = self.at(&c);
+            self.w.close_client(ci, super::Why::ClientClose); // paused/mpaused clients do not read their EOF: the idle sweep's job
         }
         for _ in 0..3 {
             self.turn(false); // DNS answers for closed targets are consumed (dns_inflight)
@@ -743,6 +776,7 @@ impl Harness {
         let live_c = self.w.clients.slots.len() - self.w.clients.free.len();
         let live_t = self.w.targets.slots.len() - self.w.targets.free.len();
         assert_eq!(live_c, 0, "client slot left after close");
+        self.moved.clear(); // 60.64
         assert_eq!(live_t, 0, "target slot left after its client closed");
         // fd leak check every 1024 connections (the 1st sample is the baseline: sink, epoll, pipes)
         static CLOSES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);

@@ -220,7 +220,7 @@ impl Worker {
     }
 
     /// 60.20 C2/C3b slot `i`'s peer (`peers_of` is used only when C2/C3b or --log-conns are on; close_client takes the entry).
-    fn set_peer(&mut self, i: u32, p: Option<clientip::Peer>) {
+    pub(super) fn set_peer(&mut self, i: u32, p: Option<clientip::Peer>) {
         let i = i as usize;
         if self.peers_of.len() <= i {
             self.peers_of.resize_with(i + 1, || None);
@@ -476,6 +476,9 @@ impl Worker {
         self.unload(key, slot);
         let c = self.clients.at(ci);
         c.dead = true;
+        if let Some(m) = self.mig.as_deref_mut() {
+            m.closed_tx += c.tx_bytes; // 60.74 --auto-balance: a census counts a closed client's bytes too
+        }
         if c.ktls_on && !c.notified {
             tls::send_close_notify(c.fd); // 20.17: best effort, MSG_DONTWAIT (review r1: unless already sent)
         }

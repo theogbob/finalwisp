@@ -197,6 +197,7 @@ pub const OPTIONS: &[OptSpec] = &[
     o("--no-stream-pool", "", "memory", "", "undo --stream-pool", "Undo --stream-pool of a preset, a config file or earlier on the command line."),
     o("--unread-close", "", "limits", "off", "reset a client that stopped reading its downloads", "While the host's TCP memory is short (from 3/4 of net.ipv4.tcp_mem's maximum until below 11/16; in a container that cannot read it, while the kernel reports TCP memory pressure), reset a connection that holds a download its client does not read: the client's receive window has been 0 and it took no data for 600 seconds (10 minutes). A reset frees the kernel memory of all its streams. Nothing is reset while the host has TCP memory to spare. A slow reader can take no data for minutes while its buffer drains (in our tests up to 187 s at 2 KiB per second with the kernel's default buffer, 346 s with an 8 MiB buffer): one that reads slower, or has a larger buffer, can be reset under pressure, as can a client paused for 10 minutes or more (a phone app in the background, a frozen browser tab); it connects again. Counter close_unread. Needs Linux 5.4 or later. Off unless asked for: the public preset does not set it (a later release may)."),
     o("--no-unread-close", "", "limits", "", "undo --unread-close", "Undo --unread-close of a preset, a config file or earlier on the command line."),
+    o("--auto-balance", "", "advanced", "off", "try a busy connection on an idle thread", "When one thread is fully busy with two or more busy connections while another thread is idle, move one of those connections to the idle thread for a trial of about 2.5 seconds: measure, move, measure, move back, measure. The move is kept only if the server as a whole carried more bytes or more packets with it than before and after it, and less of neither. It can help on a host with many cores and many short connections; on a host with two cores it finds nothing to move. On a host with up to 4 worker threads it checks less and less often while it finds nothing to do (every 5 seconds, doubling up to every 160 seconds). No effect on light traffic or when every thread is busy. A process that shares the host and loses CPU without it showing in this server's traffic is not seen."),
 ];
 
 /// Longest --connect-timeout: `Instant + Duration` panics on overflow, so a huge value is refused here.
@@ -218,6 +219,7 @@ pub struct Opts {
     pub abort_close: bool,
     pub splice: bool,
     pub balance: bool,
+    pub auto_balance: bool, // 60.74 (opt-in; 60.64 prototype): a connection moves from a thread-bound worker to an idle one, kept by the A/B/A total
     pub tfo: bool,
     pub keepalive: bool, // 70.02 dead-peer detection on client sockets (worker Config::keepalive)
     pub udp: bool,
@@ -1111,6 +1113,7 @@ fn parse_args_of<I: IntoIterator<Item = String>>(args: I, threads: usize, whole:
         abort_close: true,
         splice: true,
         balance: false,
+        auto_balance: false, // 60.64 opt-in
         tfo: true,
         keepalive: true,
         udp: true,
@@ -1200,6 +1203,7 @@ fn parse_args_of<I: IntoIterator<Item = String>>(args: I, threads: usize, whole:
             "--graceful-close" => o.abort_close = false,
             "--no-splice" => o.splice = false,
             "--balance" => o.balance = true,
+            "--auto-balance" => o.auto_balance = true, // 60.64 opt-in
             "--no-tfo" => o.tfo = false,
             "--no-keepalive" => o.keepalive = false,
             "--no-udp" => o.udp = false,
@@ -1498,6 +1502,7 @@ mod tests {
         assert!(!parse("").unwrap().tcpmem_adapt && parse("--tcpmem-adapt").unwrap().tcpmem_adapt);
         assert!(parse("").unwrap().credit_pace && !parse("--no-credit-pace").unwrap().credit_pace); // 60.42 default on
         assert!(!parse("").unwrap().park_rcvlock && parse("--park-rcvlock").unwrap().park_rcvlock); // 60.47 opt-in
+        assert!(!parse("").unwrap().auto_balance && parse("--auto-balance").unwrap().auto_balance); // 60.64 opt-in
         assert!(parse("").unwrap().adaptive_splice && !parse("--no-adaptive-splice").unwrap().adaptive_splice); // 60.51 default on
         assert!(parse("--no-adaptive-splice --adaptive-splice").unwrap().adaptive_splice); // (v1.2.0 spelling still accepted)
 

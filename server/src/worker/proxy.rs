@@ -33,6 +33,9 @@ impl Worker {
     /// A connection this worker owns (load counted): a PROXY listener's waits for its header, the rest is adopted.
     /// Called by route (accepted here) and inbox_ready (handed over).
     pub(super) fn take(&mut self, h: net::Handoff) {
+        if self.cfg.auto_balance {
+            crate::balance::hot(); // 60.64 a new connection: the observer watches the workers for the next ticks
+        }
         if h.kind & net::L_PROXY != 0 {
             self.pending_add(h);
         } else {

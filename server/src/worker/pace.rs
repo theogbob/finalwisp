@@ -29,6 +29,21 @@ pub(super) const PACE_HOLD: u8 = 1;
 pub(super) const PACE_RELEASED: u8 = 2;
 
 impl Worker {
+    /// 60.64 stream `ti` (generation `tg`, the token's 30 bits) leaves this worker: its entry, if it has one ...
+    pub(super) fn pace_out(&mut self, ti: u32, tg: u32) -> Option<PaceSt> {
+        self.cpace_st.get(ti as usize).copied().filter(|s| s.g1 == tg.wrapping_add(1))
+    }
+
+    /// ... and arrives here as (`ti`, `tg`)
+    pub(super) fn pace_in(&mut self, ti: u32, tg: u32, mut s: PaceSt) {
+        let i = ti as usize;
+        if self.cpace_st.len() <= i {
+            self.cpace_st.resize(i + 1, PaceSt::default());
+        }
+        s.g1 = tg.wrapping_add(1);
+        self.cpace_st[i] = s;
+    }
+
     /// at a due grant of TCP stream `ti`: PACE_HOLD = hold it (its target is parked; pace_resume re-decides it),
     /// PACE_RELEASED = grant, re-decided by pace_resume after a hold (the client ran dry because of us: credit v2 must
     /// not count it as starvation, which would grow the window, review r1 P2), PACE_GO = grant

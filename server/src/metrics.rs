@@ -304,6 +304,13 @@ stats! {
     /// 60.73 --unread-close: connections reset because their client did not read its downloads (receive window 0, no
     /// data taken for 600 s) while the host's TCP memory was short
     close_unread,
+    /// 60.64 --auto-balance: connections handed from a thread-bound worker to an idle one (the first move of a trial)
+    moved_conns,
+    /// 60.74 --auto-balance: the later moves of a trial (back to the thread-bound worker; and, for a kept trial, to the
+    /// idle one again)
+    moved_back,
+    /// 60.64 --auto-balance: connections reset because the worker they moved to could not register their sockets
+    moved_reset,
 }
 
 impl Stats {
@@ -412,6 +419,10 @@ pub fn line(ev: &str, stats: &[Arc<Stats>], peers: &[Arc<Inbox>]) -> String {
     if let Some(a) = UPSTREAM_DNS.get() {
         // 60.32 C6 the upstream-dns thread: failed refreshes (the old list stayed), seconds since the last good answer
         s += &format!(" upstream_dns_fail={} upstream_dns_age_s={}", a.fails.load(Relaxed), a.age_ms(now) / 1000);
+    }
+    if crate::balance::running() {
+        // 60.74 --auto-balance: the observer's naps (nothing to do), and the one under way in seconds (0: awake)
+        s += &format!(" balance_naps={} balance_nap_s={}", crate::balance::NAPS.load(Relaxed), crate::balance::NAP_S.load(Relaxed));
     }
     #[cfg(feature = "pooltest")]
     {

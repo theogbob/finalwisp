@@ -350,6 +350,17 @@ impl Stream {
         }
     }
 
+    /// 60.64 the stream moved to another worker: its pool bytes went back to the old worker's pool. Take them from
+    /// this one's (`pool`); where that cannot pay, the window comes down to what the stream still holds.
+    pub fn rehome(&mut self, pool: &mut u64) {
+        let g = self.extra.min(*pool);
+        *pool -= g;
+        if g < self.extra {
+            self.extra = g;
+            self.win = self.win.min(WINIT + g);
+        }
+    }
+
     /// test helper: on_pong on a connection with several streams
     #[cfg(test)]
     pub fn on_pong_sib(&mut self, seq: u64, rtt: Duration, min_rtt: Duration, backlog: u64, plow: u64, now: Instant) {

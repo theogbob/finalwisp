@@ -11,6 +11,8 @@ usage: metrics.py BIN [--port P]
 3. Off (no flag): no metrics line, no `metrics` thread, SIGTERM exits 0.
 5. A full stderr pipe nobody reads: SIGTERM still ends it within 3 s.
 4. --mem-budget 32M (starts at level 1): level=1, the accepted sockets counted in cap_apply, time at level 1.
+8. --auto-balance (60.74): with 2 workers the observer thread exists, with 1 it does not; light traffic moves nothing
+   (moved_conns, moved_back, moved_reset 0, no trial line); SIGTERM exits 0.
 Exit 0 = all passed, 1 = a failure.
 """
 import os, signal, socket, struct, subprocess, sys, threading, time
@@ -255,6 +257,37 @@ def main():
     check("--drain-timeout 0: 'exiting now', then the final line, exit 0",
           any("exiting now" in l for l in fin) and "ev=metrics_final" in fin[-1] and rc == 0, f"rc {rc}, {fin[-2:]}")
     w.s.close()
+
+    # 8: 60.74 --auto-balance: the observer thread exists with 2 workers (none with 1: nowhere to move to); light traffic
+    # moves nothing (no worker is bound) and the three counters are there at 0; SIGTERM exits 0
+    for threads, want_thread in (("2", True), ("1", False)):
+        p = subprocess.Popen([BIN, "--port", str(PORT), "--threads", threads, "--allow-loopback", "--log-level", "debug", "--metrics-interval", "1",
+                              "--auto-balance"], stderr=subprocess.PIPE, text=True)
+        servers.append(p)
+        lines_until(p, lambda l: "capabilities" in l, 10)
+        ws = [Wisp() for _ in range(2)]
+        for i, w in enumerate(ws):
+            w.packet()
+            connect(w, 1, tgt, "127.0.0.1")
+            w.send(0x02, 1, b"ping%d" % i)
+            ty, _, data = w.packet()
+            while ty != 0x02:
+                ty, _, data = w.packet()
+            check(f"--auto-balance --threads {threads}: echo", data == b"ping%d" % i, repr(data))
+        threads_now = [open(f"/proc/{p.pid}/task/{t}/comm").read().strip() for t in os.listdir(f"/proc/{p.pid}/task")]
+        check(f"--auto-balance --threads {threads}: observer thread {'present' if want_thread else 'absent'}",
+              ("balance" in threads_now) == want_thread, ",".join(sorted(threads_now)))
+        got = lines_until(p, lambda l: "ev=metrics " in l and int(kv(l).get("up", 0)) >= 3, 8)
+        last = kv(got[-1]) if got else {}
+        check(f"--auto-balance --threads {threads}: light traffic moves nothing",
+              [last.get(k) for k in ("moved_conns", "moved_back", "moved_reset")] == ["0", "0", "0"], got[-1] if got else "")
+        check(f"--auto-balance --threads {threads}: no trial on light traffic", not any("auto-balance: trial" in l for l in got))
+        for w in ws:
+            w.s.close()  # (an open stream holds the graceful drain)
+        p.send_signal(signal.SIGTERM)
+        lines_until(p, lambda l: "ev=metrics_final" in l, 5)
+        rc = p.wait(5)
+        check(f"--auto-balance --threads {threads}: SIGTERM exits 0", rc == 0, f"rc {rc}")
 
     # 4: a small budget starts at level 1 (mem::SMALL_BUDGET): accepted sockets are capped, time is at level 1
     p = start(["--metrics-interval", "1", "--mem-budget", "32M"])

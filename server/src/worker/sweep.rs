@@ -18,6 +18,9 @@ impl Worker {
         let behind = (now - self.next_sweep).as_millis() / p.as_millis();
         self.next_sweep += p * (behind as u32 + 1);
         self.sweep();
+        if self.cfg.auto_balance {
+            self.mig_report(now); // 60.64
+        }
         if self.dns_cache.capacity() != 0 {
             self.dns_expire(now); // 60.41 (capacity: a table emptied by lookups still has slots to give back)
         }

@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.3.3
+
+New option, off by default (a plain `finalwisp` and `--preset public` do not change):
+
+- `--auto-balance`: when one worker thread is fully busy with two or more busy connections while another is idle,
+  it moves one of those connections to the idle thread for a trial of about 2.5 seconds (measure, move, measure,
+  move back, measure). The move is kept only if the server as a whole carried more with it than before and after it.
+  It helps a host with many cores and many short connections: with 8 clients of 32 short streams each on 16
+  threads, 9% more connections per second (16 runs each, 90% interval 5.9% to 15.1%); echo and request/response traffic
+  read the same with and without it. On two 2-core VPSes it found nothing to move and no difference was measured
+  (32 runs each). On a host with up to 4 worker threads it checks less and less often while it finds nothing to do
+  (every 5 seconds, doubling up to every 160 seconds); with more threads it keeps watching. Turned off, it costs
+  nothing measurable: in 10 test cells of 32 runs each, all 10 read the same as 1.3.2. Counters `moved_conns`,
+  `moved_back` and `moved_reset` (a connection the new thread could not take over, which is then closed; 0 in all
+  our tests); with the option the metrics line also has `balance_naps` and `balance_nap_s`.
+
+Tests:
+
+- Some unit tests failed now and then on a loaded host: they waited a fixed number of rounds instead of for their
+  event, or counted connections that other tests sent to a port they had freed. They now wait for the event and take
+  only their own connections.
+
 ## v1.3.2
 
 New options, all off by default (a plain `finalwisp` does not change):
