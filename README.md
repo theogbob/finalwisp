@@ -18,13 +18,13 @@ finalwisp is that server.
 finalwisp is one file for Linux on x86_64. It needs nothing else on the machine.
 
 ```sh
-V=v1.3.3
+V=v1.4.0
 curl -LO https://github.com/theogbob/finalwisp/releases/download/$V/finalwisp-$V-x86_64-linux.tar.gz
 curl -LO https://github.com/theogbob/finalwisp/releases/download/$V/SHA256SUMS
 tar -xzf finalwisp-$V-x86_64-linux.tar.gz
 sha256sum -c SHA256SUMS      # must print OK twice: the download, and the binary inside it
 sudo install -m 0755 finalwisp-$V-x86_64-linux/finalwisp /usr/local/bin/finalwisp
-finalwisp --version          # finalwisp 1.3.3
+finalwisp --version          # finalwisp 1.4.0
 ```
 
 All versions are on the [Releases](https://github.com/theogbob/finalwisp/releases) page. To build it yourself, see
@@ -170,8 +170,8 @@ Start at the [documentation index](docs/README.md). The short list:
 - Linux on x86_64 only.
 - Built-in `wss://` needs kTLS (the `tls` kernel module). Without it, use a reverse proxy for TLS.
 - Download caps are per connection, not per client IP.
-- Idle memory creeps up a little after load peaks (allocator retention: under 2 MiB in our longest tests, with no
-  proven ceiling). It resets on restart. Long soak tests found no leak.
+- Idle memory creeps up a little after load peaks (allocator retention, with no proven ceiling). It resets on restart.
+  Long soak tests found no leak.
 
 [Known limits](docs/troubleshooting.md#known-limits) lists the rest.
 
@@ -181,7 +181,7 @@ Start at the [documentation index](docs/README.md). The short list:
 bench/release.sh   # static, reproducible build; needs rustup, gcc and static glibc
 ```
 
-Same commit, same toolchain: same binary, byte for byte. Details: [build it yourself](docs/getting-started.md#build-it-yourself).
+Same commit, same toolchain, same `libc6-dev` package: same binary, byte for byte. Details: [build it yourself](docs/getting-started.md#build-it-yourself).
 
 ## Help and security
 

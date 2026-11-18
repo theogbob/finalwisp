@@ -198,6 +198,59 @@ mod tests {
         assert_eq!(parse(&big[..100]), Parse::Bad, "over MAX_HEADER: refused before it is all there");
     }
 
+    /// 60.78 G46: the edges: empty input, the 107-byte v1 line and the 4096-byte v2 header at and past their limits,
+    /// mapped / unspecified / sentinel sources in v2, port 0, a family that does not match its addresses, non-UTF-8
+    #[test]
+    fn edge_table() {
+        assert_eq!(parse(b""), Parse::Partial);
+        // v1: a CRLF ending at byte 107 is in; one more byte and the CRLF is out of reach
+        let mut line = b"PROXY UNKNOWN ".to_vec();
+        line.resize(V1_MAX - 2, b'a');
+        line.extend(b"\r\n");
+        assert_eq!(parse(&line), Parse::Done { len: V1_MAX, src: None });
+        line.insert(20, b'a');
+        assert_eq!(parse(&line), Parse::Bad);
+        assert_eq!(parse(b"PROXY TCP4 1.2.3.4 5.6.7.8 0 65535\r\n"), Parse::Done { len: 36, src: ip("1.2.3.4") }, "ports 0 and 65535");
+        for bad in [
+            &b"PROXY TCP6 1.2.3.4 ::1 1 2\r\n"[..], // TCP6 with an IPv4 source
+            b"PROXY TCP6 ::1 5.6.7.8 1 2\r\n",      // TCP6 with an IPv4 destination
+            b"PROXY TCP4 1.2.3.4 5.6.7.8 -1 2\r\n",
+            b"PROXY TCP4 1.2.3.4 5.6.7.8 +1 2\r\n",
+            b"PROXY TCP4 1.2.3.4 5.6.7.8 1 \r\n",
+            b"PROXY TCP4 1.2.3.\xff 5.6.7.8 1 2\r\n",
+            b"PROXY \r\n",
+            b"PROXY TCP4\r\n",
+        ] {
+            assert_eq!(parse(bad), Parse::Bad, "{:?}", String::from_utf8_lossy(bad));
+        }
+        // v2: a header of exactly MAX_HEADER bytes is in, one byte more is refused from its 16-byte prefix
+        let a4 = [192, 0, 2, 1, 198, 51, 100, 2, 0, 1, 0, 2];
+        let fit = v2h(1, 0x11, &a4, &vec![0x04; MAX_HEADER - 16 - 12]);
+        assert_eq!(fit.len(), MAX_HEADER);
+        assert_eq!(parse(&fit), Parse::Done { len: MAX_HEADER, src: ip("192.0.2.1") });
+        assert_eq!(parse(&fit[..MAX_HEADER - 1]), Parse::Partial);
+        let over = v2h(1, 0x11, &a4, &vec![0x04; MAX_HEADER - 16 - 12 + 1]);
+        assert_eq!(parse(&over[..16]), Parse::Bad);
+        let v6 = |s: &str| {
+            let mut a = [0u8; 36];
+            a[..16].copy_from_slice(&s.parse::<Ipv6Addr>().unwrap().octets());
+            parse(&v2h(1, 0x21, &a, &[]))
+        };
+        assert_eq!(v6("::ffff:1.2.3.4"), Parse::Done { len: 52, src: ip("1.2.3.4") }, "mapped = v4");
+        assert_eq!(v6("::"), Parse::Done { len: 52, src: None }, "unspecified: the real peer");
+        assert_eq!(v6("100::1:2:3:4"), Parse::Done { len: 52, src: None }, "never the unix sentinel");
+        assert_eq!(v6("100:0:0:1::"), Parse::Done { len: 52, src: ip("100:0:0:1::") }, "outside 100::/64");
+        let z4 = [0, 0, 0, 0, 1, 2, 3, 4, 0, 1, 0, 2];
+        assert_eq!(parse(&v2h(1, 0x11, &z4, &[])), Parse::Done { len: 28, src: None }, "0.0.0.0");
+        assert_eq!(parse(&v2h(1, 0x21, &[0u8; 35], &[])), Parse::Bad, "short IPv6 block");
+        assert_eq!(parse(&v2h(1, 0x31, &[0u8; 215], &[])), Parse::Bad, "short AF_UNIX block");
+        assert_eq!(parse(&v2h(1, 0x41, &a4, &[])), Parse::Bad, "unknown family");
+        // a signature that differs in its last byte is no header at all
+        let mut sig = v2h(1, 0x11, &a4, &[]);
+        sig[11] = 0x0B;
+        assert_eq!(parse(&sig), Parse::Bad);
+    }
+
     #[test]
     fn parse_never_panics_on_prefixes_of_junk() {
         let mut x: u64 = 0x9E37_79B9_7F4A_7C15;

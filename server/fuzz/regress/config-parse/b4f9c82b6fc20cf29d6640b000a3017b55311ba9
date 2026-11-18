@@ -1,0 +1,16 @@
+%ÿÿÿyÿş real-ip-header ~--block-dest-`-d&ns-s~&-~~~*_
+real-ip-header ~-&ns~--block-dest-`-d&ns-|||||||||||||||||||~~*_
+real-ip-header ~-`rve&ns-~~~~~*~~|||||||||||||||||||||||||||||~~~~*_
+real-ip-header ~-`-dn-ser-s~&---s~&--%~~~~~~*_
+proxy-protocol nsz 
+#-u
+dns-server ::2%1666632
+dns-serbufÿşallow-host t--block-host
+block-dest 10.0.0fer 15 
+#   
+.0
+#-u
+dnl-ip-header ~-`rve&ns-~~~~~*~~|||||||||||||||||||||||||||||~~~~*_
+real-ip-header ~-`-dn-ser-s~&---s~&--%~~~~~~*_
+real-ip-header ~-`rve
+#

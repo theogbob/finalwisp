@@ -16,10 +16,11 @@
 
 use super::*;
 use crate::bounds::{
-    self as bd, Bounds, Dest, DestTop, Dests, Log, Stall, Unread, OPT_DEAD, OPT_PORT, OPT_TCPMEM, OPT_UNREAD, OPT_WATCH, PT_TOP,
-    ST_PT_BUSY, ST_PT_SHORT, ST_TM_SHARE, ST_UNREAD,
+    self as bd, Bounds, Dest, DestTop, Dests, Log, Stall, UcLim, Unread, OPT_DEAD, OPT_PORT, OPT_RELIEF, OPT_TCPMEM, OPT_UNREAD, OPT_WATCH,
+    PT_TOP, ST_PT_BUSY, ST_PT_SHORT, ST_TM_SHARE, ST_UNREAD,
 };
 use crate::clientip::IpKey;
+use std::collections::HashSet;
 
 /// fd_mask bit of this file: the worker is in hold mode for a rule of section E (never a bit of FdGate::mask)
 pub(super) const HOLD_BOUNDS: u8 = 4;
@@ -67,18 +68,49 @@ pub(super) struct Wb {
     ranged: bool,
     /// E3 the destinations that do not answer (at most DF_MAX); not empty = hold mode for this worker
     dead: Vec<Suspect>,
-    /// E3 scratch of a count: the destinations with a connect in flight (an entry) and how many of their connecting
-    /// sockets are old enough to ask; and the destinations with a target that opened since the last count
-    old: HashMap<Dest, u32>,
+    /// E3 60.78 bundle B1 the failing destinations (at most DF_FAIL_MAX), each until a time (ms)
+    fail: HashMap<Dest, u64>,
+    /// E3 the destinations with an open target at the last count (kept while some destination is failing: `seen_ok`)
+    seen: HashSet<Dest>,
+    seen_ok: bool,
+    /// E3 per client address: its connects in flight that are old (DF_AGE_MS) or go to a failing destination, and for
+    /// an address that has such a connect also its young ones to destinations without an open target (the last
+    /// count's, plus the attempts let in since)
+    fly: HashMap<IpKey, u32>,
+    /// E3 scratch of bd_fail_count: the young connects to destinations without an open target, by address
+    young: Vec<(IpKey, u32)>,
+    /// E3 an address has half of DF_FAIL_FLY or more (on; off below a quarter): hold mode (every attempt is judged)
+    fly_hi: bool,
+    /// E3 scratch of a count: the destinations with a connect in flight (an entry), how many of their connecting
+    /// sockets are old (DF_AGE_MS) and how many are ripe (near their deadline: DF_RIPE_MS); and the destinations with
+    /// a target that opened since the last count
+    old: HashMap<Dest, (u32, u32)>,
     opened: Vec<Dest>,
-    /// E3 the thresholds (bounds::DF_AGE_MS, DF_SYNS; tests shorten them)
+    /// E3 the thresholds (bounds::DF_AGE_MS, DF_SYNS, DF_RIPE_MS; tests shorten them)
     df_age_ms: u64,
     df_syns: u8,
+    df_ripe_ms: u64,
     /// E3 connecting sockets asked for their SYN count so far (one getsockopt each; the tests read it)
     asked: u64,
-    /// E5 the stall of each connection, by client slot (bounds::uc_step), and its limit (bounds::UC_STALL_MS)
+    /// E5 the credit of each connection, by client slot (bounds::uc_step), and the rule's constants
     uc: Vec<Stall>,
-    uc_limit_ms: u64,
+    uc_lim: UcLim,
+    /// E5 the bytes in the receive queues of each connection's parked downloads at the last count, by client slot
+    uc_held: Vec<u64>,
+    /// 60.78 G70 --unread-close's relief: by target slot, a target whose receive buffer we locked and shrank
+    rl: Vec<RlEnt>,
+    /// 60.78 G70 the cap of the relief bytes (None: a quarter of the worker's memory budget; tests set it)
+    rl_cap: Option<usize>,
+}
+
+impl Wb {
+    /// E3 a suspect, or an address with half of its budget for failing destinations in flight: hold mode, and every
+    /// TCP attempt is judged (bd_gate). (Not for any failing destination: one connect without an answer is common on
+    /// a public server; below half the budget the attempts between two counts take fds out of line at most up to the
+    /// next count, RECOUNT_MS at each fd block)
+    fn df_live(&self) -> bool {
+        !self.dead.is_empty() || self.fly_hi
+    }
 }
 
 /// E3 a destination that does not answer
@@ -127,29 +159,68 @@ impl Wb {
             last: (0, 0, 0),
             ranged: false,
             dead: Vec::new(),
+            fail: HashMap::new(),
+            seen: HashSet::new(),
+            seen_ok: false,
+            young: Vec::new(),
+            fly: HashMap::new(),
+            fly_hi: false,
             old: HashMap::new(),
             opened: Vec::new(),
             df_age_ms: bd::DF_AGE_MS,
             df_syns: bd::DF_SYNS,
+            df_ripe_ms: bd::DF_RIPE_MS,
             asked: 0,
             uc: Vec::new(),
-            uc_limit_ms: bd::UC_STALL_MS,
+            uc_lim: UcLim::REAL,
+            uc_held: Vec::new(),
+            rl: Vec::new(),
+            rl_cap: None,
         })
     }
 }
 
 impl Worker {
-    /// Tests: E3 with a connecting socket asked from `age_ms` and dead at `syns` SYNs
+    /// Tests: E3 with a connecting socket asked from `age_ms` and dead at `syns` SYNs; every socket that is old enough
+    /// is ripe too (df_ripe sets the window)
     #[cfg(test)]
     pub(super) fn df_set(&mut self, age_ms: u64, syns: u8) {
         let b = self.bd.as_mut().unwrap();
-        (b.df_age_ms, b.df_syns) = (age_ms, syns);
+        (b.df_age_ms, b.df_syns, b.df_ripe_ms) = (age_ms, syns, u64::MAX >> 2);
     }
 
-    /// Tests: E5 with a stall limit of `ms`
+    /// Tests: E3 a connecting socket is ripe in the last `ms` before its deadline
     #[cfg(test)]
-    pub(super) fn uc_set(&mut self, ms: u64) {
-        self.bd.as_mut().unwrap().uc_limit_ms = ms;
+    pub(super) fn df_ripe(&mut self, ms: u64) {
+        self.bd.as_mut().unwrap().df_ripe_ms = ms;
+    }
+
+    /// Tests: E3 the failing destinations, and the connects in flight to them of the client address of `ip`
+    #[cfg(test)]
+    pub(super) fn df_fail(&self, ip: &str) -> (usize, u32) {
+        let b = self.bd.as_ref().unwrap();
+        (b.fail.len(), b.fly.get(&clientip::key(ip.parse().unwrap())).copied().unwrap_or(0))
+    }
+
+    /// Tests: the relief's cap in bytes (in place of a quarter of the memory budget)
+    #[cfg(test)]
+    pub(super) fn rl_set_cap(&mut self, cap: usize) {
+        self.bd.as_mut().unwrap().rl_cap = Some(cap);
+    }
+
+    /// Tests: whether bd_relief holds a lock on target slot `ti`
+    #[cfg(test)]
+    pub(super) fn rl_held(&self, ti: u32) -> bool {
+        self.bd.as_ref().unwrap().rl.get(ti as usize).is_some_and(|e| e.g1 != 0)
+    }
+
+    /// Tests: E5 with a starting credit of `ms` (the price of a byte scaled with it: UC_STALL_MS / `ms` x UC_RATE), a cap
+    /// of `cap_ms`, and one full stream of `m0` bytes (0: the host's)
+    #[cfg(test)]
+    pub(super) fn uc_set(&mut self, ms: u64, cap_ms: u64, m0: u64) {
+        let b = self.bd.as_mut().unwrap();
+        (b.uc_lim.start_ms, b.uc_lim.cap_ms, b.uc_lim.m0) = (ms, cap_ms, m0);
+        b.uc_lim.rate = bd::UC_RATE * bd::UC_STALL_MS / ms.max(1);
     }
 
     /// Tests: E3 the connecting sockets asked for their SYN count so far
@@ -179,7 +250,7 @@ impl Worker {
 
     /// fd_setup: this file's bit of fd_mask
     pub(super) fn bd_hold(&self) -> u8 {
-        self.bd.as_ref().map_or(0, |b| if b.live != 0 || !b.dead.is_empty() { HOLD_BOUNDS } else { 0 })
+        self.bd.as_ref().map_or(0, |b| if b.live != 0 || b.df_live() { HOLD_BOUNDS } else { 0 })
     }
 
     /// Take the process state: into hold mode when a mark is set, out of it when none is (see the head of this file)
@@ -240,6 +311,9 @@ impl Worker {
     pub(super) fn bd_unread(&mut self, now: u64) {
         let Some(mut b) = self.bd.take() else { return };
         let pressed = b.g.state() & ST_UNREAD != 0;
+        if b.uc_lim.m0 == 0 {
+            b.uc_lim.m0 = bd::rmem_max() + self.cfg.notsent_lowat as u64;
+        }
         if b.uc.len() < self.clients.slots.len() {
             b.uc.resize(self.clients.slots.len(), Stall::default());
         }
@@ -250,25 +324,220 @@ impl Worker {
                 Some(c) if parked && !c.dead && !c.closing && c.local != LOCAL_UNIX => bd::wnd_acked(c.fd),
                 _ => None,
             };
-            if bd::uc_step(&mut b.uc[ci], s.0, info, now, b.uc_limit_ms, pressed) {
+            // the host TCP memory it holds, read only with a parked download (the credit's use scales with it)
+            let held = match (s.1.as_ref(), info) {
+                (Some(c), Some(_)) => b.uc_held.get(ci).copied().unwrap_or(0) + bd::queued(c.fd, libc::TIOCOUTQ),
+                _ => 0,
+            };
+            if bd::uc_step(&mut b.uc[ci], s.0, info, held, now, &b.uc_lim, pressed) {
                 reset.push(ci as u32);
             }
         }
         if !reset.is_empty() && b.g.log_due(Log::UcReset) {
             metrics::log_nowait(format!(
                 "finalwisp: --unread-close: {} connection(s) reset: each held a download its client did not read (receive \
-                 window 0, no data taken for {} s) while host TCP memory is short ({} MiB). Fix: more memory or a larger \
-                 net.ipv4.tcp_mem on the host; or --no-unread-close (counted as close_unread; at most one such line per 10 s)",
+                 window 0) until its stall time was used up ({} s to start, more for data it took) while host TCP memory is \
+                 short ({} MiB). Fix: more memory or a larger net.ipv4.tcp_mem on the host; or --no-unread-close (counted as \
+                 close_unread; at most one such line per 10 s)",
                 reset.len(),
-                b.uc_limit_ms / 1000,
+                b.uc_lim.start_ms / 1000,
                 b.g.mib()
             ));
         }
+        let relief = b.g.opts & OPT_RELIEF != 0;
         self.bd = Some(b);
         for ci in reset {
             self.stats.close_unread.bump();
             self.abort_client(ci, Why::Unread); // (review) RST on the targets too: memory pressure (20.26)
         }
+        if relief {
+            self.bd_relief(pressed); // 60.78 G70 (after the resets: their streams are gone)
+        }
+    }
+
+    /// 60.78 G70 --unread-close's relief at the idle sweep, after bd_unread (OPT_RELIEF: the Mem form and SO_BUF_LOCK).
+    /// Why: while the host's TCP memory is short, the kernel gives a socket memory for an arriving segment only while the
+    /// socket holds less than its share (tcp_mem's maximum over the TCP sockets allocated: Bounds::share_bytes). A
+    /// parked download's target socket that holds more drops every segment, the destination's head segment is never
+    /// acknowledged, and the destination ends the connection after tcp_retries2 (~15 min): the stream ends with 0x03.
+    /// What: such a socket (its memory, SO_MEMINFO's rmem_alloc as the kernel counts it for the share, above half the
+    /// share S) gets SOCK_RCVBUF_LOCK (autotuning stops: our big read would grow the buffer) and a receive buffer of S/4
+    /// (the kernel doubles it: S/2), and what it has queued is read out into its client's own queue. All of it (r9, VM
+    /// rig: read down to S/4 of payload, a socket held 210 KiB of memory in a 176 KiB buffer, the kernel's overhead per
+    /// segment being ~2.4 x its payload there, and dropped every arrival until the destination timed out). It keeps
+    /// that buffer while the pressure lasts, also when it reads again (more would be above its share). Lifted once the
+    /// pressure is over: rl_lift (the old size, then only the lock bit), unless a cap of the memory budget set another
+    /// size since.
+    /// Order: the target is parked (no read in flight), and its bytes are framed at the end of the queue read_target
+    /// would use (its lane rule), so its next read continues after them; Client::flush sends the pipe of a pending
+    /// splice before the obuf bytes after it. Close: at most what FIONREAD reported is read, so a read never returns 0
+    /// or an error while data is queued (tcp_recvmsg reports EOF and sk_err only with nothing copied); the target's
+    /// EOF or reset stays for read_target, which handles it as always. (A read that fails anyway stops here; its error
+    /// is then consumed, and read_target sees the closed socket as an EOF.)
+    /// Cap: the bytes over out_high in all client queues of this worker stay within a quarter of the worker's memory
+    /// budget (no budget: no relief); candidates go in the order of their connection's E5 credit, the most first (a
+    /// reader that earned time before one that did not), and one over the cap is counted (relief_capped), as is one
+    /// whose bytes would take its client's queue to out_hard. The read is cut to the cap (more can come in before it).
+    /// Scope: every parked TCP stream (not only download-only ones: a socket above the share drops segments anyway).
+    /// Not while a stage of the memory budget caps sockets (its caps own the lock bits then). A socket that someone else
+    /// locked is left alone (its lock is not ours to lift).
+    /// Known limit: a connection moved by --auto-balance keeps the lock and the small buffer until it closes (the entry
+    /// stays here and is dropped by the generation check).
+    #[cold]
+    #[inline(never)]
+    pub(super) fn bd_relief(&mut self, pressed: bool) {
+        let Some(mut b) = self.bd.take() else { return };
+        // the locks held (not while a stage caps sockets: its caps own the bits then)
+        if self.st.sock_cap == 0 {
+            for ti in 0..b.rl.len() {
+                let e = b.rl[ti];
+                if e.g1 == 0 {
+                    continue;
+                }
+                b.rl[ti] = match self.targets.get(ti as u32, e.g1.wrapping_sub(1)) {
+                    None => RlEnt::default(), // closed (its socket with it), or a new target in the slot
+                    Some(t) => rl_keep(t.fd, e, pressed),
+                };
+            }
+        }
+        let budget = b.rl_cap.unwrap_or(mem::WORKER_BUDGET.load(Relaxed) / 4);
+        let share = b.g.share_bytes().unwrap_or(0) as usize;
+        if !pressed || self.st.sock_cap != 0 || budget == 0 || share == 0 {
+            self.bd = Some(b);
+            return;
+        }
+        let (hi, keep, out_high, out_hard) = (share / 2, share / 4, self.st.out_high, self.st.out_hard); // keep: the new SO_RCVBUF
+        let mut used: usize =
+            self.clients.slots.iter().filter_map(|s| s.1.as_ref()).map(|c| c.out_pending().saturating_sub(out_high)).sum();
+        let mut cands = Vec::new();
+        for (ti, s) in self.targets.slots.iter().enumerate() {
+            let Some(t) = s.1.as_ref() else { continue };
+            if !t.blocked || t.udp || t.state != TState::Open || t.fd < 0 {
+                continue;
+            }
+            let c = self.clients.slots.get(t.client as usize).and_then(|c| c.1.as_ref());
+            if c.is_none_or(|c| c.dead || c.closing) {
+                continue; // (nothing after a closing connection's WS Close)
+            }
+            // (one we hold comes again only when the share fell below what its buffer lets it hold)
+            if rl_rmem(t.fd).unwrap_or(0) as usize > hi {
+                let q = bd::queued(t.fd, libc::FIONREAD) as usize;
+                let cg1 = self.clients.slots[t.client as usize].0.wrapping_add(1);
+                let credit = b.uc.get(t.client as usize).filter(|u| u.g1 == cg1).map_or(0, |u| u.credit);
+                cands.push((credit, ti as u32, q));
+            }
+        }
+        cands.sort_unstable_by_key(|c| std::cmp::Reverse(c.0));
+        for (_, ti, q) in cands {
+            let (fd, ci, g1) = (self.targets.at(ti).fd, self.targets.at(ti).client, self.targets.gen(ti).wrapping_add(1));
+            // the client's own queue stays below out_hard (read_client stops reading a client at it: its CONNECTs, CLOSEs
+            // and pings would wait behind the relief bytes)
+            let room = out_hard.saturating_sub(self.clients.at(ci).out_pending() + 2 * CHUNK);
+            if used + q > budget || q > room {
+                self.stats.relief_capped.bump();
+                continue;
+            }
+            // lock first (an unlocked buffer can grow at any time, and our read would grow it), then shrink, then read: a
+            // window update of our read must not let the destination fill the old, large buffer again (on loopback that
+            // happens inside the read). Arrivals while it holds more than the new buffer are dropped, as they are under
+            // the pressure anyway; queued data is never pruned (tcp_prune_queue collapses it, drops only out of order).
+            let held = b.rl.get(ti as usize).filter(|e| e.g1 == g1).copied();
+            let mut e = match held {
+                Some(e) => e, // locked already, its old size saved
+                None => {
+                    let Some(saved) = rl_rcvbuf_get(fd) else { continue };
+                    if !rl_lock(fd) {
+                        continue; // locked by someone else, or the syscall failed: left as it is
+                    }
+                    RlEnt { g1, saved, ours: 0 }
+                }
+            };
+            rl_rcvbuf(fd, keep);
+            let Some(ours) = rl_rcvbuf_get(fd) else {
+                if held.is_none() {
+                    rl_lift(fd, e); // (undone: no entry without the size we set)
+                }
+                continue;
+            };
+            e.ours = ours;
+            if b.rl.len() <= ti as usize {
+                b.rl.resize(ti as usize + 1, RlEnt::default());
+            }
+            b.rl[ti as usize] = e;
+            // all that is queued now (more came since the count), within the cap and the client's room
+            let n = (bd::queued(fd, libc::FIONREAD) as usize).min(budget - used).min(room);
+            let got = self.relief_read(ti, n);
+            used += got;
+            self.stats.relief_bytes.add(got as u64);
+            self.stats.relief_streams.bump();
+        }
+        self.bd = Some(b);
+    }
+
+    /// 60.78 G70 bd_relief's read: up to `n` bytes of parked target `ti` framed as DATA (raw: plain WS frames) at the end
+    /// of its client's queue, the lane as read_target chooses it. The framing is read_target's, written out here (a call
+    /// into its helpers would change how the compiler builds read_target). -> bytes read
+    fn relief_read(&mut self, ti: u32, n: usize) -> usize {
+        let t = self.targets.at(ti);
+        let (fd, ci, sid, raw, tbulk, bulk_end) = (t.fd, t.client, t.sid, t.raw, t.bulk, t.bulk_end);
+        let c = self.clients.at(ci);
+        let lane = self.cfg.prio && !raw && (tbulk || bulk_end > c.bulk_sent);
+        let room = if raw { ROOM_RAW } else { ROOM_WISP };
+        let mut done = 0;
+        while done < n {
+            let want = (n - done).min(CHUNK);
+            let c = self.clients.at(ci);
+            let dst = if lane { &mut c.bulk } else { &mut c.obuf };
+            dst.reserve(room + want);
+            let base = dst.len();
+            // SAFETY: reserve() above: capacity >= base + room + want, so the read stays in the spare capacity
+            let r = unsafe { libc::read(fd, dst.as_mut_ptr().add(base + room) as *mut _, want) };
+            if r <= 0 {
+                break;
+            }
+            let k = r as usize;
+            // SAFETY: as in read_target: capacity >= base + room + k; every byte up to the new length is written (the WS
+            // header, hl = 2 or 4; the Wisp header at hl unless raw; the data at hl + room - 4, moved there when hl = 2)
+            unsafe {
+                let p = dst.as_mut_ptr().add(base);
+                let plen = k + room - 4;
+                let mut hl = 4;
+                if plen <= 125 {
+                    std::ptr::copy(p.add(room), p.add(room - 2), k);
+                    hl = 2;
+                    *p.add(1) = plen as u8;
+                } else {
+                    *p.add(1) = 126;
+                    *p.add(2) = (plen >> 8) as u8;
+                    *p.add(3) = plen as u8;
+                }
+                *p = 0x80 | OP_BIN;
+                if !raw {
+                    *p.add(hl) = PKT_DATA;
+                    std::ptr::copy_nonoverlapping(sid.to_le_bytes().as_ptr(), p.add(hl + 1), 4);
+                }
+                dst.set_len(base + hl + plen);
+            }
+            if lane {
+                let end = c.bulk_sent + (c.bulk.len() - c.bhead) as u64;
+                c.bulk_ends.push_back(end);
+                self.targets.at(ti).bulk_end = end;
+            }
+            done += k;
+            if k < want {
+                break;
+            }
+        }
+        if done > 0 {
+            self.targets.at(ti).wrote_since_read = false; // (the target spoke after our last write, as in read_target)
+            let c = self.clients.at(ci);
+            c.active = true;
+            if !c.dirty {
+                c.dirty = true;
+                self.dirty.push((ci, self.clients.gen(ci)));
+            }
+        }
+        done
     }
 
     /// The client address of connection `ci` as a key of section E: an IPv4 address or an IPv6 /64; behind a
@@ -324,18 +593,32 @@ impl Worker {
         let up_port = self.cfg.upstream.as_deref().map(|u| u.port);
         b.by_client.clear();
         b.by_client.resize(self.clients.slots.len(), 0);
+        if uc {
+            b.uc_held.clear();
+            b.uc_held.resize(self.clients.slots.len(), 0);
+        }
         b.by_dest.clear();
         b.old.clear();
         b.opened.clear();
-        // E3 a connect attempt is old enough to ask when its deadline is this near
-        let near = Instant::now() + self.cfg.connect_timeout.saturating_sub(Duration::from_millis(b.df_age_ms));
+        // E3 a connect attempt is old when its deadline is this near, and ripe (asked for its SYNs) when it is this near
+        let left = self.cfg.connect_timeout.saturating_sub(Duration::from_millis(b.df_age_ms));
+        let t_now = Instant::now();
+        let (near, ripe) = (t_now + left, t_now + left.min(Duration::from_millis(b.df_ripe_ms)));
         let mut unread = 0u32;
+        // E3 the destinations that answer, while one is failing (bd_dead: an address over its budget gets no connect
+        // to a destination without an open target)
+        let track = dead && (!b.fail.is_empty() || b.fly_hi);
+        b.seen.clear();
+        b.seen_ok = track;
         for (ti, s) in self.targets.slots.iter().enumerate() {
             let Some(t) = s.1.as_ref() else { continue };
             if (tcpmem || uc) && t.blocked && !t.udp {
                 if let Some(n) = b.by_client.get_mut(t.client as usize) {
                     *n += 1;
                     unread += 1;
+                }
+                if let Some(h) = b.uc_held.get_mut(t.client as usize).filter(|_| uc) {
+                    *h += bd::queued(t.fd, libc::FIONREAD); // E5 what the parked download holds
                 }
             }
             if port || dead {
@@ -344,7 +627,10 @@ impl Worker {
                         *b.by_dest.entry(d).or_default() += n;
                     }
                     if dead && t.state == TState::Connecting {
-                        *b.old.entry(d).or_default() += (t.deadline <= near) as u32;
+                        let e = b.old.entry(d).or_default();
+                        (e.0, e.1) = (e.0 + (t.deadline <= near) as u32, e.1 + (t.deadline <= ripe) as u32);
+                    } else if track && t.state == TState::Open {
+                        b.seen.insert(d);
                     }
                 }
             }
@@ -426,7 +712,8 @@ impl Worker {
             self.stats.port_dest_max.set(most.unwrap_or(0));
         }
         if dead {
-            self.bd_dead_count(&mut b, now, near);
+            self.bd_dead_count(&mut b, now, ripe);
+            self.bd_fail_count(&mut b, now, up_port, near);
         }
         self.bd = Some(b);
         if (self.fd_mask & HOLD_BOUNDS != 0) != (self.bd_hold() != 0) {
@@ -435,15 +722,16 @@ impl Worker {
     }
 
     /// E3 at a count (Wb::old and Wb::opened are this count's): which destinations do not answer. A new suspect: DF_K
-    /// or more of its connecting sockets that are old enough have each sent Wb::df_syns SYNs (asked of the kernel: at
-    /// most DF_ASK_MAX sockets per count), and no target opened on it since the last count. A suspect stays while a
+    /// or more of its connecting sockets that are ripe (`ripe`: their deadline is at most DF_RIPE_MS away, 60.78 bundle
+    /// B1: a host that answers a late SYN is never taken for dead) have each sent Wb::df_syns SYNs (asked of the kernel:
+    /// at most DF_ASK_MAX sockets per count), and no target opened on it since the last count. A suspect stays while a
     /// connect to it is in flight and no target opened on it. So it goes when it answers (its probe or any stream
     /// opened, also one that is closed again by now; or it refuses the connection), and when nobody asks for it
     /// (its connects have timed out). A stream that asks counts first when the last count is RECOUNT_MS old.
-    fn bd_dead_count(&mut self, b: &mut Wb, now: u64, near: Instant) {
+    fn bd_dead_count(&mut self, b: &mut Wb, now: u64, ripe: Instant) {
         let mut cand: Vec<(Dest, u32)> = Vec::new();
         for (d, n) in b.old.iter() {
-            if *n >= bd::DF_K && !b.opened.contains(d) && !b.dead.iter().any(|s| s.dest == *d) {
+            if n.1 >= bd::DF_K && !b.opened.contains(d) && !b.dead.iter().any(|s| s.dest == *d) {
                 cand.push((*d, 0));
             }
         }
@@ -454,7 +742,7 @@ impl Worker {
                 // (a stream whose attempts are all in flight: its newest socket is the one to addrs[attempt - 1].
                 // One of them ended, or a rule of this file refused an address: which socket goes where is not
                 // known, and no address is blamed for another's silence)
-                if t.udp || t.deadline > near || t.conn.len() != t.attempt {
+                if t.udp || t.deadline > ripe || t.conn.len() != t.attempt {
                     continue;
                 }
                 let Some(&ip) = t.attempt.checked_sub(1).and_then(|i| t.addrs.get(i)) else { continue };
@@ -472,8 +760,8 @@ impl Worker {
                     b.dead.push(Suspect { dest: d, probe_at: now + bd::DF_PROBE_MS });
                     if b.g.log_due(Log::DfSuspect) {
                         metrics::log_nowait(format!(
-                            "finalwisp: --dest-failfast: {} does not answer ({} or more connects got no answer to {} SYNs each, \
-                             none opened): new streams to it are refused with 0x43 at once, except one probe per second, until \
+                            "finalwisp: --dest-failfast: {} does not answer ({} or more connects near their connect timeout got \
+                             no answer to {} SYNs each, none opened): new streams to it are refused with 0x43 at once, except one probe per second, until \
                              it answers (--log-streams shows them; at most one such line per 10 s)",
                             SocketAddr::new(d.0, d.1),
                             bd::DF_K,
@@ -487,6 +775,61 @@ impl Worker {
         let (opened, flying) = (&b.opened, &b.old);
         b.dead.retain(|s| !opened.contains(&s.dest) && flying.contains_key(&s.dest));
         self.stats.dest_dead.set(b.dead.len() as u64);
+    }
+
+    /// E3 60.78 bundle B1 at a count, after bd_dead_count: the failing destinations (a connect to it is DF_AGE_MS old
+    /// with no answer and nothing opened on it since the last count: kept DF_FAIL_KEEP_MS from then; it goes when a
+    /// target to it opens and is seen open at a count: one that opens and closes between two counts is not seen), and
+    /// per client address its connects in flight that are old (`near`) or go to a failing destination, and for an
+    /// address with such a connect also its young ones to destinations without an open target while Wb::seen is kept
+    /// (Wb::fly, the budget of bd_dead; a stream's sockets all count for its newest address, as E2 counts them).
+    fn bd_fail_count(&mut self, b: &mut Wb, now: u64, up_port: Option<u16>, near: Instant) {
+        let until = now + bd::DF_FAIL_KEEP_MS;
+        for (d, n) in b.old.iter() {
+            if n.0 == 0 || b.opened.contains(d) {
+                continue;
+            }
+            if let Some(u) = b.fail.get_mut(d) {
+                *u = until;
+            } else if b.fail.len() < bd::DF_FAIL_MAX {
+                b.fail.insert(*d, until);
+            }
+        }
+        let opened = &b.opened;
+        b.fail.retain(|d, u| now < *u && !opened.contains(d));
+        b.fly.clear();
+        b.young.clear();
+        let was_hi = std::mem::take(&mut b.fly_hi);
+        if b.fail.is_empty() {
+            return;
+        }
+        for &(ti, tg) in self.connecting.iter() {
+            let Some(t) = self.targets.slots.get(ti as usize).filter(|x| x.0 == tg).and_then(|x| x.1.as_ref()) else { continue };
+            if t.udp || t.conn.is_empty() {
+                continue;
+            }
+            let Some(&ip) = t.attempt.checked_sub(1).and_then(|i| t.addrs.get(i)) else { continue };
+            let d = (ip, up_port.unwrap_or(t.port));
+            let (old, failing) = (t.deadline <= near, b.fail.contains_key(&d));
+            if !old && !failing && !(b.seen_ok && !b.seen.contains(&d)) {
+                continue;
+            }
+            let Some(k) = self.bd_key(t.client) else { continue };
+            // (a young connect to a destination without an open target counts only for an address that has an old
+            // or failing one: the second pass below)
+            if old || failing {
+                *b.fly.entry(k).or_default() += t.conn.len() as u32;
+            } else {
+                b.young.push((k, t.conn.len() as u32));
+            }
+        }
+        for (k, n) in b.young.drain(..) {
+            if let Some(f) = b.fly.get_mut(&k) {
+                *f += n;
+            }
+        }
+        let most = b.fly.values().copied().max().unwrap_or(0);
+        b.fly_hi = most >= bd::DF_FAIL_FLY / 2 || (was_hi && most >= bd::DF_FAIL_FLY / 4);
     }
 
     /// The other workers' counts, at most SLOTS_MS old, and this worker's own at most RECOUNT_MS old (a mark is set)
@@ -535,7 +878,7 @@ impl Worker {
     /// its probe). E2 first: an attempt that E2 refuses sends no SYN, so it must not be taken for E3's probe. 0 =
     /// nothing.
     fn bd_judge_addr(&mut self, ti: u32, ip: IpAddr) -> u8 {
-        let Some((pt, df)) = self.bd.as_ref().map(|b| (b.live & (ST_PT_BUSY | ST_PT_SHORT) != 0, !b.dead.is_empty())) else { return 0 };
+        let Some((pt, df)) = self.bd.as_ref().map(|b| (b.live & (ST_PT_BUSY | ST_PT_SHORT) != 0, b.df_live())) else { return 0 };
         if !pt && !df {
             return 0;
         }
@@ -567,18 +910,43 @@ impl Worker {
         why
     }
 
-    /// E3 an attempt of a client with `key` to `dest`: true = refused. One attempt per DF_PROBE_MS goes on as the
-    /// suspect's probe; the others are refused, if the client has a key and another client is connected (P1: an
-    /// address alone on the server is never refused: its SYNs take nothing from anyone). A suspect that answers goes
-    /// at the next count (bd_dead_count).
+    /// E3 an attempt of a client with `key` to `dest`: true = refused. To a suspect: one attempt per DF_PROBE_MS goes
+    /// on as the suspect's probe (not for an address over its budget); the others are refused. 60.78 bundle B1 the
+    /// budget: an address with DF_FAIL_FLY connects in flight that are old or go to failing destinations (Wb::fly) gets
+    /// no connect to a failing destination, nor (while Wb::seen is kept) to one without an open target at the last
+    /// count; under it such an attempt counts as one more. Refused only if the client has a key and another client is
+    /// connected (P1: an address alone on the server is never refused: its SYNs take nothing from anyone). A
+    /// destination that answers goes at the next count.
     fn bd_dead(&mut self, dest: Dest, key: Option<IpKey>, now: u64) -> bool {
         let Some(b) = self.bd.as_mut() else { return false };
-        let Some(s) = b.dead.iter_mut().find(|s| s.dest == dest) else { return false };
-        if now >= s.probe_at {
-            s.probe_at = now + bd::DF_PROBE_MS;
+        let over = key.is_some_and(|k| b.fly.get(&k).is_some_and(|n| *n >= bd::DF_FAIL_FLY));
+        if let Some(s) = b.dead.iter_mut().find(|s| s.dest == dest) {
+            if now >= s.probe_at && !over {
+                s.probe_at = now + bd::DF_PROBE_MS;
+                return false;
+            }
+            return key.is_some_and(|k| bd::others(&b.slots, now, k));
+        }
+        let Some(k) = key else { return false };
+        let failing = b.fail.get_mut(&dest);
+        if failing.is_none() && b.seen.contains(&dest) {
             return false;
         }
-        key.is_some_and(|k| bd::others(&b.slots, now, k))
+        let judged = failing.is_some() || b.seen_ok;
+        if !over {
+            // (an attempt to a destination without an open target counts only for an address with a connect that
+            // got no answer: an honest address that connects to new hosts is never counted)
+            if failing.is_some() {
+                *b.fly.entry(k).or_default() += 1;
+            } else if let Some(n) = b.fly.get_mut(&k).filter(|_| b.seen_ok) {
+                *n += 1;
+            }
+            return false;
+        }
+        if let Some(u) = failing {
+            *u = now + bd::DF_FAIL_KEEP_MS;
+        }
+        judged && bd::others(&b.slots, now, k)
     }
 
     /// fd_more, for the CONNECT of stream `ti` before any DNS or socket work: true = refused (fd_short sends the
@@ -609,7 +977,7 @@ impl Worker {
         let t = self.targets.at(ti);
         let (first, udp) = (t.attempt == 0 && t.conn.is_empty(), t.udp);
         let mut why = if first { self.bd_judge(ti) } else { 0 };
-        if why == 0 && !udp && self.bd.as_ref().is_some_and(|b| b.live & (ST_PT_BUSY | ST_PT_SHORT) != 0 || !b.dead.is_empty()) {
+        if why == 0 && !udp && self.bd.as_ref().is_some_and(|b| b.live & (ST_PT_BUSY | ST_PT_SHORT) != 0 || b.df_live()) {
             why = WHY_GATED;
         }
         if let Some(b) = self.bd.as_mut() {
@@ -755,13 +1123,15 @@ impl Worker {
             WHY_DEAD => {
                 self.stats.refuse_dest_dead.bump();
                 if g.log_due(Log::DfRefused) {
-                    metrics::log_nowait(
+                    metrics::log_nowait(format!(
                         "finalwisp: --dest-failfast: new streams to a destination that does not answer are refused with 0x43 at \
-                         once (the reason they would get at the connect timeout); one probe per second goes on, and the first \
-                         that connects ends it (--log-streams shows the destination). Or --no-dest-failfast (counted as \
-                         refuse_dest_dead; at most one such line per 10 s)"
-                            .to_string(),
-                    );
+                         once (the reason they would get at the connect timeout): to a destination taken for dead, but for one \
+                         probe per second (the first that connects ends it), and from a client address with {} connects in \
+                         flight on this worker thread that get no answer, to such a destination or to one without an open stream \
+                         (--log-streams shows the destination). \
+                         Or --no-dest-failfast (counted as refuse_dest_dead; at most one such line per 10 s)",
+                        bd::DF_FAIL_FLY
+                    ));
                 }
                 ("dest_dead", SWhy::ConnectFail, CLOSE_TIMEOUT)
             }
@@ -786,4 +1156,99 @@ impl Worker {
         }
         self.fail_target(ti, reason);
     }
+}
+
+/// 60.78 G70 a target socket bd_relief locked and shrank: its generation + 1 (0: none), SO_RCVBUF before (as the kernel
+/// reports it, doubled) and the SO_RCVBUF we set (as reported)
+#[derive(Clone, Copy, Default)]
+pub(super) struct RlEnt {
+    g1: u32,
+    saved: i32,
+    ours: i32,
+}
+
+/// 60.78 G70 a lock bd_relief holds, at a sweep without caps: kept while the pressure lasts (the bit set again if
+/// someone cleared it: a caps episode's uncap_bufs (until 1.4.0 also --park-rcvlock's lift, which took a bit it found set after a
+/// caps episode for its own), lifted after it (rl_lift). A size we did not set is someone else's: the entry goes and the
+/// socket is left as it is. -> the entry to keep (default: none)
+fn rl_keep(fd: RawFd, e: RlEnt, pressed: bool) -> RlEnt {
+    match (rl_rcvbuf_get(fd), rl_bits(fd)) {
+        (Some(cur), _) if cur != e.ours => RlEnt::default(),
+        (Some(_), Some(bits)) if pressed => {
+            if bits & RCVBUF_LOCK == 0 {
+                rl_set(fd, SO_BUF_LOCK, bits | RCVBUF_LOCK); // (failed: tried again at the next sweep)
+            }
+            e
+        }
+        (Some(_), Some(_)) => rl_lift(fd, e),
+        _ => e, // (a syscall failed: tried again at the next sweep)
+    }
+}
+
+/// 60.78 G70 the lift (as net::uncap_bufs): the size from before, then only SOCK_RCVBUF_LOCK is cleared (setting
+/// SO_RCVBUF sets it again). Clearing the bit alone would leave the buffer small: autotuning grows it only from more
+/// data per RTT than its largest measure so far (20.26: a 16 KiB cap stayed at 32 KiB after an unlock). The restored
+/// size is clamped to 2 x net.core.rmem_max, so a buffer that had grown past that comes back smaller and regrows only if
+/// its data per RTT passes that measure (as 20.26's relief). -> the entry to keep: none when done; when the unlock
+/// failed, the size it has now (so that the next sweep tries again)
+fn rl_lift(fd: RawFd, mut e: RlEnt) -> RlEnt {
+    rl_set(fd, libc::SO_RCVBUF, e.saved / 2);
+    if rl_unlock(fd) {
+        return RlEnt::default();
+    }
+    e.ours = rl_rcvbuf_get(fd).unwrap_or(e.ours);
+    e
+}
+
+/// 60.78 G70 a socket's receive memory as the kernel counts it (SO_MEMINFO, Linux 4.6: SK_MEMINFO_RMEM_ALLOC; the
+/// buffers' true size, not the payload)
+fn rl_rmem(fd: RawFd) -> Option<u32> {
+    let mut m = [0u32; 9]; // SK_MEMINFO_VARS (9 since Linux 4.18; the kernel copies at most `len`)
+    let mut len = std::mem::size_of_val(&m) as libc::socklen_t;
+    // SAFETY: getsockopt writes at most `len` bytes into `m`
+    let r = unsafe { libc::getsockopt(fd, libc::SOL_SOCKET, 55, m.as_mut_ptr() as *mut _, &mut len) };
+    (r == 0 && len >= 4).then_some(m[0])
+}
+
+fn rl_rcvbuf_get(fd: RawFd) -> Option<libc::c_int> {
+    let (mut v, mut len) = (0 as libc::c_int, std::mem::size_of::<libc::c_int>() as libc::socklen_t);
+    // SAFETY: getsockopt writes at most `len` bytes into `v`
+    let r = unsafe { libc::getsockopt(fd, libc::SOL_SOCKET, libc::SO_RCVBUF, &mut v as *mut _ as *mut _, &mut len) };
+    (r == 0).then_some(v)
+}
+
+/// 60.78 G70 SO_BUF_LOCK (Linux 5.15; main checked it) and SOCK_RCVBUF_LOCK in its mask. Own copies of net's helpers:
+/// a call from here would change how the compiler builds net's functions for other callers (as peer_of above).
+const SO_BUF_LOCK: libc::c_int = 72;
+const RCVBUF_LOCK: libc::c_int = 2;
+
+fn rl_bits(fd: RawFd) -> Option<libc::c_int> {
+    let (mut v, mut len) = (0 as libc::c_int, std::mem::size_of::<libc::c_int>() as libc::socklen_t);
+    // SAFETY: getsockopt writes at most `len` bytes into `v`
+    let r = unsafe { libc::getsockopt(fd, libc::SOL_SOCKET, SO_BUF_LOCK, &mut v as *mut _ as *mut _, &mut len) };
+    (r == 0).then_some(v)
+}
+
+fn rl_set(fd: RawFd, opt: libc::c_int, v: libc::c_int) -> bool {
+    // SAFETY: setsockopt reads one c_int
+    unsafe { libc::setsockopt(fd, libc::SOL_SOCKET, opt, &v as *const _ as *const _, std::mem::size_of::<libc::c_int>() as _) == 0 }
+}
+
+/// set SOCK_RCVBUF_LOCK if nobody holds it (false: held already, or a syscall failed)
+fn rl_lock(fd: RawFd) -> bool {
+    rl_bits(fd).is_some_and(|b| b & RCVBUF_LOCK == 0 && rl_set(fd, SO_BUF_LOCK, b | RCVBUF_LOCK))
+}
+
+/// clear only SOCK_RCVBUF_LOCK (autotuning goes on from the size it has); true also when it is clear already
+fn rl_unlock(fd: RawFd) -> bool {
+    match rl_bits(fd) {
+        Some(b) if b & RCVBUF_LOCK == 0 => true,
+        Some(b) => rl_set(fd, SO_BUF_LOCK, b & !RCVBUF_LOCK),
+        None => false,
+    }
+}
+
+/// SO_RCVBUF (the kernel doubles it; it also sets SOCK_RCVBUF_LOCK, which rl_lock set already)
+fn rl_rcvbuf(fd: RawFd, bytes: usize) {
+    rl_set(fd, libc::SO_RCVBUF, bytes.min(i32::MAX as usize) as libc::c_int);
 }

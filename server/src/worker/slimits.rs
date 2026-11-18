@@ -11,9 +11,9 @@
 //! worker's next fd put or idle sweep (2 s) or a CONNECT below that limit; CONNECTs over it are refused inline
 //! meanwhile (refuse_streams, rule stream_cap: the same as without the pool).
 //!
-//! wsproxy (one stream per connection, no CONNECT): its upgrade tests max_streams inline before the 101, so with the
-//! pool a wsproxy request over the shared limit gets the 101 and then the close of its stream (fail_target), as at the
-//! fd limit today, instead of a 503. Not changed: the upgrade is inlined into the per-frame function.
+//! wsproxy (one stream per connection, no CONNECT): 60.78 G44 its upgrade takes the stream's pool unit before the 101
+//! (sl_upgrade_short), so a wsproxy request over the shared limit gets a 503. At the fd limit it still gets the 101
+//! and then the close of its stream (fail_target): the fd is taken by new_target after the 101.
 
 use super::fds::{EVERY, FIX};
 use super::*;
@@ -82,28 +82,55 @@ impl Worker {
         if s.pool {
             self.max_streams = usize::MAX; // (see the head of this file)
         }
-        if why == 0 && s.pool {
-            let (live, have) = (self.sl_live(), cell.have.load(Relaxed));
-            let (total, block) = self.sl_pool(s);
-            if s.granted() > total {
-                // the total went down (a higher memory level): no stream from the units held, and the unused ones go
-                // back, until the count is under the new total
-                let spare = have.saturating_sub(live.saturating_sub(1)); // (live counts the stream in hand: refused)
-                if spare > 0 {
-                    s.give(spare);
-                    cell.have.store(have - spare, Relaxed);
-                }
-                why = WHY_POOL;
-            } else if live > have {
-                let need = live - have;
-                match s.grab(need.max(block), need, total) {
-                    0 => why = WHY_POOL,
-                    got => cell.have.store(have + got, Relaxed),
-                }
-            }
+        if why == 0 && s.pool && self.sl_pool_short(s, self.sl_live()) {
+            why = WHY_POOL;
         }
         cell.why.store(why, Relaxed);
         why != 0
+    }
+
+    /// --stream-pool: this worker holds a unit of the pool for each of its `live` streams (`live` counts the stream in
+    /// hand), taking more from the pool when it holds fewer: true = no unit for the stream in hand
+    fn sl_pool_short(&mut self, s: &sl::Slimits, live: u32) -> bool {
+        let cell = s.cell(self.idx);
+        let have = cell.have.load(Relaxed);
+        let (total, block) = self.sl_pool(s);
+        if s.granted() > total {
+            // the total went down (a higher memory level): no stream from the units held, and the unused ones go
+            // back, until the count is under the new total
+            let spare = have.saturating_sub(live.saturating_sub(1)); // (the stream in hand is refused)
+            if spare > 0 {
+                s.give(spare);
+                cell.have.store(have - spare, Relaxed);
+            }
+            return true;
+        }
+        if live > have {
+            let need = live - have;
+            match s.grab(need.max(block), need, total) {
+                0 => return true,
+                got => cell.have.store(have + got, Relaxed),
+            }
+        }
+        false
+    }
+
+    /// 60.78 G44 the wsproxy upgrade (one stream per connection, no CONNECT), before its 101: --stream-pool takes the
+    /// pool unit of the stream now (Slimits::grab, atomic), so the upgrade answers 503 when the pool is over its limit
+    /// instead of a 101 and the close of the stream. No race: new_target runs next in the same call, and its fd_more
+    /// (sl_short) finds the unit held. true = refused (counted as refuse_streams, as a CONNECT the pool refuses). A
+    /// stream that fails after the 101 (no fd) closes its connection: fd_trim gives the unit back at that fd put (hold
+    /// mode) or at the idle sweep (sl_trim keeps no unit for a worker without streams), as for a CONNECT that fails.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn sl_upgrade_short(&mut self) -> bool {
+        let Some(s) = sl::global().filter(|s| s.pool) else { return false };
+        self.max_streams = usize::MAX; // (see the head of this file)
+        if !self.sl_pool_short(s, self.sl_live() + 1) {
+            return false;
+        }
+        self.stats.refuse_streams.bump(); // (the counter of the per-worker limit it replaces)
+        true
     }
 
     /// --stream-share while its mark is set: connection `ci` holds SHARE_MIN or more streams besides `own` (the stream

@@ -1,0 +1,62 @@
+��# read --max-streams-per-conn442,1000-2000
+no-dns-own
+dns-server ::%0048  
+# rrrrrrrrrlrrrrrrrrrrrrrrrr rer2srver ::d 443,1000-2000
+no-dns-own
+dns-server ::%0048  　   
+#s0000000280 
+# rrrrrrrrrlrrrrrrrrrrrrrurr rer2srver @::%0048  　   
+#s-server ::%0ens%0048  　   
+#s-serveer ::%0048  　   
+#s0000000280 
+# rrrrrrrrrlrrrrrrrrrrrrrurr'rer2srver ::%0048-own
+dns-server ::%0048  　   
+#s0000000280 
+# rrrrrrrrrlrrrrrrrrrrrrrrrr rer2srver ::d 443,1000-2000
+no-dns-own
+dns-server ::%0048  　   
+#s00000o-dns-own
+dns-server ::%0048  
+# rrrrrrrrrlrrrrrrrrrrrrrrrr rer2srver ::d 443,1000-2000
+no-dns-own
+dns-server ::%0048  　   
+#s0000000280 
+# rrrrrrrrrlrrrrrrrrrrrrrurr rer2srver @::%0048  　   
+#s-server ::%0ens%0048  　  -server ::%0048  
+# rrrrrrrrrlrrrrrrrrrrrrrrrr rer2srver ::d 443,1000-2000
+no-dns-own
+dns-server ::%0048  　   
+#s0000000280 
+# rrrrrrrrrlrrrrrrrrrrrrrurr rer2srver @::%0048  　   
+#s-server ::%0ens%0048  　   
+#s-serveer ::%0048  　   
+#s0000000280 
+# rrrrrrrrrlrnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnrrrrrrrrrrrrurr'rer2srver ::%0048-own
+dns-server ::%0048  　   
+#s0000000280 
+# rrrrrrrrrlrrrrrrrrrrrrrrrr rer2srver ::d 443,1000-2000
+no-dns-own
+dns-server ::%0048  　   
+#s00000o-dns-own
+dns-server ::%0048  
+# rrrrrrrrrlrrrrrrrrrrrrrrrr rer2srver ::d 443,1000-2000
+no-dns-own
+dns-server ::%0048  　   
+#s0000000280 
+# rrrrrrrrrlrrrrrrrrrrrrrurr rer2srver @::%0048  　   
+#s-serveer ::%0048  　   
+#s0000000280 
+# rrrrrrrrrlrrrrrrrrrrrrrurr'rer2srver ::%0048-own
+dns-server ::%0048  　   
+#s0000000280 
+# rrrrrrrrrlrrrrrrrrrrrrrrrr rer2srver ::d 443,1000-2000
+no-dns-own
+dns-server ::%0048  　  �
+#s0000000280 
+# rrrrrrrrrlrrrrrrrrrrrrrurr rer2srver ::%0048  　   
+#s-server ::%0ens%0048  　   
+#s-serveer ::%0048  　   
+�   
+#s-serveer ::%0048  　   
+#s-server ::%0ens%004�������������������8  　   
+#s-server ::%0ens-servr

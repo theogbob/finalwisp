@@ -12,7 +12,8 @@ and 90% CI all use log(new/base). Marginal medians and their ratio are descripti
   tie   not significant and the 90% CI of the ratio is within 5% on the worse side (non-inferior, 60.12); idle row
         also: a WIN / LOSS / watch whose paired difference is below the RSS resolution (30.10; verdict_raw, note)
   unclear  significant but paired HL is neutral; or not significant, < 3% worse, and CI permits a > 5% cost
-Server CPU per unit of work and peak RSS are reported next to the main metric (they are less noisy than
+Server CPU per unit of work and peak RSS (the largest VmRSS of the server over 0.05 s samples of each run; "(VmHWM)" marks a
+row from records without samples) are reported next to the main metric (they are less noisy than
 throughput and catch a feature that costs CPU or memory without moving the headline number yet).
 Suites:
   lo      8 loopback cases, plain ws://
@@ -158,14 +159,17 @@ class Run:
                 self.problems.append(f"{cid}: {m} missing in some runs")
             unit = lambda v: [(x.get("cpu_pct") or 0) / x[m] if x.get(m) else None for x in (by[v][i] for i in reps)]
             cpu = compare(unit("base"), unit("new"), False) if m == metrics[0][0] else None
-            hwm = compare(get("base", "hwm_mib"), get("new", "hwm_mib"), False) if m == metrics[0][0] else None
+            # 60.78 G22: the peak is the per-sample VmRSS max of the server (rss_peak_mib, exact); VmHWM (per-CPU cached,
+            # several MiB high on many-CPU boxes) only for raw records of an older ab.py that has no samples
+            pkey = "rss_peak_mib" if all(by[v][i].get("rss_peak_mib") is not None for v in ("base", "new") for i in reps) else "hwm_mib"
+            hwm = compare(get("base", pkey), get("new", pkey), False) if m == metrics[0][0] else None
             if not invalid and ((c["ratio"] <= 1 - BIG) if hb else (c["ratio"] >= 1 + BIG)):  # no claims from invalid numbers
                 self.problems.append(f"{cid}: {m} paired HL ratio {c['ratio']} of base (>= {BIG:.0%} worse)")
             if invalid:  # no WIN/LOSS/watch from an invalid case (fix2, T08); the computed verdict stays visible
                 c = dict(c, verdict="invalid", verdict_raw=c["verdict"], invalid=invalid)
             self.rows.append({"case": cid, "metric": m, **c, "errors": errs, "_call": (args, metrics, tls, link, extra_env),
                               "cpu_per_unit": cpu and {"ratio": cpu["ratio"], "p": cpu["p"]},
-                              "peak_mib": hwm and {"base": hwm["base"], "new": hwm["new"], "p": hwm["p"]}})
+                              "peak_mib": hwm and {"base": hwm["base"], "new": hwm["new"], "p": hwm["p"], "source": pkey}})
 
     def idle(self):
         wb, port, eport = self.a.wbench, 6911, 6912
@@ -388,7 +392,7 @@ def table(rows):
         e = r.get("errors") or {}
         lines.append(f"| {r['case']} | {r['metric']} | {f(r.get('base'))} | {f(r.get('new'))} | {f(r.get('ratio'))} | {f(r.get('ratio_medians'))} | "
                      f"{(f(r['ci90'][0]) + '-' + f(r['ci90'][1])) if r.get('ci90') else ''} | {f(r.get('p'))} | **{r['verdict']}** | {f(cpu.get('ratio'))} | "
-                     f"{(f(pk.get('base')) + ' -> ' + f(pk.get('new'))) if pk else ('alive ' + str(al) if al else '')} | "
+                     f"{(f(pk.get('base')) + ' -> ' + f(pk.get('new')) + (' (VmHWM)' if pk.get('source') == 'hwm_mib' else '')) if pk else ('alive ' + str(al) if al else '')} | "
                      f"{e.get('base', '')}/{e.get('new', '')} |")
     return "\n".join(lines)
 

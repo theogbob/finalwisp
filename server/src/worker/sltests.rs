@@ -179,3 +179,189 @@ fn stream_pool_shares_the_memory_stream_limit() {
     assert_eq!((live(&w), refused(&w)), (10, 5));
     end(w);
 }
+
+/// a wsproxy request for 127.0.0.1:`lp` on the worker's listener: the client, once accepted (before its request), and
+/// a function that sends the request and returns the HTTP answer
+fn wsproxy_client(w: &mut Worker, port: u16) -> TcpStream {
+    let before = w.stats.accepted.get();
+    let c = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    until(w, "client accepted", |w| w.stats.accepted.get() > before);
+    c.set_nonblocking(true).unwrap();
+    c
+}
+
+fn wsproxy_ask(w: &mut Worker, c: &mut TcpStream, lp: u16) -> String {
+    let req = format!(
+        "GET /p/127.0.0.1:{lp} HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
+         Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+    );
+    c.write_all(req.as_bytes()).unwrap();
+    let mut got = Vec::new();
+    until(w, "the HTTP answer", |_| {
+        drain(c, &mut got);
+        got.windows(4).any(|x| x == b"\r\n\r\n")
+    });
+    String::from_utf8_lossy(&got).into_owned()
+}
+
+/// 60.78 G44 --stream-pool and the wsproxy upgrade. The other worker holds all units of the pool but one: a wsproxy
+/// request gets the 101 and its stream holds the last unit, taken before the 101; the next one gets a 503 and no 101
+/// (refuse_streams), and its client is closed. A wsproxy stream that fails after the 101 because no fd is left (the
+/// documented case: the fd is taken after the 101) gives its unit back when its connection closes (marked G44 (b) below).
+#[test]
+fn stream_pool_answers_a_wsproxy_upgrade_over_the_limit_with_503() {
+    let s = Slimits::new(false, true, 2);
+    s.test_per.store(4, Relaxed);
+    sl::set_test(Some(s));
+    let pool = sl::global().unwrap();
+    let total = sl::pool_total(4, 2);
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let lp = l.local_addr().unwrap().port();
+    let (mut w, p, _r, g) = rig_n(0, 2, 64, MARK_POOL);
+    assert_eq!(pool.grab(total - 1, total - 1, total), total - 1, "the other worker's units");
+    let mut a = wsproxy_client(&mut w, p);
+    let got = wsproxy_ask(&mut w, &mut a, lp);
+    assert!(got.starts_with("HTTP/1.1 101"), "{got}");
+    until(&mut w, "the wsproxy stream", |w| live(w) == 1);
+    assert_eq!((w.sl_have(), pool.granted(), w.stats.refuse_streams.get()), (1, total, 0));
+    let mut b = wsproxy_client(&mut w, p);
+    let got = wsproxy_ask(&mut w, &mut b, lp);
+    assert!(got.starts_with("HTTP/1.1 503") && !got.contains(" 101 "), "{got}");
+    assert_eq!((live(&w), w.sl_have(), w.stats.refuse_streams.get()), (1, 1, 1), "no stream, no unit for the refused one");
+    // the first stream ends: its unit is unused now
+    drop(a);
+    until(&mut w, "the wsproxy stream closed", |w| live(w) == 0);
+    w.fd_trim(true);
+    assert_eq!((w.sl_have(), pool.granted()), (0, total - 1));
+    // the documented case: no fd is left after the 101. The unit taken for the upgrade is not lost: it stays with the
+    // worker until fd_trim (here the idle sweep's) gives it back
+    let mut c = wsproxy_client(&mut w, p);
+    g.give(std::mem::take(&mut w.fd_pool)); // (the worker's unused fds of its block go back: none left in hand)
+    let held = g.granted();
+    assert_eq!(g.grab(64, 1), 64 - held, "every fd taken (other workers)");
+    let got = wsproxy_ask(&mut w, &mut c, lp);
+    assert!(got.starts_with("HTTP/1.1 101"), "the fd is taken after the 101: {got}");
+    until(&mut w, "the stream refused at the fd limit", |w| live(w) == 0 && w.stats.refuse_fd.get() >= 1);
+    // G44 (b): the unit of the wsproxy stream that failed after the 101 goes back with the connection. The stream never
+    // had an fd; its failure closes the connection (target_eof of a wsproxy stream, a close the server starts after the
+    // upgrade: 60.78 B3 it lingers until the client's EOF, at most LINGER_PLAIN), whose fd put trims (hold mode), or
+    // else the idle sweep does (fd_trim(true)); sl_trim keeps no unit for a worker without streams.
+    // (1) the client reads the Close and closes: the connection, its fd and the unit go at once
+    assert_eq!((w.lingering.len(), w.sl_have()), (1, 1), "lingering, the unit still held");
+    drop(c);
+    until(&mut w, "the lingering connection closed at the client's EOF", |w| w.clients.slots.iter().all(|s| s.1.is_none()));
+    assert_eq!((w.sl_have(), pool.granted(), w.stats.linger_capped.get()), (0, total - 1, 0), "the upgrade's unit given back");
+    assert_eq!(super::fd::fds(&w), 0, "and its fd");
+    // (2) a client that never closes: the connection, its fd and the unit go at the linger's bound
+    let mut d = wsproxy_client(&mut w, p);
+    let got = wsproxy_ask(&mut w, &mut d, lp);
+    assert!(got.starts_with("HTTP/1.1 101"), "{got}");
+    until(&mut w, "the second stream refused at the fd limit", |w| w.stats.refuse_fd.get() >= 2 && w.lingering.len() == 1);
+    assert_eq!(w.sl_have(), 1);
+    let bound = w.lingering[0].until;
+    assert!(bound <= Instant::now() + super::super::linger::LINGER_PLAIN, "the bound: LINGER_PLAIN at most");
+    w.lingering[0].until = Instant::now(); // (the bound, without the 5 s wait: lgtests' trickle test waits for it)
+    until(&mut w, "the lingering connection closed at its bound", |w| w.clients.slots.iter().all(|s| s.1.is_none()));
+    assert_eq!((w.sl_have(), pool.granted(), w.stats.linger_capped.get()), (0, total - 1, 1), "the unit given back at the bound");
+    assert_eq!(super::fd::fds(&w), 0, "and its fd");
+    drop(d);
+    g.give(64 - held);
+    end(w);
+    sl::set_test(None);
+}
+
+/// a masked (zero key) binary frame with one Wisp DATA packet of `n` bytes, 64-bit length form
+fn big_data(sid: u32, n: usize) -> Vec<u8> {
+    let mut f = vec![0x82, 0x80 | 127];
+    f.extend(((5 + n) as u64).to_be_bytes());
+    f.extend([0, 0, 0, 0, 0x02]);
+    f.extend(sid.to_le_bytes());
+    f.resize(f.len() + n, 0x5a);
+    f
+}
+
+/// 60.78 bundle B4 (not the stream limits): 20.06 known limit "128 credits x 16 MiB frames could exceed the 64 MiB
+/// per-stream pending cap". A client within its credit sends 16 MiB DATA frames to a target that reads nothing: the
+/// stream's backlog never passes PEND_CEIL (PEND_HARD + the level-0 rbuf), the stream is closed with 0x49 (shed_hold)
+/// when a frame would take it past, and the connection survives: a second stream of it carries data afterwards, and
+/// the client is read again. (64 KiB frames past PEND_HARD and PEND_CEIL get the hold, not this close:
+/// worker::tests::honest_upload_over_pend_hard_pauses_instead_of_close.) Mutation check: PEND_CEIL = usize::MAX makes
+/// the stream only held: the 20 s deadline fails the test.
+#[test]
+fn big_frames_in_credit_stop_at_pend_ceil() {
+    sl::set_test(None);
+    let (mut w, p, _r, _) = rig_n(0, 1, u32::MAX, 0);
+    w.pend_cap = usize::MAX; // (mem::tests may set a global budget meanwhile: pend_sweep would shed)
+    let stall = TcpListener::bind("127.0.0.1:0").unwrap(); // never accepted, never read
+    let sink = TcpListener::bind("127.0.0.1:0").unwrap();
+    let (mut c, ci) = client(&mut w, p);
+    c.write_all(&connect(1, false, stall.local_addr().unwrap().port())).unwrap();
+    until(&mut w, "stream 1 open", |w| w.clients.at(ci).streams.get(&1).is_some_and(|&ti| w.targets.at(ti).state == TState::Open));
+    let ti = *w.clients.at(ci).streams.get(&1).unwrap();
+    // 7 frames of 16 MiB (112 MiB, 7 of the 128 credits), written as the worker reads them
+    let frame = big_data(1, MAX_FRAME - 64);
+    let (mut sent, total, mut peak) = (0usize, 7 * frame.len(), 0usize);
+    let mut got = Vec::new();
+    // (a deadline: a stream that is only held, never closed, must fail the test, not hang it)
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while sent < total && !closed_with(&got, 1, CLOSE_THROTTLED) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "stream 1 neither closed nor done in 20 s (held at {peak} of backlog, {sent} of {total} bytes sent)"
+        );
+        let at = sent % frame.len();
+        match c.write(&frame[at..]) {
+            Ok(n) => sent += n,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(e) => panic!("client write: {e}"),
+        }
+        pump(&mut w, 1);
+        if let Some(t) = w.targets.get(ti, w.targets.gen(ti)) {
+            peak = peak.max(t.pend.len() - t.phead);
+        }
+        drain(&mut c, &mut got);
+    }
+    assert!(peak <= PEND_HARD + mem::STAGES[0].rbuf_max, "backlog past PEND_CEIL: {peak}");
+    assert!(throttled(&mut w, &mut c, &mut got, 1..2), "stream 1 closed with 0x49 ({sent} of {total} bytes sent)");
+    assert!(peak > PEND_HARD - MAX_FRAME, "the stream had got near the cap: {peak}");
+    assert_eq!(w.stats.shed_hold.get(), 1, "counted as shed_hold");
+    // the connection goes on: what it still sends for stream 1 is dropped (the stream is gone); a new stream carries data
+    // (the frame in progress is finished first: its rest is dropped with the stream)
+    let mut left = (frame.len() - sent % frame.len()) % frame.len();
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while left > 0 {
+        assert!(std::time::Instant::now() < deadline, "the rest of the frame was not read in 20 s");
+        match c.write(&frame[frame.len() - left..]) {
+            Ok(n) => left -= n,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(e) => panic!("client write: {e}"),
+        }
+        pump(&mut w, 1);
+    }
+    until(&mut w, "the client read again", |w| !w.clients.at(ci).hpaused && w.clients.at(ci).rpos == w.clients.at(ci).rlen);
+    c.set_nonblocking(false).unwrap();
+    c.write_all(&connect(2, false, sink.local_addr().unwrap().port())).unwrap();
+    c.write_all(&wisp(0x02, 2, b"after the close")).unwrap();
+    c.set_nonblocking(true).unwrap();
+    let (mut peer, _) = {
+        sink.set_nonblocking(true).unwrap();
+        let mut a = None;
+        until(&mut w, "stream 2 connected", |_| {
+            a = sink.accept().ok();
+            a.is_some()
+        });
+        a.unwrap()
+    };
+    peer.set_nonblocking(true).unwrap();
+    let mut seen = Vec::new();
+    until(&mut w, "stream 2's data at its target", |_| {
+        let mut b = [0u8; 256];
+        if let Ok(n) = std::io::Read::read(&mut peer, &mut b) {
+            seen.extend_from_slice(&b[..n]);
+        }
+        seen.ends_with(b"after the close")
+    });
+    assert!(w.clients.get(ci, w.clients.gen(ci)).is_some_and(|c| !c.dead && !c.closing), "the connection survived");
+    drop(stall);
+    end(w);
+}

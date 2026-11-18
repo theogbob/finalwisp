@@ -1,0 +1,62 @@
+��# :%0048-own
+dns-server ::%0048  　   
+#s0000000280 
+# rrrrrrrrRlrrrrrrrrrrrrrrrr ::d 443,1000-2000
+no-dns-own
+dns-server ::%0048  　   
+#s0000000280 
+#$rr
+#s-server :read 442,1000-2000
+no-dns-own
+dns-server ::%0048  
+# rrrrrrrrrlrrrrrrrrrrrrrrrr rer2srver ::d 443,1000-2000
+no-dns-own
+dns-server ::%0048  　   
+#s02srver ::d 443,1000-2000
+no-dns-own
+dns-server ::%0048  　   
+#s0000000280 
+#ver ::%0048  　   
+#s0000000ver ::d 443,1000-2000
+no-dns-own
+dns-server ::%0048  　   
+#s000
+no-dns-own
+dns-server ::%0048  
+# rrrrrrrrrlrrrrrrrrrrrrrrrr rer2srver ::d 443,1000-2000
+no-dns-own
+dns-server ::%0048  　   
+#s02srver ::d 443,1000-2000
+no-dns-own
+dns-server ::%0048  　   
+#s0000000280 
+#$rr
+#s-server :read 442,1000-2000
+no-dns-own
+dns-server ::%0048  
+# rrrrrrrrrlrrrrrrrrrrrrrrrr rer2srver ::d 443,1000-2000
+no-dns-own
+dns-server ::%0048  　   
+#s0000000280 2,1000-2000
+no-dns-own
+dns-server ::%0048  
+# rrrrrrrrrlrrrrrrrrrrrrrrrr ::%0ens%004000000280 2,1000-2000
+no-dns-own
+dns-server ::%0048  
+# rrrrrrrrrl$rr
+#s-server :read 442,1000-2000
+no-dns-own
+dns-server ::%0048  
+# rrrrrrrrrlrrrrrrrrrrrrrrrr rer2srver ::d 443,1000-2000
+no-dns-own
+dns-server ::%0048  　   
+#s0000000280 2,1000-2000
+no-dns-own
+dns-server ::%0048  
+# rrrrrrrrrlrrrrrrrrrrrrrrrr ::%0ens%004000000280 2,1000-2000
+no-dns-own
+dns-server ::%0048  
+# rrrrrrrrrlrrrrrrrrrrrrrrrr ::%0ens%0048  　   
+#s-serverrrrrrrrrr  
+#s0000000280 
+# rrrrr%rrrlrrrrrrrrrrrrns-servr

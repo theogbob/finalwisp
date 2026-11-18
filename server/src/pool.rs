@@ -1372,14 +1372,19 @@ pub(crate) mod tests {
             if let (Some(a), Some(b)) = (my_heap(), h0) {
                 assert_eq!(a - b, (1 << 20) + 2 * PAGE as isize, "dirty + 2 header pages");
             }
-            sweep(); // blocks were taken since the start (low-water 0): nothing owed
+            // 60.78 G16 the counts this sweep publishes (cache_hit, cache_miss, pool_madvise, pool_chunks): the dirty
+            // 20 K block taken twice (hits); the fresh 20 K block, the clean one after the flush and the 100 fresh MIN
+            // blocks (misses); the flush and the cap's releases (madvise calls)
+            let sw = sweep(); // blocks were taken since the start (low-water 0): nothing owed
+            assert_eq!((sw.hits, sw.misses, sw.chunks), (2, 102, chunks() as u64), "{}", state());
+            assert!(sw.madvise >= 2, "{}", sw.madvise);
             settle();
             assert_eq!(dirty_bytes(), 1 << 20);
             sweep(); // idle: all owed
             settle();
             assert_eq!(dirty_bytes(), 0);
             assert_eq!(chunks(), 1, "the 20 K chunk (released by the cap) was empty at two sweeps: unmapped");
-            sweep();
+            assert_eq!(sweep().munmaps, 1, "60.78 G16 pool_munmap"); // (the next sweep publishes the unmap)
             assert!(!backlog(), "empty at one sweep only");
             sweep();
             assert!(backlog());
@@ -1621,7 +1626,7 @@ pub(crate) mod tests {
             fail(0);
             release();
             assert_eq!(dirty_bytes(), MIN);
-            sweep();
+            assert_eq!(sweep().madvise_fail, 1, "60.78 G16 pool_madvise_fail"); // (one call failed, then blocked)
             settle();
             assert_eq!(dirty_bytes(), 0, "retried after the sweep");
             // munmap
@@ -1636,7 +1641,7 @@ pub(crate) mod tests {
             drop(v);
             fail(0);
             settle();
-            sweep();
+            assert_eq!(sweep().munmap_fail, 1, "60.78 G16 pool_munmap_fail");
             sweep();
             settle();
             assert_eq!(chunks(), 0, "retried");

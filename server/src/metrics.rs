@@ -119,7 +119,8 @@ stats! {
     pend_pauses,
     /// streams shed with 0x49 (RST): upload backlog over pend_cap for 2 sweeps (pend_sweep)
     shed_pend,
-    /// streams shed with 0x49 (RST): a 0x49 hold that expired (hold_expired)
+    /// streams shed with 0x49 (RST): a 0x49 hold that expired (hold_expired), or a stream within its credit that a
+    /// frame over 256 KiB would take past PEND_CEIL (frames far larger than real clients send)
     shed_hold,
     /// streams shed with 0x49 (RST): unsent upload backlog over 1 MiB on entering level 3
     shed_l3_enter,
@@ -130,7 +131,8 @@ stats! {
     /// clients reset (RST): level 3 without progress (l3_sweep) or a wsproxy backlog over pend_cap
     shed_client,
     /// 70.02 clients reset as dead peers (no ACK for 150 s with output queued); v1.3.1 K2 and clients whose read or
-    /// write failed with a keepalive or retransmission timeout (ETIMEDOUT, EHOSTUNREACH)
+    /// write failed with a keepalive or retransmission timeout (ETIMEDOUT, EHOSTUNREACH), also one found while the
+    /// client was not read or was closing
     dead_peers,
     /// HTTP upgrade handshakes expired (HS_SWEEPS)
     hs_expired,
@@ -236,10 +238,9 @@ stats! {
     dest_keys_max,
     /// 60.42 --credit-pace: upload CONTINUEs held because the stream's target was parked on its client's output
     cpace_holds,
-    /// 60.47 --park-rcvlock: receive buffers locked (a download-only stream's target parked again on its client's output)
+    /// 60.47 --park-rcvlock: no effect since 1.4.0 (always 0; kept so that the metrics output stays the same)
     rcvlock_locks,
-    /// 60.47 --park-rcvlock: lock, unlock or floor-raise syscalls that failed, or a raise that lowered a buffer (a failed
-    /// lock leaves the stream unlocked, a failed unlock is tried again at the next unparked resume)
+    /// 60.47 --park-rcvlock: no effect since 1.4.0 (always 0; kept so that the metrics output stays the same)
     rcvlock_errors,
     /// 60.59 hint: requests with a forwarding header (X-Forwarded-For, Forwarded, X-Real-IP, CF-Connecting-IP) from a
     /// loopback or private peer that is not a trusted proxy: probably a reverse proxy missing from --trusted-proxy
@@ -291,8 +292,10 @@ stats! {
     /// 60.63 --port-share gauge (max, not summed): the most target sockets to one destination address and port, all
     /// workers, as this worker saw it at its last count
     port_dest_max,
-    /// 60.63 --dest-failfast: stream refused with 0x43 at once: its destination did not answer (8 or more connects with
-    /// no answer to 4 SYNs each, none that opened), it was not the probe, and another client was connected
+    /// 60.63 --dest-failfast: stream refused with 0x43 at once, while another client was connected: its destination did
+    /// not answer (8 or more connects near their deadline with no answer to 4 SYNs each, none that opened) and it was
+    /// not the probe; or (60.78 bundle B1) its client address had 64 connects in flight that got no answer for 3 s or
+    /// go to such destinations, and this one went to such a destination or to one without an open stream
     refuse_dest_dead,
     /// 60.63 --dest-failfast gauge: destinations that do not answer, as the workers hold them at their last count
     dest_dead,
@@ -311,6 +314,26 @@ stats! {
     moved_back,
     /// 60.64 --auto-balance: connections reset because the worker they moved to could not register their sockets
     moved_reset,
+    /// 60.78 adaptive splice: connections classed near at their first need of 64 KiB reads (more than 4 streams, socket
+    /// backed up): min RTT under 10 ms, no RTT sample, or a unix socket
+    splice_near,
+    /// 60.78 adaptive splice: connections classed far at that point (min RTT 10 ms or more): their targets get 64 KiB reads
+    /// while their socket stays backed up
+    splice_far,
+    /// 60.78 adaptive splice: connections older than the kernel's min RTT window (tcp_min_rtt_wlen) at that point: not
+    /// read, treated as near
+    splice_old,
+    /// 60.78 --unread-close (relief): bytes read from parked target sockets above half of the socket share into their client's
+    /// queue while the host's TCP memory was short
+    relief_bytes,
+    /// 60.78 --unread-close (relief): target sockets read out that way (one per read-out)
+    relief_streams,
+    /// 60.78 --unread-close (relief): target sockets above half of the share left as they were (the budget's quarter for such
+    /// bytes, or their client's queue, was full), counted at every check (every 2 s) that left one
+    relief_capped,
+    /// 60.78 lingering close: closing connections closed at a bound (5 s plain, 10 s with the built-in TLS, or 1 MiB
+    /// read and discarded) instead of at the client's EOF (such a close may reset the connection)
+    linger_capped,
 }
 
 impl Stats {
@@ -536,6 +559,85 @@ mod tests {
         assert_eq!(with_dropped("a".into(), 0), "a");
         assert_eq!(with_dropped("a".into(), 3), "a (3 earlier log lines dropped)");
         log_nowait("finalwisp: test line from metrics::tests (ignore)".into()); // starts the logger; must not block
+    }
+
+    /// 60.78 G46: the counter operations (single-writer add wraps, max raises only, the shared forms)
+    #[test]
+    fn ctr_ops() {
+        let c = Ctr::default();
+        c.bump();
+        c.add(4);
+        assert_eq!(c.get(), 5);
+        c.max(3);
+        assert_eq!(c.get(), 5, "max never lowers");
+        c.max(9);
+        assert_eq!(c.get(), 9);
+        c.set(u64::MAX);
+        c.bump();
+        assert_eq!(c.get(), 0, "wraps (no panic in a counter)");
+        c.add_shared(7);
+        c.max_shared(2);
+        assert_eq!(c.get(), 7);
+        c.max_shared(70);
+        assert_eq!(c.get(), 70);
+    }
+
+    /// 60.78 G46 + G16: sum() merges a `_max` gauge by max and every other counter by sum, in declaration order with
+    /// unique names; no workers gives no counters; pool_sweep publishes every field of a pool sweep to its counter (the
+    /// pool tests assert the sweep values: cache_hit, cache_miss, pool_remote, pool_madvise, pool_munmap,
+    /// pool_madvise_fail, pool_munmap_fail, pool_capped, pool_chunks)
+    #[test]
+    fn sum_merge_rules_and_pool_sweep() {
+        assert!(sum(&[]).0.is_empty());
+        let (a, b) = (Arc::new(Stats::new()), Arc::new(Stats::new()));
+        a.ktls_starve_ms_max.max(40);
+        b.ktls_starve_ms_max.max(25);
+        a.dest_keys_max.set(3);
+        b.dest_keys_max.set(11);
+        a.dead_peers.add(2);
+        b.dead_peers.add(5);
+        a.close[0x47].add(2);
+        b.close[0x47].bump();
+        let (s, close) = sum(&[a.clone(), b.clone()]);
+        let get = |k: &str| s.iter().find(|e| e.0 == k).unwrap_or_else(|| panic!("{k}")).1;
+        assert_eq!((get("ktls_starve_ms_max"), get("dest_keys_max"), get("dead_peers")), (40, 11, 7));
+        assert_eq!(close[0x47], 3);
+        let names: Vec<_> = s.iter().map(|e| e.0).collect();
+        assert_eq!(names, Stats::help().iter().map(|h| h.0).collect::<Vec<_>>(), "declaration order");
+        let mut uniq = names.clone();
+        uniq.sort_unstable();
+        uniq.dedup();
+        assert_eq!(uniq.len(), names.len(), "unique names");
+        // pool_sweep: counts add up across sweeps, the two gauges take the last value (dirty in KiB)
+        let st = Stats::new();
+        let sw = |k: u64| crate::pool::Sweep {
+            hits: k,
+            misses: k + 1,
+            fallback: k + 2,
+            remote: k + 3,
+            madvise: k + 4,
+            munmaps: k + 5,
+            madvise_fail: k + 6,
+            munmap_fail: k + 7,
+            capped: k + 8,
+            chunks: k + 9,
+            dirty: (k + 10) << 10,
+        };
+        st.pool_sweep(sw(10));
+        st.pool_sweep(sw(100));
+        let got = [
+            st.cache_hit.get(),
+            st.cache_miss.get(),
+            st.pool_fallback.get(),
+            st.pool_remote.get(),
+            st.pool_madvise.get(),
+            st.pool_munmap.get(),
+            st.pool_madvise_fail.get(),
+            st.pool_munmap_fail.get(),
+            st.pool_capped.get(),
+        ];
+        assert_eq!(got, std::array::from_fn(|i| 110 + 2 * i as u64));
+        assert_eq!((st.pool_chunks.get(), st.pool_dirty_kib.get()), (109, 110), "gauges: the last sweep");
     }
 
     #[test]

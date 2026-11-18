@@ -1,0 +1,8 @@
+"BGET / HTTP/1.1
+Host: x
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub52jZQ==
+Sec-WebSocket-Version: 13
+
+‚“7ú!<6û!}Æ/=R‚@PG–DT•L‚’7ú!=6ù7!=ûq=Y†XOÛLM[Ÿ‚7ú!=6ÿ!=7ûš<_•RI‚Š«úÿÿÿÿÿÿÿÿdiÕ

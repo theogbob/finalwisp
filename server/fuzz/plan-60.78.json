@@ -1,0 +1,96 @@
+{
+ "lanes": [
+  [
+   {
+    "target": "worker-stream",
+    "secs": 43200,
+    "max_len": 140000
+   }
+  ],
+  [
+   {
+    "target": "worker-wisp",
+    "secs": 43200,
+    "max_len": 16384
+   }
+  ],
+  [
+   {
+    "target": "worker-wisp",
+    "secs": 21600,
+    "max_len": 16384
+   },
+   {
+    "target": "worker-tls",
+    "secs": 21600,
+    "max_len": 16384
+   }
+  ],
+  [
+   {
+    "target": "config-parse",
+    "secs": 21600,
+    "max_len": 8192
+   },
+   {
+    "target": "cli-parse",
+    "secs": 21600,
+    "max_len": 2048
+   }
+  ],
+  [
+   {
+    "target": "upstream-parse",
+    "secs": 7200,
+    "max_len": 9000
+   },
+   {
+    "target": "policy-host",
+    "secs": 7200,
+    "max_len": 4096
+   },
+   {
+    "target": "proxy-parse",
+    "secs": 10800,
+    "max_len": 4200
+   },
+   {
+    "target": "http-parse",
+    "secs": 10800,
+    "max_len": 20000
+   },
+   {
+    "target": "dns-parse",
+    "secs": 7200,
+    "max_len": 2048
+   }
+  ],
+  [
+   {
+    "target": "worker-stream",
+    "secs": 21600,
+    "max_len": 140000
+   },
+   {
+    "target": "ws-parse",
+    "secs": 5400,
+    "max_len": 64
+   },
+   {
+    "target": "tls-framing",
+    "secs": 5400,
+    "max_len": 1024
+   },
+   {
+    "target": "ext-records",
+    "secs": 5400,
+    "max_len": 2048
+   },
+   {
+    "target": "pool-ops",
+    "secs": 5400,
+    "max_len": 8192
+   }
+  ]
+ ]
+}

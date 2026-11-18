@@ -909,6 +909,8 @@ mod tests {
     /// afail (A SERVFAIL, AAAA ok), tc (UDP: TC=1; TCP: A 192.0.2.7), nx (NXDOMAIN), junk (garbage and a wrong
     /// ID first, then ok), slow (no reply), cn (CNAME to ok.test).
     static COUNT4_AAAA: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    static COUNT4_NAME: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+    static COUNT4_RUN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     static QNAMES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
     fn fake() -> SocketAddr {
         fn answer(q: &[u8], tcp: bool) -> Vec<Vec<u8>> {
@@ -937,9 +939,10 @@ mod tests {
                     QNAMES.lock().unwrap().push(labels.join("."));
                     vec![good]
                 }
-                "count4" => {
-                    // 60.20 C1: AAAA queries for this name are counted (--no-ipv6-targets sends none)
-                    if qt == T_AAAA {
+                h if h.starts_with("count4") => {
+                    // 60.20 C1: AAAA queries for this name are counted (--no-ipv6-targets sends none). 60.74 4.5: a run
+                    // again of the test asks its own name (count4rN), so a late query of an earlier run is not counted
+                    if qt == T_AAAA && h == COUNT4_NAME.lock().unwrap().as_str() {
                         COUNT4_AAAA.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     }
                     vec![good]
@@ -1018,6 +1021,11 @@ mod tests {
 
     #[test]
     fn lookups_against_a_fake_server() {
+        // 60.74 4.5: every answer must come inside a 1 s window: a run judged only with the host lag below 250 ms (two
+        // thread wakeups per query); the bounds on durations add the measured lag
+        crate::testlag::judged("lookups_against_a_fake_server", Duration::from_millis(250), 5, lookups_against_a_fake_server_run);
+    }
+    fn lookups_against_a_fake_server_run(lag: &crate::testlag::Lag) {
         let srv = fake();
         // the first server refuses (ICMP port unreachable): every family moves on to the fake at once
         let dead = UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
@@ -1027,7 +1035,12 @@ mod tests {
         let t0 = Instant::now();
         let ok = r.lookup("ok.test", Instant::now(), &mut never, &mut |_| {}).unwrap();
         assert!(ok.contains(&p("192.0.2.1")) && ok.contains(&p("2001:db8::1")) && ok.len() == 2, "{ok:?}");
-        assert!(t0.elapsed() < Duration::from_millis(500), "refused server skipped at once: {:?}", t0.elapsed());
+        assert!(
+            t0.elapsed() < lag.bound(Duration::from_millis(500), 2),
+            "refused server skipped at once: {:?} (lag {:?})",
+            t0.elapsed(),
+            lag.max()
+        );
         assert_eq!(r.lookup("afail.test", Instant::now(), &mut never, &mut |_| {}), Ok(vec![p("2001:db8::1")]), "A failure keeps AAAA");
         assert_eq!(r.lookup("tc.test.", Instant::now(), &mut never, &mut |_| {}), Ok(vec![p("192.0.2.7")]), "TC -> TCP");
         assert_eq!(r.lookup("nx.test", Instant::now(), &mut never, &mut |_| {}), Err(true));
@@ -1042,11 +1055,11 @@ mod tests {
         let t0 = Instant::now();
         assert_eq!(r.lookup("slow.test", Instant::now(), &mut never, &mut |_| {}), Err(false));
         let took = t0.elapsed();
-        assert!(took >= Duration::from_millis(900) && took < Duration::from_millis(2500), "{took:?}");
+        assert!(took >= Duration::from_millis(900) && took < lag.bound(Duration::from_millis(2500), 2), "{took:?} (lag {:?})", lag.max());
         // admitted long ago (queue time counts): fails without asking
         let t0 = Instant::now();
         assert_eq!(r.lookup("ok.test", Instant::now() - Duration::from_secs(10), &mut never, &mut |_| {}), Err(false));
-        assert!(t0.elapsed() < Duration::from_millis(100));
+        assert!(t0.elapsed() < lag.bound(Duration::from_millis(100), 1), "{:?} (lag {:?})", t0.elapsed(), lag.max());
         // cancelled while waiting: gives up at the next wakeup (here: the 1 s window end)
         let t0 = Instant::now();
         let mut calls = 0;
@@ -1062,7 +1075,7 @@ mod tests {
             ),
             Err(false)
         );
-        assert!(t0.elapsed() < Duration::from_millis(1500), "{:?}", t0.elapsed());
+        assert!(t0.elapsed() < lag.bound(Duration::from_millis(1500), 2), "{:?} (lag {:?})", t0.elapsed(), lag.max());
     }
 
     /// 60.20 C1 --no-ipv6-targets: the own resolver asks A only (no AAAA query, no wait for one)
@@ -1093,21 +1106,33 @@ mod tests {
 
     #[test]
     fn ipv4_only_sends_no_aaaa() {
+        // 60.74 4.5: answers inside a 1 s window (judged with the host lag below 250 ms); the "no wait" bound adds the lag
+        crate::testlag::judged("ipv4_only_sends_no_aaaa", Duration::from_millis(250), 5, ipv4_only_sends_no_aaaa_run);
+    }
+    fn ipv4_only_sends_no_aaaa_run(lag: &crate::testlag::Lag) {
         use std::sync::atomic::Ordering::Relaxed;
         let srv = fake();
         let (r, _dir) = resolver(vec![srv], "options timeout:1 attempts:1\n", "");
         let mut never = || false;
         let p = |s: &str| s.parse::<IpAddr>().unwrap();
-        let both = r.lookup("count4.test", Instant::now(), &mut never, &mut |_| {}).unwrap();
+        let name = format!("count4r{}", COUNT4_RUN.fetch_add(1, Relaxed));
+        *COUNT4_NAME.lock().unwrap() = name.clone();
+        let host = format!("{name}.test");
+        let both = r.lookup(&host, Instant::now(), &mut never, &mut |_| {}).unwrap();
         assert_eq!(both.len(), 2, "{both:?}");
         let seen = COUNT4_AAAA.load(Relaxed);
         assert!(seen >= 1);
         let r = r.ipv4_only(true);
-        assert_eq!(r.lookup("count4.test", Instant::now(), &mut never, &mut |_| {}), Ok(vec![p("192.0.2.1")]));
+        assert_eq!(r.lookup(&host, Instant::now(), &mut never, &mut |_| {}), Ok(vec![p("192.0.2.1")]));
         assert_eq!(COUNT4_AAAA.load(Relaxed), seen, "no AAAA query sent");
         let t0 = Instant::now();
         assert_eq!(r.lookup("v4only.test", Instant::now(), &mut never, &mut |_| {}), Ok(vec![p("192.0.2.1")]));
-        assert!(t0.elapsed() < Duration::from_millis(500), "no wait for an AAAA answer: {:?}", t0.elapsed());
+        assert!(
+            t0.elapsed() < lag.bound(Duration::from_millis(500), 2),
+            "no wait for an AAAA answer: {:?} (lag {:?})",
+            t0.elapsed(),
+            lag.max()
+        );
         assert_eq!(r.lookup("aaaaonly.test", Instant::now(), &mut never, &mut |_| {}), Err(false), "A never answered");
         assert_eq!(r.lookup("nx.test", Instant::now(), &mut never, &mut |_| {}), Err(true), "NXDOMAIN stays definitive");
     }
@@ -1116,6 +1141,11 @@ mod tests {
     /// other family, and the final result holds both; no early call when both families answer together.
     #[test]
     fn early_family_delivery() {
+        // 60.74 4.5: "both families together, no early call" needs the two answers within RESOLUTION_DELAY (50 ms) of each
+        // other: a run is judged with the host lag at or below 40 ms; the upper bounds on times add the measured lag
+        crate::testlag::judged("early_family_delivery", Duration::from_millis(40), 5, early_family_delivery_run);
+    }
+    fn early_family_delivery_run(lag: &crate::testlag::Lag) {
         let srv = fake();
         let (r, _dir) = resolver(vec![srv], "options timeout:1 attempts:1\n", "");
         let p = |s: &str| s.parse::<IpAddr>().unwrap();
@@ -1132,18 +1162,26 @@ mod tests {
         assert_eq!(res, Ok(vec![p("192.0.2.1")]));
         assert_eq!(got.len(), 1, "{got:?}");
         assert_eq!(got[0].0, [p("192.0.2.1")]);
-        assert!(got[0].1 >= RESOLUTION_DELAY && got[0].1 < Duration::from_millis(400), "{got:?}");
+        assert!(got[0].1 >= RESOLUTION_DELAY && got[0].1 < lag.bound(Duration::from_millis(400), 2), "{got:?} (lag {:?})", lag.max());
         assert!(took >= Duration::from_millis(900), "{took:?}");
         // A never answered: AAAA early (at once if routable, else after the delay)
         let (res, got, _) = run("aaaaonly.test");
         assert_eq!(res, Ok(vec![p("2001:db8::1")]));
-        assert!(got.len() == 1 && got[0].0 == [p("2001:db8::1")] && got[0].1 < Duration::from_millis(400), "{got:?}");
+        assert!(
+            got.len() == 1 && got[0].0 == [p("2001:db8::1")] && got[0].1 < lag.bound(Duration::from_millis(400), 2),
+            "{got:?} (lag {:?})",
+            lag.max()
+        );
         // AAAA 300 ms late: A early, then the final holds both
         let (res, got, took) = run("late.test");
         let all = res.unwrap();
         assert!(all.len() == 2 && all.contains(&p("192.0.2.1")) && all.contains(&p("2001:db8::1")), "{all:?}");
-        assert!(got.len() == 1 && got[0].0 == [p("192.0.2.1")] && got[0].1 < Duration::from_millis(250), "{got:?}");
-        assert!(took >= Duration::from_millis(250) && took < Duration::from_millis(900), "{took:?}");
+        assert!(
+            got.len() == 1 && got[0].0 == [p("192.0.2.1")] && got[0].1 < lag.bound(Duration::from_millis(250), 2),
+            "{got:?} (lag {:?})",
+            lag.max()
+        );
+        assert!(took >= Duration::from_millis(250) && took < lag.bound(Duration::from_millis(900), 2), "{took:?} (lag {:?})", lag.max());
     }
 
     #[test]

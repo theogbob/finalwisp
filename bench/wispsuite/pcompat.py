@@ -34,12 +34,12 @@ from . import compat, proc, report
 
 BLOCK = 100  # ports per unit: compat.py uses base+0 .. base+99
 # Units that run alone (one step name selects its whole unit). Why each is here: see the 80.01 report, table "lanes".
-SERIAL_LANE = ("cargo", "fuzz-build", "pacing", "uplimit", "v2ext", "udp", "wispjs-udp", "wispjs", "wispjs-v2c", "membudget")
+SERIAL_LANE = ("cargo", "fuzz-build", "pacing", "uplimit", "v2ext", "udp", "wispjs-udp", "wispjs", "wispjs-v2c", "membudget", "forced-move")
 # Typical seconds (serial run of 2026-11-12, v13-final/glibc27): used to start the long units first. No verdict use.
 HINT_SECS = {"upstream": 199, "tls": 155, "adv-noprio": 136, "adv-lane": 108, "adv-v2c": 105, "uplimit": 61, "dns-own": 50,
              "proxyproto": 49, "dns-preset": 47, "fds": 41, "membudget": 35, "bounds": 33, "logs": 31, "limits": 23,
              "pacing": 23, "realip": 20, "cargo": 18, "policy": 15, "metrics": 13, "late": 31, "form": 120,
-             "streamshare": 8, "streampool": 12}
+             "streamshare": 8, "streampool": 12, "forced-move": 150}
 # 80.03 --quiet-par: the units that only burn CPU (no server of theirs is judged). They are bound to the heavy CPUs with
 # taskset. No other unit is bound: a server without --threads takes its thread count from the CPUs it may use
 # (available_parallelism), so a bound unit would test another server shape than today.

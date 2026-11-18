@@ -4,7 +4,7 @@ usage: upstream.py FINALWISP_BINARY BASEPORT
 Fake proxies in this process (SOCKS5 RFC 1928/1929, HTTP CONNECT) record what they receive and answer per case.
 Ports: BASEPORT server, +1 echo, +2 banner target (sends 220 first), +3 bulk source, +4 bye target; the fake proxies
 and the fake DNS server take ephemeral ports. The real-proxy matrix is upstream_real.py (60.32)."""
-import base64, hashlib, os, socket, struct, subprocess, sys, tempfile, threading, time
+import base64, hashlib, os, shutil, signal, socket, struct, subprocess, sys, tempfile, threading, time
 
 BIN, BASE = os.path.abspath(sys.argv[1]), int(sys.argv[2])
 P, E, BAN, BULK = BASE, BASE + 1, BASE + 2, BASE + 3
@@ -136,11 +136,12 @@ class Http:
             except OSError: pass
 
 D = tempfile.mkdtemp(prefix="fw-upstream-")
-def start(*args):
+def start(*args, wrap=()):
     log = open(os.path.join(D, f"srv{time.monotonic_ns()}.log"), "w+")
-    p = subprocess.Popen([BIN, str(P), "--host", "127.0.0.1", "--log-level", "debug", "--metrics-interval", "1", "--allow-loopback", *args],
-                         stdout=log, stderr=subprocess.STDOUT)
+    p = subprocess.Popen([*wrap, BIN, str(P), "--host", "127.0.0.1", "--log-level", "debug", "--metrics-interval", "1", "--allow-loopback", *args],
+                         stdout=log, stderr=subprocess.STDOUT, start_new_session=bool(wrap))
     p.logf = log
+    p.group = bool(wrap)  # a wrapper (bwrap) does not pass SIGTERM on: the signals go to the whole group
     for _ in range(100):
         if "capabilities:" in srvlog(p) or p.poll() is not None: break
         time.sleep(0.05)
@@ -149,12 +150,24 @@ def srvlog(p):
     with open(p.logf.name) as f: return f.read()
 TRIM = bool(os.environ.get("WST_TRIM"))  # wst compat --trim (80.01)
 def stop(p):
-    p.terminate()
+    def term(s=signal.SIGTERM):
+        if not getattr(p, "group", False): return p.terminate() if s == signal.SIGTERM else p.kill()
+        try: os.killpg(p.pid, s)
+        except ProcessLookupError: pass
+    term()
     if TRIM:  # a second SIGTERM = exit now (60.12). Without it a server that still has this test's connections drains (30 s), and the wait below ends in SIGKILL after 10 s
         try: p.wait(0.5)
-        except subprocess.TimeoutExpired: p.terminate()
+        except subprocess.TimeoutExpired: term()
     try: p.wait(10)
-    except subprocess.TimeoutExpired: p.kill(); p.wait()
+    except subprocess.TimeoutExpired: term(signal.SIGKILL); p.wait()
+    if getattr(p, "group", False):  # the wrapper is gone; the server in its group may still drain: wait for the whole group
+        t = time.time()
+        while True:
+            try: os.killpg(p.pid, 0)
+            except ProcessLookupError: break
+            if time.time() - t > 10: term(signal.SIGKILL)
+            if time.time() - t > 20: ok(False, f"the server group {p.pid} is still there 20 s after SIGTERM (SIGKILL sent)"); break
+            time.sleep(0.05)
 def metric(p, key):
     time.sleep(1.3)
     vals = [l for l in srvlog(p).splitlines() if "ev=metrics " in l]
@@ -318,15 +331,23 @@ ok(got == b"early-1early-2", f"DATA sent during the handshake arrives in order a
 #@all
 # retry: REP 04 for 127.0.0.1, OK for ::1 (fake proxy routes both to the echo)
 s4 = Socks(rep=lambda d: 4 if d == "127.0.0.1" else 0)
-#@seg socks5-retry 0.2
-stop(p); p = start("--upstream", f"socks5://127.0.0.1:{s4.port}")
-w = Wisp()
+#@seg socks5-retry 0.5
 has_v6 = any(a[0] == socket.AF_INET6 for a in socket.getaddrinfo("localhost", E))
-if has_v6:
-    echo_ok(w, "localhost", "REP 04 on 127.0.0.1, retry on ::1")
+BWRAP = shutil.which("bwrap")
+wrap = ()
+if not has_v6 and BWRAP:
+    # 60.78 G20: a host whose /etc/hosts has no ::1 for localhost (the laptop) runs the same case with a server that sees a
+    # private /etc/hosts (bwrap bind mount, no root; the host's file is not touched). The fake proxy answers both names.
+    hosts = os.path.join(D, "hosts")
+    with open(hosts, "w") as f: f.write("127.0.0.1 localhost\n::1 localhost\n")
+    wrap = (BWRAP, "--die-with-parent", "--dev-bind", "/", "/", "--ro-bind", hosts, "/etc/hosts")
+stop(p); p = start("--upstream", f"socks5://127.0.0.1:{s4.port}", wrap=wrap)
+w = Wisp()
+if has_v6 or BWRAP:
+    echo_ok(w, "localhost", "REP 04 on 127.0.0.1, retry on ::1" + ("" if has_v6 else " (a private /etc/hosts with ::1 localhost)"))
     ok([x[2] for x in s4.log if x[0] == "connect"][-2:] == ["127.0.0.1", "::1"], f"retry order v4 then v6 ({s4.log[-2:]})")
 else:
-    print("SKIP retry (localhost has no ::1)")
+    print("SKIP retry (localhost has no ::1, and no bwrap for a private /etc/hosts)")
 #@seg socks5-rep 1.6x8
 # REP codes
 for rep, want in each("socks5-rep", [(1, 0x03), (2, 0x48), (3, 0x42), (4, 0x42), (5, 0x44), (6, 0x43), (7, 0x03), (8, 0x03)]):

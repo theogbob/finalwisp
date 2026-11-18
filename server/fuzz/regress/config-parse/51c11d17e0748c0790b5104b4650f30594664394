@@ -1,0 +1,8 @@
+ÿþ#block-smtp`no-direct-ipk-dest 197.168.0.0/16
+block-smtp
+no-direct-ip
+# l8# l88.0.0/16
+park-rcvlock
+no-direct-ip
+# l8af 
+block-dest 192.168.0.0/.0,:: ÿþ

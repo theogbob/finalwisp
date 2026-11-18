@@ -97,7 +97,6 @@ repository; the comments carry their reasoning inline. This index gives the topi
 | 60.40 | 1e --conn-rate-per-ip: per-IP rate of new connections |
 | 60.41 | DNS cache expiry in the idle sweep + the --dns-threads default |
 | 60.42 | --credit-pace: no upload credit while the stream's own download waits on the client |
-| 60.43 | Long-link download collapse: test artifact or real? |
 | 60.44 | Host TCP memory: who holds it, and what the server can lower |
 | 60.45 | per-IP table clock: u64 ms |
 | 60.46 | Adaptive splice length |
@@ -111,7 +110,7 @@ repository; the comments carry their reasoning inline. This index gives the topi
 | 60.63 | Section E: bounds on what the server can see on its host |
 | 60.64 | auto-balance prototype: a live connection moves between workers, rule verified per connection (not accepted: 60.64 section 10.4); its note and tables are on branch auto-balance (ff52cd58), not on master; the code is taken over by 60.74 |
 | 60.67 | Acceptance tests T1 to T8 of the preset design, on the final v1.3.0 build |
-| 60.69 | v1.3.1 build (the lead's SPEC, 2026-11-14): S1 a per-address 429 frees its --max-conns slot at the refusal, S2 BUILDINFO libc6-dev line + release.sh --compare-ci, S3 help texts; K1 keepalive spread, K2 dead_peers counter, C1 preset cost |
+| 60.69 | v1.3.1 build: S1 429 slot, S2 libc6-dev line, S3 texts, K1 keepalive spread, K2 dead_peers, C1 preset cost |
 | 60.70 | Fewer knobs: a proposal for --balance, --no-splice, --buffer, the lanes and adaptive splice |
 | 60.71 | Showdown: finalwisp v1.3.1 against the latest competitors |
 | 60.72 | Stream limits when fds or memory run short: --stream-share, --stream-pool |
@@ -119,6 +118,8 @@ repository; the comments carry their reasoning inline. This index gives the topi
 | 60.74 | Auto-balance stage 2: a move is judged by the server's total, A / B / A |
 | 60.75 | Knobs docs: `--no-splice` advice, `--adaptive-splice` out of the tables, the flush-first study |
 | 60.76 | v1.3.2 release: what it contains, the release text, the steps |
+| 60.77 | v1.3.3 release: what it contains, how it was evaluated, what is open |
+| 60.78 | gap inventory |
 | 70.01 | Fuzzing base-1.1 network parsers |
 | 70.02 | dead-peer detection |
 | 70.03 | glibc mmap threshold 16 KiB + M_MMAP_MAX |

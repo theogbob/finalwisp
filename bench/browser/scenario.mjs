@@ -1,7 +1,7 @@
 // Browser sim scenario runner (bench/browser, driven by browser.py). Node + Playwright.
 // usage: node scenario.mjs CONFIG.json   -> prints one "RESULT {json}" line per case to stdout.
 // CONFIG: {scramjet_dir, page_port, wisp_url, transport, mirror_dir?, mirror_port?, mirror_delay_ms?,
-//          cases: [{case: "page"|"download"|"session", site, url, rep, ...}], timeout_ms, settle_ms, headful?,
+//          cases: [{case: "page"|"download"|"session"|"busy", site, url, rep, ...; busy: page_wait_ms?}], timeout_ms, settle_ms, headful?,
 //          spki? (wss:// Wisp with a self-signed cert: base64 SHA-256 of its SPKI)}
 import http from "node:http";
 import fs from "node:fs";
@@ -20,6 +20,10 @@ const cfg = SELFTEST ? { server_pid: process.pid } : MIRROR_ONLY
 	: JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
 const TIMEOUT = cfg.timeout_ms ?? 60000;
 const SETTLE = cfg.settle_ms ?? 2000;
+// 60.78 G71: the mirror closes an idle keep-alive connection after MIRROR_KA_MS (env, both processes; default 30 s). A
+// Scramjet/epoxy page load that starts after the origin closed its pooled connection sends nothing and times out (an
+// external client hang, also with epoxy-server), so a case's idle wait must stay well below it (caseBusy checks).
+const MIRROR_KA_MS = +(process.env.MIRROR_KA_MS || 30000);
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".mjs": "text/javascript",
 	".wasm": "application/wasm", ".json": "application/json", ".css": "text/css", ".png": "image/png",
 	".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".svg": "image/svg+xml", ".webp": "image/webp",
@@ -104,7 +108,7 @@ function startMirrorServer() {
 		};
 		delay ? setTimeout(go, delay) : go();
 	});
-	srv.keepAliveTimeout = 30000;
+	srv.keepAliveTimeout = MIRROR_KA_MS;
 	return new Promise((r) => srv.listen(cfg.mirror_port, "127.0.0.1", () => r(srv)));
 }
 
@@ -596,6 +600,12 @@ async function caseBusy(browser, c) {
 			}, [c.cancel_url ?? c.big_url, c.small_url, c.small_n ?? 5, c.cancel_after_bytes ?? 4194304]));
 			if (!out.cancel_ok) throw new Error(`cancel: ${out.cancel_error ?? "download ended before the cancel"} (${out.cancelled_after_bytes} B)`);
 			const bgBefore = await f2.evaluate(() => window.__bg.bytes);
+			// page_wait_ms: load the page this long after the small fetches (the bulk keeps running), below the keep-alive
+			if (c.page_wait_ms) {
+				if (cfg.mirror_port && c.page_wait_ms > MIRROR_KA_MS - 5000)
+					throw new Error(`page_wait_ms ${c.page_wait_ms} must stay 5 s below the mirror's keep-alive (MIRROR_KA_MS ${MIRROR_KA_MS})`);
+				await new Promise((r) => setTimeout(r, c.page_wait_ms));
+			}
 			let cpu0, mt0;
 			if (cfg.trace) { await st.cdp.send("Performance.enable").catch(() => {}); mt0 = await mainThread(st.cdp).catch(() => null); cpu0 = cpuSnap(); }
 			out.load_ms = Math.round(await page.evaluate(([u, t]) => window.__sim.go(u, t), [c.url, TIMEOUT]));

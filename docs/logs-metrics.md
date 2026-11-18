@@ -181,6 +181,12 @@ Useful ones to watch: `finalwisp_memory_level` above 0 (memory pressure), `final
 `finalwisp_refuse_ip_conns_total` and `finalwisp_refuse_ip_connrate_total` (per-IP connection limits hit), `finalwisp_refuse_policy_total` (policy refusals),
 `finalwisp_dead_peers_total`, `finalwisp_log_dropped_total` and `finalwisp_upstream_fail_total`.
 
+Closes: when the server closes a connection whose client may still be sending (after a protocol error, or a refused
+request with more data behind it), it first sends all that is queued, then ends its direction and reads and discards
+what the client sends until the client closes too. Then the client gets every byte, not a reset. This wait ends after
+5 seconds (10 with the built-in TLS) or 1 MiB read; a close at one of these bounds can reset the connection and is
+counted in `finalwisp_linger_capped_total`. A connection that waits this way still counts in `finalwisp_connections`.
+
 Name lookups: `finalwisp_dns_wait_seconds_total` is the time lookups waited for a free resolver thread; divided by
 `finalwisp_dns_miss_total` it is the mean wait of a new name (normally well under a millisecond).
 `finalwisp_dns_wait_max_seconds` is the longest wait since the start. `finalwisp_dns_expired_total` counts lookups

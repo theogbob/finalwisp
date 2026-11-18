@@ -3,7 +3,7 @@
 #   fwa (wbench client) 10.77.0.1  <-- veth, netem delay $DELAY each way, rate $RATE, limit $LIMIT pkts -->  fws (finalwisp + targets) 10.77.0.2
 # usage: netns_hol.sh [RATE=100mbit] [DELAY=10ms] [LIMIT=200]   |   netns_hol.sh down
 set -e
-if [ "$1" = down ]; then ip netns del fwa 2>/dev/null; ip netns del fws 2>/dev/null; echo down; exit 0; fi
+if [ "$1" = down ]; then ip netns del fwa 2>/dev/null || true; ip netns del fws 2>/dev/null || true; echo down; exit 0; fi
 RATE=${1:-100mbit}; DELAY=${2:-10ms}; LIMIT=${3:-200}
 ip netns del fwa 2>/dev/null || true; ip netns del fws 2>/dev/null || true
 ip netns add fwa; ip netns add fws

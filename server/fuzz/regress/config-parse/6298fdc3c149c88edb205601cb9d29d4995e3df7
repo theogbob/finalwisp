@@ -1,0 +1,61 @@
+ÿþallow-host ojctl--k-,-real-ipp-reak-el-ipp,heo-ipp-reak-el-ipp,heow-w-l-ipp-reaipp,heow-w-hopp-reak-el-ipp,heo-ihopp-reak-el-ipp,heo-ipp-reak-el-ipp,hepp-reak-el-ipp,heow-w-hopp-reak-el-ipp,heo-ihopp-reak-el-ipp,heo-ipp-reak-el-l-kpp-reak-el-ipp,heo-il-ippk-el-ipp,heo-ipp-reak-el-ipp,hepp-reak-el-ipp,heow-w-hopp-reak-el-ipp,heo-ihopp-reak-el-ipp,heo-ipp-reak-el-l-kpp-reak-el-ipp,heo-il-ipp,heo-ipp-reak-el-ipp,heow-w-pp,pehp-reak-el-ipp,heow-w-hopp-reak-el-ip,heo-ippp,heo-ipp-reipp,heop-reak-el-ipp,heow-w-bhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhopp-reak-el-ipp,heo-ihopp-reak-el-ipp,heo-pp,heow-w-pp,plow-self
+allow-embedded-v4
+trusted-proxy 120.0.0.0/8
+#bnocupstream sk-de/16
+block-smtp
+no-direct-ip
+no-ipv6-targets
+allow-self
+allow-embedded-v4
+trusted-proxy 120.0.0.0/8
+#bnocup#0ï¿½01/0100002-d0ï¿½01/0100002-dest 192.168.0.0/16
+block-smtp
+no-direct-ip
+no-ipv6-targets
+allow-self
+allow-embedded-v4
+trusted-proxy 120.0.0.0/8
+#bnocu*pstream sk-de/16
+block-smtp
+no-direct-ip
+no-ipv6-targets
+allow-self
+allow-embedded-v4
+no-direct-ip
+no-ipv6-targets
+allow-self
+allow-embedded-v4
+trusted-proxy 120.0.0.0/8
+#bnocupsehp-reak-el-ipp,heow-w-hopps
+allow-self
+allow-embedded-v4
+trusted-proxy 120.0.0.0/8
+#bnocupstream sk-de/16
+block-smtp
+no-direct-ip
+no-ipv6-targets
+allow-self
+allow-embedded-v4
+trusted-proxy 120.0.0.0/8
+#bnocup#0ï¿½01/0100002-d0ï¿½01/0100002-dest 192.168.0.0/16
+block-smtp
+no-direct-ip
+no-ipv6-targets
+allow-self
+allow-embedded-v4
+trusted-proxy 120.0.0.0/8
+#bnocu*pstream sk-de/16
+block-smtp
+no-direct-ip
+no-ipv6-targets
+allow-self
+allow-embedded-v4
+no-direct-ip
+no-ipv6-targets
+allow-self
+allow-embedded-v4
+trusted-proxy 120.0.0.0/8
+#bnocupstream est 192lf
+allow-embedded-v4
+trusted-proxy 240.0.0.0/8
+#b-reak-el-ip,heo-ipp-reapp-reak-el-i-ipp,hepp-reak-el-ipp,heow-w-hopp-reak-el-ipp,heo-ihopp-reak-el-ipp,heo-ipp-reak-el-l-kpp-reak-el-ipp,heo-il-ippk-el-ow-w-l-ipp-reak-el-ipp,heo-il-ippeo-ipp-reak-el-l-kpp-reak-el-ipp,heo-il-ippk-el-ow-w-l-ipp-reak-el-ipp,heo-il-ipp,heo-ipp-reak-el-ipp,heow-w-l-ipp-reak-el-ipp,heo-ipp-reak-el-ipp,heow-w-hopp-reak-el-ipp,heo-ihopp-rea

@@ -9,6 +9,8 @@ loopback class for one address only; recursion: a CONNECT to the server's own no
 is refused even with --allow-private, and with --allow-self a nested Wisp handshake runs through it (skipped when the
 box has no non-loopback IPv4 address); metrics refuse_policy."""
 import base64, os, socket, struct, subprocess, sys, tempfile, threading, time
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hostlag import Lag  # 60.74 4.5: "at once" is a time bound plus the measured host lag
 
 BIN, BASE = os.path.abspath(sys.argv[1]), int(sys.argv[2])
 P, E = BASE, BASE + 1
@@ -137,9 +139,13 @@ w = Wisp()
 ok(reason(w, "127.0.0.1")[1] == 0x48, "tcp: port rule -> 0x48")
 ok(connects(w, "127.0.0.1", udp=True), "the tcp: rule leaves UDP to the same port open")
 ok(reason(w, "127.0.0.1", 25)[1] == 0x48 and reason(w, "127.0.0.1", 587)[1] == 0x48, "--block-smtp: 25, 587 -> 0x48")
+L = Lag()
 for h in ["blocked.test", "x.BLOCKED.TEST.", "a.b.blocked.test"]:
-    t0 = time.time(); r = reason(w, h, 80)[1]
-    ok(r == 0x48 and time.time() - t0 < 0.4, f"--block-host: {h} -> 0x48 at once (before DNS)")
+    # (the wait ends at the CLOSE; a chain of 3 wakeups: client, worker, client)
+    L.reset()
+    t0 = time.time(); r = reason(w, h, 80, t=5)[1]
+    dt = time.time() - t0
+    ok(r == 0x48 and dt < L.bound(0.4, 3), f"--block-host: {h} -> 0x48 at once (before DNS) ({dt*1000:.0f} ms, host lag {L.max()*1000:.0f} ms)")
 ok(reason(w, "notblocked.test", 80, t=8)[1] == 0x42, "notblocked.test is not matched (goes to DNS: 0x42)")
 ok(connects(w, "127.0.0.1", udp=True), "the connection stays up after the refusals")
 s = socket.create_connection(("127.0.0.1", P), timeout=3)

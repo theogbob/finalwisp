@@ -1,0 +1,18 @@
+#"
+# -----------------------------------------------2t
+unix-mode 0661
+upstream socks5://user------lock-ho3t
+unix-mode 0661
+upstream socks5://user--------------------------------2t
+unix-mode 0661
+upstream socks5://user------lock-ho3t
+unix-mode 0661
+upstream socks5://user----------------------------------------------------------2t
+unix-mode 0661
+upstream socks5://user-------------n-------------------------------2t
+unix-mode 0661
+upstream socks5://user------lock-ho3t
+unix-mode 0661
+upstream socks5://user----------------------------------------------------------2t
+unix-mode 0661
+upstream socks5://user-------------no-tfo---o-tfo--------------------------------------------no-stream-sh--mo------------------------ 

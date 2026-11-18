@@ -44,6 +44,11 @@ pub struct Harness {
     /// `moved` maps the slot a Conn was opened with (or last had) to the one it has now
     force: u32,
     moved: HashMap<(u32, u32), (u32, u32)>,
+    /// 60.78 G04 variant 4: its --stream-share/--stream-pool state (slimits reads it per thread under cfg(fuzzing)),
+    /// its section-E state (host readings replaced by set_level) and the connections opened so far (PRESET_PEERS)
+    sl: Option<&'static crate::slimits::Slimits>,
+    bd: Option<Arc<crate::bounds::Bounds>>,
+    opens: u32,
 }
 
 fn fixed_key() -> [u8; 32] {
@@ -64,8 +69,19 @@ pub fn sign(challenge: &[u8]) -> Vec<u8> {
 /// Config variants. 0: defaults + loopback sink; 1: v2 auth (password u:p + ed25519 key) + MOTD + --upload-rate
 /// 8K/16K (60.25); 2: --no-udp --no-prio
 /// --no-splice --no-credit-v2, loopback filtered; 3: built-in TLS (if kTLS is available). Credit v2 (the default since
-/// 60.13) runs in 0, 1 and 3 (60.16 review: it ran only in 1).
-pub const VARIANTS: u8 = 4;
+/// 60.13) runs in 0, 1 and 3 (60.16 review: it ran only in 1). 4 (60.78 G04): the paths of --preset public plus
+/// --auto-balance, --unread-close and a client-IP table (see PRESET_*).
+pub const VARIANTS: u8 = 5;
+
+/// 60.78 G04 variant 4: the worker's own fd gate gets this limit (small, so a fuzz input can reach the 3/4 and 7/8
+/// marks with its streams) and every mark the preset sets (--conn-share, --fd-admission, --stream-share,
+/// --stream-pool). deliberate: --max-streams-per-conn 16, not the preset's 1024, for the same reason.
+pub const PRESET_VARIANT: u8 = 4;
+const PRESET_FDS: u32 = 64;
+const PRESET_MAX_STREAMS: u32 = 16;
+/// the client addresses of variant 4's connections, in turn: the first is a trusted proxy (its X-Forwarded-For header
+/// names the client), the other two are charged in the per-IP table as they are
+const PRESET_PEERS: [&str; 3] = ["203.0.113.1", "203.0.113.2", "2001:db8::2"];
 
 /// 60.37 review: a new directory only this user can enter (mode 0700, created by mkdir: fails on any existing path or
 /// symlink, so a name planted by another user is skipped, never followed). The name has the pid and the clock.
@@ -108,6 +124,7 @@ fn throwaway_pair() -> Result<(String, String), String> {
 }
 
 fn config(v: u8) -> Option<Config> {
+    let preset = v == PRESET_VARIANT;
     let ext = match v {
         1 => ext::Ext::new(true, ext::parse_auth_file("u:p\n").unwrap(), vec![fixed_key()], Some("motd".into())),
         _ => ext::Ext::default(),
@@ -140,7 +157,7 @@ fn config(v: u8) -> Option<Config> {
         abort_close: true,
         splice: v != 2,
         balance: false,
-        auto_balance: false,
+        auto_balance: preset, // 60.78 G04 (one worker: the sweep's report and the accept's wake, no observer thread)
         tfo: false,
         tls,
         udp: v != 2,
@@ -152,16 +169,28 @@ fn config(v: u8) -> Option<Config> {
         ext,
         credit_v2: v != 2,   // 20.30 credit v2 is the default (60.13); variant 2 (the off-switches) runs the base-2 rule
         credit_pace: v != 2, // 60.42 default on; variant 2 (the off-switches) runs without it
-        park_rcvlock: if v == 1 { 512 << 10 } else { 0 }, // 60.47 opt-in: variant 1 runs with it
         adaptive_splice: v != 2, // 60.51 default on since v1.2.1; variant 2 (the off-switches) runs without it
         conn_gate: None,
-        max_streams_per_conn: 0,
-        policy: None,
-        clientip: None,
+        max_streams_per_conn: if preset { PRESET_MAX_STREAMS } else { 0 },
+        // 60.78 G04 the preset's --block-smtp
+        policy: preset
+            .then(|| crate::policy::Policy::new(&crate::policy::Rules { block_smtp: true, ..Default::default() }))
+            .flatten()
+            .map(Box::new),
+        // 60.78 G04 --trusted-proxies 203.0.113.1/32 and a per-IP table with the --conn-share fd count (no rate: a rate
+        // would make refusals depend on the clock and on earlier inputs)
+        clientip: preset.then(|| {
+            Box::new(clientip::ClientIp {
+                trusted: Box::new([crate::policy::Cidr::parse("203.0.113.1/32").unwrap()]),
+                header: "x-forwarded-for".into(),
+                table: Some(clientip::IpTable::with_rates(None, None, None).with_share(1)),
+                max_conns: 0,
+            })
+        }),
         // 60.24 off: Worker::new registers each outbox in a process-wide list (one per fuzz input would grow it)
         log_conns: false,
         log_streams: false,
-        want_peer: false,
+        want_peer: preset,
         pace: net::Pacing::default(),
         unix: None,
         upstream: None,
@@ -248,7 +277,29 @@ impl Harness {
         let cfg = config(v)?;
         let tls = cfg.tls.is_some();
         let (tx, rx) = mpsc::channel();
-        let w = Worker::new(Arc::new(cfg), tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).ok()?;
+        // 60.78 G04: --stream-share and --stream-pool (made once per process; Worker::new reads the pool's stream limit)
+        static SL: std::sync::OnceLock<&'static crate::slimits::Slimits> = std::sync::OnceLock::new();
+        let sl = (v == PRESET_VARIANT).then(|| *SL.get_or_init(|| Box::leak(Box::new(crate::slimits::Slimits::new(true, true, 1)))));
+        crate::slimits::set_ref(sl);
+        let mut w = Worker::new(Arc::new(cfg), tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).ok()?;
+        let bd = (v == PRESET_VARIANT).then(|| {
+            // as main: the gate's limit and marks once the worker is built (this gate is the worker's own: Worker::new
+            // makes an unlimited one when none is installed, so the other variants keep theirs)
+            use crate::fdgate::{block, MARK_HOST, MARK_POOL, MARK_SHARE, MARK_STREAM};
+            w.fdg.set_limit(PRESET_FDS, block(PRESET_FDS, 1));
+            w.fdg.set_marks(MARK_SHARE | MARK_HOST | MARK_STREAM | MARK_POOL);
+            // section E: --tcpmem-share, --port-share, --dest-failfast, --net-watch, --unread-close, with fixed host
+            // values (no guard thread: set_level sets its marks)
+            use crate::bounds::{Bounds, TcpForm, OPT_DEAD, OPT_PORT, OPT_TCPMEM, OPT_UNREAD, OPT_WATCH};
+            let opts = OPT_TCPMEM | OPT_PORT | OPT_DEAD | OPT_WATCH | OPT_UNREAD;
+            let b = Arc::new(Bounds::new(opts, 1, TcpForm::Mem { max_pages: 1 << 16 }, 4096, 212_992));
+            b.set_ports(32768, 60999, 28232, 0);
+            w.bd = Some(bounds::Wb::new(b.clone()));
+            // as Worker::run does once main has set the gate: the worker's block and marks (without it the worker
+            // learned MARK_SHARE only at its first grab, and a stream taken before that was put back with a note)
+            w.fd_setup();
+            b
+        });
         mem::cache_on(); // 70.25: the fuzzing thread is a pool thread
         lsan_pool_check();
         static FORCE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
@@ -261,7 +312,15 @@ impl Harness {
             tls,
             force,
             moved: HashMap::new(),
+            sl,
+            bd,
+            opens: 0,
         })
+    }
+
+    /// 60.78 G04 before each input: this variant's thread-local state (common::with_harness)
+    pub fn enter(&self) {
+        crate::slimits::set_ref(self.sl);
     }
 
     /// Memory pressure level for the next turns (as mem's sampler publishes it).
@@ -272,6 +331,12 @@ impl Harness {
         mem::LEVEL.store(l as u8, Relaxed);
         let budget = mem::WORKER_BUDGET.load(Relaxed) as u64 * self.w.cfg.threads as u64;
         mem::USED.store(budget * mem::STAGES[l].enter as u64 / 1000, Relaxed);
+        if let Some(b) = &self.bd {
+            // 60.78 G04 the host marks of section E follow the level (the guard thread is not running): 1 TCP memory
+            // short, 2 also unread downloads and source ports busy, 3 also source ports short
+            use crate::bounds::{ST_PT_BUSY, ST_PT_SHORT, ST_TM_SHARE, ST_UNREAD};
+            b.set_state([0, ST_TM_SHARE, ST_TM_SHARE | ST_UNREAD | ST_PT_BUSY, ST_TM_SHARE | ST_UNREAD | ST_PT_BUSY | ST_PT_SHORT][l]);
+        }
     }
 
     /// Per-input reset of caches that would make runs depend on earlier inputs or the clock.
@@ -287,7 +352,15 @@ impl Harness {
         assert_eq!(r, 0);
         self.w.inbox.load.fetch_add(1, Relaxed);
         assert!(self.w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
-        self.w.adopt(net::Handoff::bare(fds[0]));
+        let mut h = net::Handoff::bare(fds[0]);
+        if self.bd.is_some() {
+            // 60.78 G04 a client address, charged as accept_on does (nothing else is open at an input's start: no rule
+            // can refuse it)
+            h.peer = Some(PRESET_PEERS[self.opens as usize % PRESET_PEERS.len()].parse().unwrap());
+            self.opens = self.opens.wrapping_add(1);
+            assert!(self.w.charge(&mut h), "variant 4: the per-IP table refused the only connection");
+        }
+        self.w.adopt(h);
         let ci = (0..self.w.clients.slots.len() as u32)
             .find(|&i| self.w.clients.slots[i as usize].1.as_ref().is_some_and(|c| c.fd == fds[0]))
             .expect("adopted");
@@ -778,6 +851,9 @@ impl Harness {
         assert_eq!(live_c, 0, "client slot left after close");
         self.moved.clear(); // 60.64
         assert_eq!(live_t, 0, "target slot left after its client closed");
+        if let Some(t) = self.w.cfg.clientip.as_ref().and_then(|c| c.table.as_ref()) {
+            assert_eq!(t.keys(), 0, "60.78 G04: a per-IP table entry left after its connection closed");
+        }
         // fd leak check every 1024 connections (the 1st sample is the baseline: sink, epoll, pipes)
         static CLOSES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         static BASE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);

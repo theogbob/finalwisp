@@ -18,7 +18,8 @@ It reads the files of the tree it is in (the working tree, or an unpacked archiv
    has them (a branch that is not merged yet).
 3. --lost REV: every heading anchor of the README and docs pages of commit REV (LOST_FILES) still exists in the same
    file, and every sentence of those pages is still in a page, or on the list of rewritten sentences (--rewritten FILE: one sentence per line, as this script prints them; `#` lines are
-   comments). --lost-diff BASE..BRANCH adds the docs lines that BRANCH added since BASE.
+   comments; --rewritten-group ID: only the lines under the group headers "# ID ..." of FILE, the list of one round).
+   --lost-diff BASE..BRANCH adds the docs lines that BRANCH added since BASE.
 4. --map REV prints a table: every heading of those pages of REV and where it is now (exit status 1 if one is gone).
 """
 import argparse, os, re, subprocess, sys
@@ -256,12 +257,19 @@ def units(text):
     return [u for u in out if len(u) > 3]
 
 
-def check_lost(top, files, rev, diffs, rewritten, problems):
+GROUP = re.compile(r"# (\d\d\.\d\d)\b")
+
+
+def check_lost(top, files, rev, diffs, rewritten, problems, group=None):
     corpus = " \n ".join(norm(open(os.path.join(top, f), encoding="utf-8").read()) for f in files)
     allowed = set()
     if rewritten:
+        cur = None  # the note id of the group header above the line ("# 60.78 ..."); --rewritten-group keeps one group
         for line in open(rewritten, encoding="utf-8"):
-            if line.strip() and not line.startswith("#"):
+            m = GROUP.match(line)
+            if m:
+                cur = m.group(1)
+            if line.strip() and not line.startswith("#") and (group is None or cur == group):
                 allowed.add(norm(line))
     old = []  # (where, unit)
     if rev:
@@ -333,6 +341,8 @@ def main():
     ap.add_argument("--lost", metavar="REV", help="check that the text of the pages of REV is still there")
     ap.add_argument("--lost-diff", metavar="BASE..BRANCH", action="append", default=[])
     ap.add_argument("--rewritten", metavar="FILE", help="sentences that were rewritten on purpose")
+    ap.add_argument("--rewritten-group", metavar="ID", help="only the sentences of FILE under a group header '# ID ...' (a round's "
+                    "own list, when --lost is the release before the round)")
     a = ap.parse_args()
     top = root()
     if a.map:
@@ -353,7 +363,7 @@ def main():
     print(f"doccheck: {len(files)} pages, {n_links} relative links and page names, {n_flags} options in FLAGS"
           f" ({n_known} with the ones handled before the parser), {len(pending)} pending")
     if a.lost or a.lost_diff:
-        n_old, n_lost = check_lost(top, files, a.lost, a.lost_diff, a.rewritten, problems)
+        n_old, n_lost = check_lost(top, files, a.lost, a.lost_diff, a.rewritten, problems, a.rewritten_group)
         print(f"doccheck: {n_old} old sentences, code lines and table cells; {n_lost} not found")
     for p in problems:
         print("  " + p)

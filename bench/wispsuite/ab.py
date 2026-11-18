@@ -93,13 +93,14 @@ def run_ab(variants, reps, wb_args, *, wb, port="6901", tport="6902", tmode=None
                     time.sleep(max(0.0, 0.5 - (time.time() - t_start)))  # >= 0.5 s as before: every worker has bound
                     if p.poll() is not None:
                         ready = False
+                    srv_pids = sample.group_pids(p.pid) if ready else ()  # 60.78 G22: the server's pids for the VmRSS samples (a /proc scan, before the CPU window)
                     pr0 = sample.tcp_pressure_both(nss)  # 60.42 verify: before the CPU window (review: subprocesses)
                     cpu0, _, _ = sample.group_usage(p.pid)
                     cg0 = cgroup_usage_s()
                     st0 = sample.steal_ticks()
                     t0 = time.time()
                     # 50.02 D: host TCP memory peak during the rep (this box: the server's; review: also cross-host)
-                    mempk = sample.TcpMemPeak()
+                    mempk = sample.TcpMemPeak(pids=srv_pids)
                     with mempk:
                         if ready and test == "burstidle":
                             j = burst_idle(wb, [*(["--insecure"] if tls else []), "--url", f"{'wss' if tls else 'ws'}://{srv_host}:{port}/",
@@ -143,6 +144,8 @@ def run_ab(variants, reps, wb_args, *, wb, port="6901", tport="6902", tmode=None
                 j["loadavg"] = [float(x) for x in open("/proc/loadavg").read().split()[:3]]  # host-wide inside a container
                 j["rss_mib"] = round(rss, 1)
                 j["hwm_mib"] = round(hwm, 1)
+                if mempk.rss_max is not None:  # 60.78 G22: per-sample VmRSS max of the server over the run (sampled every 0.05 s)
+                    j["rss_peak_mib"] = round(mempk.rss_max, 1)
                 # 80.03 (P6 of the performance audit): when the run was, so that the time budget of a round is a table and
                 # a noisy run can be seen. t0 = the server's start, tw0 = the client's start (the window is inside
                 # tw0..tw0+win_s), t1 = this record (after the stop and the settle); steal = host steal ticks over the

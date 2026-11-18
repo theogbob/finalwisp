@@ -18,6 +18,9 @@ impl Worker {
         let behind = (now - self.next_sweep).as_millis() / p.as_millis();
         self.next_sweep += p * (behind as u32 + 1);
         self.sweep();
+        if self.cfg.adaptive_splice && now >= self.age_pass_at {
+            self.splice_age_pass(now); // 60.78
+        }
         if self.cfg.auto_balance {
             self.mig_report(now); // 60.64
         }

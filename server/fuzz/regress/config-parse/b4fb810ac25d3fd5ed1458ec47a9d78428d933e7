@@ -1,0 +1,106 @@
+ÿþ#conns
+metrics-listen 127.0.0.1:9
+upload-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmw./fspo
+upload-rate-per-stream 512K
+log-level debug
+listen-unix /tm 1unix all 1M
+upload-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9
+upload-rate-per-stream 256K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/fw.so
+upload-rate-per-stream 512K
+log-level debug
+listen-unix /t/tmp/fw.so
+upload-rate-per-stream 512K
+log-level debug
+listen-unix /tm 1ud-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tr-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmw./fspo
+upload-rate-per-stream 512K
+log-level debug
+listen-unix /tm 1unix all 1M
+upload-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9
+upload-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/fweam 512K
+log-level debug
+listen-unix /t/tmp/fw.so
+upload-rate-per-stream 512K
+log-level debug
+listen-unix /tm 1ud-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tr-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmw./fspo
+upload-rate-per-stream 512K
+log-level debug
+listen-unix /tm 1unix all 1M
+listen-unix /tmw./fspo
+upload-rate-per-stream 512K
+log-level debug
+listen-unix /tm 1unix all 1M
+upload-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9
+upload-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/fweam 512K
+log-level debug
+listen-unix /t/tmp/fw.so
+upload-rate-per-stream 512K
+log-level debug
+listen-unix /tm 1ud-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tr-stream 51
+upload-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9
+upload-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/fw.so
+upload-rate-per-stream 512K
+log-level debug
+listen-unix /tm 1ud-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/fwlisten-unix /tmprus.so
+upload-rate-per-stream 512K
+log-level debug
+listen-unix /tm 1ud-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 127.0.0.1:9100
+listen-unix /tmp/fwlisten-unix /tmprust-dns

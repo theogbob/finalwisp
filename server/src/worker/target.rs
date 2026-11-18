@@ -257,11 +257,9 @@ impl Worker {
             if bulk && !past && c.splice != SPLICE_OFF && c.splice_pending == 0 && c.obuf.len() == c.ohead && c.bulk.len() == c.bhead {
                 if slen == 0 {
                     // off (--no-adaptive-splice): SPLICE_PIPE always, the v1.1.1 length (Client::splice is still kept up to date)
-                    // 60.51 and only for a far client (Worker::splice_far, set at adopt when the flag is on)
-                    let adaptive = self.cfg.adaptive_splice
-                        && c.splice == SPLICE_SLOW
-                        && c.streams.len() > SPLICE_FEW
-                        && self.splice_far.get(ci as usize).is_some_and(|&f| f);
+                    // 60.51 and only for a far client (60.78 classified here at its first need: worker/splicefar.rs)
+                    let adaptive =
+                        self.cfg.adaptive_splice && c.splice == SPLICE_SLOW && c.streams.len() > SPLICE_FEW && self.splice_is_far(ci);
                     slen = if adaptive { SPLICE_SLICE } else { SPLICE_PIPE };
                 }
                 match self.splice_target(ti, ci, fd, sid, raw, slen) {

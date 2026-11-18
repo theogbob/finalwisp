@@ -1,0 +1,13 @@
+êëêêÿþ#2 16
+stream-rate-per-ip 1/4
+#  AAAAAAAAAAAAAAAAAAA-ip 1 16
+stream-rate-per-ip 1/4
+#  AAAAAA2AA-per-ip 1 16
+stream-rate-per-ip 1/4
+#  A-m-rate
+proxy-protocol-from 1/4
+#  AAAAAAAAA#AAAAAAAAA-ip 1 16
+srate-per-stream-rate-per-ip 1/4
+# -per-ip 1 16
+stream-rate-pe
+#  AAAAAAAAAA@AÿÿÿÿÿÿAAxAAA--no-keepaliveAAAŒñ

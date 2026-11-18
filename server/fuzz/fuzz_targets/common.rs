@@ -18,7 +18,9 @@ pub fn with_harness<R>(v: u8, f: impl FnOnce(&mut Harness) -> R) -> R {
         if hs[v].is_none() {
             hs[v] = Some(Harness::new(v as u8));
         }
-        f(hs[v].as_mut().unwrap().as_mut().expect("variant 0 always builds"))
+        let h = hs[v].as_mut().unwrap().as_mut().expect("variant 0 always builds");
+        h.enter(); // 60.78 G04
+        f(h)
     })
 }
 

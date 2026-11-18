@@ -5,7 +5,7 @@
 # 30.14 (pre-soak of master): servers log --metrics-interval lines (parsed into samples.csv, m_* columns), upmux
 # workload + probe step (20.33), connchurn workload; half-open / dead-target helpers need the nft table
 # (soak-nft.sh; checked at start; --no-halfopen / --no-deadtarget without it).
-import argparse, contextlib, csv, json, os, random, resource, shutil, signal, socket, struct, subprocess, sys, threading, time
+import argparse, contextlib, csv, json, os, random, resource, shlex, shutil, signal, socket, struct, subprocess, sys, threading, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -58,6 +58,10 @@ ap.add_argument("--slow-pause-share", type=float, default=None, help="30.17 shar
 ap.add_argument("--dt-first", type=float, default=300, help="s before the first dead-target cycle")
 ap.add_argument("--dt-hold", type=float, default=1500, help="s after the cut before the client closes open streams")
 ap.add_argument("--dt-every", type=float, nargs=2, default=(600, 900))
+# b6rc1 soak (60.33, a copy on the box until 60.78): extra server arguments per server, shlex-split (60.78 G05: A and B
+# with --preset public)
+ap.add_argument("--args-a", default="", help="extra arguments for server A")
+ap.add_argument("--args-b", default="", help="extra arguments for server B")
 a = ap.parse_args()
 
 RUN = os.path.abspath(a.run_dir)
@@ -157,6 +161,8 @@ if a.mem_budget_b:
         # levels come from the scope limit itself
         sys.exit("--mem-budget-b needs --no-scope (scoped servers already have a 1G budget from MemoryMax)")
     SERVERS["B"]["args"] = SERVERS["B"]["args"] + ["--mem-budget", a.mem_budget_b]
+SERVERS["A"]["args"] = SERVERS["A"]["args"] + shlex.split(a.args_a)
+SERVERS["B"]["args"] = SERVERS["B"]["args"] + shlex.split(a.args_b)
 server_gen = {"A": 0, "B": 0}
 
 

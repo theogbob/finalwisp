@@ -1,5 +1,120 @@
 # Changelog
 
+## v1.4.0
+
+A minor release because `--preset public` changed: it now turns on `--unread-close`. A plain `finalwisp` starts as
+before. This release adds no option; it closes most of the gaps that 1.3.x left open (tests, documented limits, old
+claims).
+
+Changed in `--preset public` (the Docker image and `contrib/finalwisp.service` start with it):
+
+- **The preset turns on `--unread-close`.** It acts only while the host's TCP memory is short (from 3/4 of
+  `net.ipv4.tcp_mem`'s maximum). Then it resets a connection that has stopped taking data from its downloads, once
+  that connection's stall time is used up, and it moves the bytes of waiting downloads into the server so their
+  destinations do not time out (below). The preset start line lists `unread-close on`. `--no-unread-close` undoes it.
+  - In tests with two VMs under held TCP memory pressure (90 minutes each, Linux 6.12 and 6.8): the clients that took
+    nothing, or only a few bytes, were reset after 621 to 811 seconds; honest readers of 1 to 8 KiB per second, also
+    with 32 MiB buffers, were kept and lost no stream. With 1.3.3's preset, 3 of those honest readers lost their
+    download (CLOSE `0x03`) in each of the same runs.
+  - A client that pauses for 10 minutes or more in all without taking data can be reset while the host's TCP memory is
+    short. In the tests, a client that read for 5 minutes and then paused for 30 was reset; one that read for 5
+    minutes and paused for 20 was kept (the data it took first had bought it the time). A reset client gets an error;
+    a new connection starts with new time.
+  - Timed on two 2-core VPSes, both with the preset, against 1.3.3 (20 cells, 16 runs each): 12 read the same, 7
+    unclear or watch, and 1 first reading was lower (a download test where every run of every server ran short of TCP
+    memory); its rerun (32 rounds per arm) showed no loss.
+
+Changed:
+
+- `--unread-close` has a new rule for how long a client may take no data. Before, each stall had 600 seconds, and any
+  byte taken started them again, so a client that took a few bytes now and then was never reset. Now each connection
+  starts with 600 seconds of stall time; data the client takes adds 1 second per 512 bytes, up to 3600 seconds (the
+  first data, what filled the client's buffer, adds 1 second per 4 KiB); a connection that holds more of the host's
+  TCP memory than one stream can uses its time up faster. So a slow reader with a large buffer, which takes no data
+  for minutes while its buffer drains, has paid for that time, and a client that takes nothing gets 600 seconds in
+  all. Details: [configuration](docs/configuration.md#--unread-close).
+- `--unread-close` also relieves waiting downloads while the host's TCP memory is short (Linux 5.15 or later). A
+  waiting download's target socket that holds more than half of its share of `tcp_mem` gets a receive buffer of half
+  the share and is read out into its client's queue, so the socket can take the destination's data again and the
+  destination does not time out the stream (CLOSE `0x03` after about 15 minutes; in the tests above, 0 such closes
+  with relief against 3 to 4 without). The moved bytes use at most a quarter of the memory budget. Below 5.15, or
+  without a readable `tcp_mem`, a start logs one line and the reset part works as before (it needs Linux 5.4 or
+  later). Counters `relief_bytes`, `relief_streams` and `relief_capped`. `--no-unread-close` turns off both parts.
+- `--dest-failfast`: a destination is taken for dead only from connects near their connect timeout (the last 2.5
+  seconds: from 7.5 s of the default 10 s). A host that answers only a late SYN (in the test, the 5th, about 4 s after
+  the first) no longer loses streams of a large page: before, 1 to 6 of 70 streams in about half of the page loads.
+- `--dest-failfast`: one client address may have 64 connects in flight per worker thread that get no answer. Above
+  that, its new connects to such destinations, or to destinations without an open stream, get CLOSE `0x43` at once
+  (counter `refuse_dest_dead`). With 1,000 distinct dead destinations the server now holds about 250 to 600 file
+  descriptors instead of up to 4,158 (without the option, about 20,000).
+- A client that sends frames over 256 KiB within its credit can no longer push one stream's upload backlog past 64 MiB
+  + 256 KiB: such a frame closes that stream with CLOSE `0x49` (counter `shed_hold`); the connection and its other
+  streams go on. Clients with ordinary frames (64 KiB) are only paused, as before.
+- `--port 0` (or a bare `0`) is refused at start with an error. Before, the kernel picked a random port that the start
+  line did not show.
+- A WebSocket Close from a client whose reason text is not valid UTF-8 is answered with close code 1007 (RFC 6455)
+  instead of an echo of its code. Wisp clients send no reason text or a UTF-8 one, so they see no change.
+- Adaptive splice reads a client's round trip only when it needs it (the first time the client has more than 4 streams
+  and a backed-up socket), once per connection. Before, every accepted TCP connection paid one extra `getsockopt`; a
+  connection that only opens one stream now makes one system call less. A connection that first needs it 4 to 4.5
+  minutes or more after it connected keeps the 256 KiB reads. New counters `splice_near`, `splice_far` and
+  `splice_old`.
+- The kTLS cipher is picked by the cipher suite's code instead of its printed name, so a rename in a dependency update
+  cannot turn off kTLS for every suite.
+
+Fixed:
+
+- When the server closes a connection whose client is still sending (after a protocol error, or a refused request with
+  more data behind it), the client now gets every byte the server queued and a clean close, not a reset. The server
+  ends its direction and reads and discards the client's input until the client closes, for at most 5 seconds (10 with
+  the built-in TLS) or 1 MiB. New counter `linger_capped`: closes at one of these bounds.
+- With `--stream-pool` (in `--preset public`), a WebSocket proxy (wsproxy) request over the shared stream limit now
+  gets `503 Service Unavailable` (counted as `refuse_streams`) instead of a 101 and then the close of its stream.
+- A client that times out (TCP keepalive or retransmission timeout) while it is not read under memory pressure, or
+  while its connection is closing, now counts in `dead_peers`. A paused client's `--log-conns` line says `dead_peer`;
+  a closing client's line keeps the reason it was closing for.
+
+Deprecated:
+
+- `--park-rcvlock` has no effect since 1.4.0 (`--unread-close` manages these receive buffers). It is still accepted on
+  the command line and in config files, and a start logs one line. `rcvlock_locks` and `rcvlock_errors` stay in the
+  metrics, always 0.
+
+Documentation:
+
+- The v1.1.0 entry is corrected (2026-11-16): on a second 2-core VPS with smaller socket buffers, server memory in the
+  100-stream echo test went from 206 to 158 MiB (not 4-10x less), and the other machines read 4-7x, not 4-10x.
+- The known limit on idle memory no longer gives a number ("under 2 MiB"): no test measured such a bound.
+- Reproducible builds: the binary follows the `libc6-dev` package, not only the glibc version; `bench/release.sh
+  --compare-ci` checks it.
+- [Built-in TLS](docs/tls.md) lists the kernels tested in VMs: 4.18 to 6.8 (Rocky 8, Ubuntu 20.04, 22.04 and 24.04,
+  Debian 11 and 12; Debian 11 has no `wss://` because its kernel has no kTLS).
+- [Memory](docs/memory.md): do not set `ulimit -v` below 1 GiB (with 512 MiB the server stopped on a failed allocation
+  under load).
+- `--auto-balance`: its cost to a busy process on the same cores was about 0.1% of that process's work.
+- Known limits: a UDP stream has no idle timeout; the TIME_WAIT table can fill when the server and its destinations
+  share a host; the Docker form of the open-file limit; the kernel's connection-tracking log line.
+- The start samples in the docs are the output of 1.4.0.
+
+Tests:
+
+- Old kernels: the 1.3.3 binary passed its functional checks in VMs with Linux 4.18 (cgroup v1), 5.4 (cgroup v1),
+  5.10, 5.15, 6.1 and 6.8 (this release changes no kernel-dependent path except the relief of `--unread-close`, which
+  logs that it is not in effect below 5.15). Kernel TCP memory pressure and a narrow source port range were tested end
+  to end in a VM (19 of 19 checks).
+- Fuzzing: the worker fuzz target got a variant with the preset's limits on; a 12-hour campaign on the 1.3.3 code (14
+  targets, 5.4 billion runs) found no bug in the server.
+- Timing tests that failed now and then on a loaded host measure the host's lag and allow for it, or wait for their
+  event; 101 of 101 full runs were clean on 4-CPU VMs with 4 busy loops beside them.
+- A compatibility step moves live connections between worker threads every loop turn (wisp-js 0.5.3 Wisp v1 and v2, a
+  v1 client with stream limits and close codes, credit v2): none was reset.
+- Every counter that no test checked has a test now (one exception: `accept_err_mem`); the WebSocket, HTTP and PROXY
+  protocol parsers have table tests of their edge cases.
+- A 24-hour soak of an earlier 1.4.0 candidate (before the `--dest-failfast`, close and stream-limit changes above;
+  two servers with `--preset public`): no server close, no false reset, no error in 368 bench runs. Its idle memory
+  floor rose about 1.5 to 2 MiB in 24 hours; up to half of that is glibc's per-thread memory (arenas), which grew more
+  slowly in the second half.
+
 ## v1.3.3
 
 New option, off by default (a plain `finalwisp` and `--preset public` do not change):
@@ -334,8 +449,10 @@ Changed:
 - **Credit pacing is on by default.** A stream gets no new upload credit while its download waits on the client.
   Echo-like traffic (full-duplex bulk) no longer fills the kernel socket buffers faster than the client reads: on a
   2-core VPS, 100 echo streams went from 236 to 24 MiB of server memory and 1.7x the throughput, and most echo cases no
-  longer push the host into TCP memory pressure. Other machines: 1.06-1.10x the echo throughput, 4-10x less server
-  memory. Uploads, downloads and request/response traffic are not affected. Cost: a single echo stream on one 2-core
+  longer push the host into TCP memory pressure. On a second 2-core VPS with smaller socket buffer limits: 206 to
+  158 MiB (1.3x less) and no clear change in throughput. Other machines: 1.06-1.10x the echo throughput, 4-7x less
+  server memory. (Corrected 2026-11-16: this entry said "4-10x" for the other machines, which counted a cell of the
+  first VPS, and did not name the second VPS.) Uploads, downloads and request/response traffic are not affected. Cost: a single echo stream on one 2-core
   VPS was 2-3% slower. `--no-credit-pace` turns it off.
 - DNS cache entries now expire in the background (5 s for names with no address, 30 s otherwise) and the cache gives its
   memory back; before, they stayed in memory until a thread's cache reached 4096 entries.

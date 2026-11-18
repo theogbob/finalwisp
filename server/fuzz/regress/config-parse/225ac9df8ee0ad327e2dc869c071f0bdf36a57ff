@@ -1,0 +1,9 @@
+presetÿþ#%all f126auth
+cert-auth-key .tmp/ed.pub
+motd hello hello worlh
+cert-auth-key .tmp/e,.pub
+motd hello world
+mem-budget 512M
+tcpmem-adapt
+metrics-interval 10
+max-conns 100

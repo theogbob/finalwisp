@@ -38,8 +38,9 @@ file and the command line override it is in the [configuration reference](config
 | `dns-own` | The built-in resolver instead of the system's. A name whose name server never answers is given up after 4 to 6 s instead of 10 s, and within 2 s when the client closes the stream. It reads the name servers of `/etc/resolv.conf`, and `/etc/hosts`; [what it does not read](configuration.md#--dns-own). |
 | `dns-reserve` | DNS thread reserve. A quarter of the resolver threads is kept for clients whose names answer fast; clients with slow names share the other threads, and among them a thread that comes back goes to the client address with the fewest lookups running. So a client that asks for names that never answer cannot make the names of other clients wait, once it counts as slow (one of its lookups has run for 1 s). Nothing is refused. It has three costs: see [slow names](#slow-names-and-the-resolver-threads). |
 | `tcpmem-share` | Kernel TCP memory share. Downloads that a client does not read stay in the kernel's TCP memory, and when that is full the kernel slows every connection of the host. From 3/4 of the host's limit, the client address that holds more than half of the unread downloads gets no new streams while another client is connected. Open streams go on. On a 2-core VPS, one address that kept adding unread downloads filled the host's TCP memory without this part: another client's upload stopped, and its download fell from 8.0 to 0.03 MiB/s. With it (three runs) the address got no stream past 2,000 and the host stayed below its limit. The other client kept working, but not always at full speed: its download was 8.0 MiB/s in one run and 0.7 MiB/s in two. A burst is not stopped (see below). The marks are in the [reference](configuration.md#--tcpmem-share). |
+| `unread-close` | Clients that stopped reading. While the host's TCP memory is short (from 3/4 of its limit), a connection whose client has used up its stall time is reset (TCP RST), which frees the memory its downloads hold: 600 seconds with its receive window at 0 and no data taken, plus 1 second for each 512 bytes it took (up to 3600 seconds). An honest slow reader also takes no data for minutes while its buffer drains, but it has paid for that time with the data it took: in a 90-minute test under held TCP memory pressure, all 7 slow readers we ran were kept (1 to 8 KiB per second, buffers up to 32 MiB), and the clients that did not read were reset after 611 to 633 seconds. A client paused for 10 minutes or more in all (a phone app in the background, a frozen browser tab) can be reset; it connects again. Nothing is reset while the host has TCP memory to spare. It also relieves downloads that wait in short TCP memory: a download whose socket to the destination holds more than half of its share of that memory is read out into the server's memory and queued for its client, in order. Without that, the kernel drops what the destination sends to such a socket, and after about 15 minutes the destination ends the connection (the stream ends with `0x03`, also for a client that reads, only slowly). In two 90-minute tests with the host's TCP memory held short (two kernels), no download ended that way with the relief, and 3 and 4 did without it. These bytes use at most a quarter of the memory budget. See the [reference](configuration.md#--unread-close).
 | `port-share` | Source port share. The host has a fixed number of source ports toward one destination address and port (28,232 with the Linux defaults). From 3/4 of them in use, the client address that holds more than half of the sockets to that destination gets no new streams to it while another client uses it. From 15/16 of them in use, an address that is alone on a destination gets no new streams to it while other clients are connected, so ports are left for a client that comes later (the same counter, `refuse_port_share`; the stream log names the rule `port_share` or `port_reserve`). From 1/4, new sockets to it get a socket option that keeps connects fast (Linux 6.3 and later). See the [reference](configuration.md#--port-share). |
-| `dest-failfast` | Dead destinations. When 8 connects of one worker thread to one destination have each got no answer to 4 SYN packets (3 seconds or more, by the kernel's retransmit schedule), that thread's new streams to it fail at once and no longer hold a socket for the connect timeout. One connect per second per worker thread still goes out, and the first answer ends it. On a 2-core VPS, 2,000 streams per second to one dead port held 27,843 file descriptors and took another client's requests from 1,764 to 116 per 45 seconds without this part; with it the server held 39 file descriptors and the other client kept 1,626 of 1,812. See the [reference](configuration.md#--dest-failfast). |
+| `dest-failfast` | Dead destinations. When 8 connects of one worker thread to one destination are near their connect timeout (7.5 seconds or more) with no answer to 4 SYN packets, that thread's new streams to it fail at once and no longer hold a socket for the connect timeout; a host that answers a late SYN is not taken for dead. One client address may have 64 connects in flight per worker thread that get no answer for 3 seconds; above that its new connects to such destinations fail the same way (many dead destinations). One connect per second per worker thread still goes out, and the first answer ends it. On a 2-core VPS, 2,000 streams per second to one dead port held 27,843 file descriptors and took another client's requests from 1,764 to 116 per 45 seconds without this part; with it the server held 39 file descriptors and the other client kept 1,626 of 1,812. See the [reference](configuration.md#--dest-failfast). |
 | `net-watch` | Counters and a log line for two things that no part of the preset bounds: SYN retransmits and UDP datagrams (see [what the preset does not do](#what-the-preset-does-not-do)). It also warns when the host's connection-tracking table is 3/4 full: when that table is full, the kernel drops new connections. `--show-config` compares the table's size with the open-file budget ([what a user costs](#what-a-user-costs)). It refuses nothing. See the [reference](configuration.md#--net-watch). |
 | `stream-share` | Stream share per connection. While 7/8 of the file descriptors are handed out (where `fd-admission` refuses new connections), a connection that holds its share of streams or more gets no new ones (CLOSE `0x49`), so the room that is left goes to connections with fewer streams. The share is about twice the descriptors per open connection at 7/8 and once that at the limit, at least 32 streams. It counts connections, not addresses. See the [reference](configuration.md#--stream-share). |
 | `stream-pool` | Stream pool. Under memory pressure (always with a budget under 256 MiB) the worker threads share one stream limit of the same total instead of one limit each, so a busy thread is not refused while another has room. The memory bound stays the same. See the [reference](configuration.md#--stream-pool). |
@@ -77,8 +78,8 @@ The preset holds no fixed per-address number and no fixed connection count, on p
   streams to many targets that never answer the connect (the kernel sends each SYN packet again and again: 4,200 SYN
   retransmits per second), and with a very high rate of UDP datagrams (10,000 per second). The preset sets no bound
   for these, because the host has no limit for its packet rate that the server could read. `net-watch` counts both
-  and logs a warning that names them; `dest-failfast` stops the first one only where 8 or more connects of one worker
-  thread go to the same destination.
+  and logs a warning that names them; `dest-failfast` bounds the first one per client address (64 connects in flight
+  per worker thread that get no answer), not for many addresses that each stay under it.
 - **Many addresses that each hold a little.** The share rules judge one client address against the others. When no
   address holds more than half, nobody is refused. For the ports, a stream is then refused only when a destination
   has no port left.
@@ -88,11 +89,10 @@ The preset holds no fixed per-address number and no fixed connection count, on p
   never reads. Its reference says what it does not cover, with the tests: many addresses that each hold a few, a
   burst from one address within a second or two, and downloads that ran at full speed and were then paused (honest
   clients or not). The warning "the host entered kernel TCP memory pressure" names the state. See
-  [small hosts and many slow downloads](memory.md#small-hosts-and-many-slow-downloads). The option
-  [`--unread-close`](configuration.md#--unread-close) (not in the preset in this release) acts later on the same downloads: while the host's TCP memory is
-  short, it resets a connection whose client has taken no data for 600 seconds with its receive window at 0. That
-  covers the three cases above once their clients have taken nothing for that long, not at once, and not a client
-  that reads a little now and then.
+  [small hosts and many slow downloads](memory.md#small-hosts-and-many-slow-downloads). The preset's
+  `unread-close` acts later on the same downloads: while the host's TCP memory is short, it resets a connection whose client has used up its stall time (600 seconds with its receive window at 0 and
+  no data taken, more for data it took). That covers the three cases above once their clients have taken nothing for
+  that long, not at once, and not a client that reads 512 bytes per second or more.
 - **A destination that comes back.** `dest-failfast` also refuses streams to a destination that comes back, until
   its next probe: in a test with a destination that was down for 12 seconds and came back, 60 of 270 streams were
   refused at once, and 59 of them would have connected after a wait of up to 7 seconds without this part. The first
@@ -110,6 +110,13 @@ The preset holds no fixed per-address number and no fixed connection count, on p
 - **UDP stays on.** In 125 rendered page loads with 4 browser client setups, no page opened a UDP stream. If your
   clients do not need UDP, `--no-udp` removes it.
 - **Who may connect and where to.** Authentication and destination lists are your policy (below).
+- **Slow readers while the host's TCP memory stays short.** If the host stays above 3/4 of `net.ipv4.tcp_mem` for
+  more than about 15 minutes while slow clients have MiBs of unread data waiting, some of their downloads end with
+  `0x03`: the destination ends the connection, because the kernel drops its data for a socket that holds more than
+  its share of the short memory. The preset's `unread-close` moves such bytes into the server's memory while the
+  host's TCP memory is short, up to a quarter of the memory budget; past that, or with `--no-unread-close`, it can
+  still happen. Size `tcp_mem` so that the host does not stay there; see
+  [troubleshooting](troubleshooting.md#slow-downloads-end-with-0x03-while-the-hosts-tcp-memory-stays-short).
 - **Idle connections** are never closed by a timeout of the server while the client is alive. A client that vanished
   without closing is found by TCP keepalive after 3 to 4 minutes of idle time and closed (`--no-keepalive` turns
   this off).
@@ -117,13 +124,6 @@ The preset holds no fixed per-address number and no fixed connection count, on p
 ## More limits you can add
 
 All of these work with or without the preset. A later option overrides the preset's value.
-
-- **Clients that stopped reading.** `--unread-close` resets, while the host's TCP memory is short, a connection whose
-  client has taken no data for 600 seconds with its receive window at 0: that frees the memory its downloads hold. It
-  is off unless asked for; a later release may put it in the preset. An honest slow reader also takes no data for
-  minutes while its buffer drains (up to 187 s at 2 KiB per second with the kernel's default buffer, 346 s with an
-  8 MiB buffer, in our tests), so a slower reader, one with a larger buffer, or a client paused for 10 minutes or more
-  can be reset. See the [reference](configuration.md#--unread-close).
 
 - **Connection limits.** `--max-conns` caps the whole process. `--max-conns-per-ip` caps one address, and
   `--conn-rate-per-ip R/B` limits how fast one address opens new connections: `20/200` allows a burst of 200, then 20
@@ -216,7 +216,9 @@ connection, and a closed connection keeps its entry for about 2 more minutes. In
 common size of 262,144 entries holds about 770 such users (computed), far fewer than the descriptors of the table
 above: in the replay, 580 users filled almost 80% of it while they used under 10% of the file descriptors of that
 server. When the table is full, the kernel drops the packets of new connections: connects to destinations time out,
-and new clients do not get in (the kernel log usually says `nf_conntrack: table full, dropping packet`).
+and new clients do not get in. The kernel log then says `nf_conntrack: table full, dropping packet`, a few lines at a
+time (rate-limited); from Linux 6.17 on, a table of a network namespace other than the host's says
+`nf_conntrack: table full in netns N, dropping packet`.
 
 With `--net-watch` (in the preset), the server reads the table where its files are readable: `--show-config` shows
 its size and whether it is smaller than the descriptors for connections and streams, the server warns when it is 3/4
@@ -224,6 +226,11 @@ full, and the metrics have `host_conntrack` and `host_conntrack_max`. Without `-
 cannot read the table, nothing in the server names the cause: look at
 `sysctl net.netfilter.nf_conntrack_count net.netfilter.nf_conntrack_max` on the host under load. The fix is a larger
 `net.netfilter.nf_conntrack_max`, or no connection tracking for the server's traffic.
+
+In the test on the virtual machine with 14 CPU threads above, where the server and the destinations ran on one
+machine, the kernel's table of closed connections in TIME_WAIT (`net.ipv4.tcp_max_tw_buckets`, 131,072 there) was
+full from about 1,000 active users on. The kernel then skips the TIME_WAIT state of further closes and counts them as
+`TcpExtTCPTimeWaitOverflow` (`nstat -az TcpExtTCPTimeWaitOverflow`). No failure in that test was tied to it.
 
 ## Destination policy
 

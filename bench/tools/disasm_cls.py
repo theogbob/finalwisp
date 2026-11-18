@@ -11,11 +11,10 @@ import os, re, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import disasm_norm as D
 
-a_path, b_path = sys.argv[1], sys.argv[2]
-show = sys.argv[4] if len(sys.argv) > 4 and sys.argv[3] == "--show" else None
-fold = D.make_fold(["finalwisp::worker"])
-(a, _), (b, _) = D.funcs(a_path, fold), D.funcs(b_path, fold)
-NUM = re.compile(r"-?0x[0-9a-f]+|\$-?[0-9]+|\+0x[0-9a-f]+>")
+# one token per number: an immediate "$0x4e0" / "$-0x8" / "$5", a displacement or address "0x10" / "-0x8", a target
+# offset "+0x1f>". (60.78: "$0x4e0" was read as "$0" + "x4e0", so a changed hexadecimal immediate kept its digits and an
+# offset-only body was classed LOGIC.)
+NUM = re.compile(r"\$-?0x[0-9a-f]+|\$-?[0-9]+|-?0x[0-9a-f]+|\+0x[0-9a-f]+>")
 
 
 def loose(bodies):
@@ -52,37 +51,51 @@ def group(name):
     return "other"
 
 
-diff = [k for k in sorted(set(a) & set(b)) if a[k] != b[k]]
-out = {}
-RENAMES = {}
-for k in diff:
-    kind = "OFFSET-ONLY" if loose(a[k]) == loose(b[k]) else "LOGIC"
-    if kind == "LOGIC":
-        pairs = renamed(k, a[k], b[k])
-        if pairs:
-            kind = "RENAME-ONLY"
-            RENAMES.setdefault(k, pairs)
-    out.setdefault((group(k), kind), []).append(k)
-print(f"functions base {len(a)} new {len(b)}; differ {len(diff)}; only in base {len(set(a) - set(b))}; only in new {len(set(b) - set(a))}")
-for g in ("worker", "finalwisp", "other"):
-    for kind in ("OFFSET-ONLY", "RENAME-ONLY", "LOGIC"):
-        v = out.get((g, kind), [])
-        print(f"{g:9s} {kind:11s} {len(v)}")
-        if kind == "LOGIC" or g == "worker":
+def classify(a, b):
+    """{name: bodies} x2 -> (differing names, {(group, kind): [names]}, {name: rename pairs})"""
+    diff = [k for k in sorted(set(a) & set(b)) if a[k] != b[k]]
+    out, renames = {}, {}
+    for k in diff:
+        kind = "OFFSET-ONLY" if loose(a[k]) == loose(b[k]) else "LOGIC"
+        if kind == "LOGIC":
+            pairs = renamed(k, a[k], b[k])
+            if pairs:
+                kind = "RENAME-ONLY"
+                renames.setdefault(k, pairs)
+        out.setdefault((group(k), kind), []).append(k)
+    return diff, out, renames
+
+
+def main():
+    a_path, b_path = sys.argv[1], sys.argv[2]
+    show = sys.argv[4] if len(sys.argv) > 4 and sys.argv[3] == "--show" else None
+    fold = D.make_fold(["finalwisp::worker"])
+    (a, _), (b, _) = D.funcs(a_path, fold), D.funcs(b_path, fold)
+    diff, out, RENAMES = classify(a, b)
+    print(f"functions base {len(a)} new {len(b)}; differ {len(diff)}; only in base {len(set(a) - set(b))}; only in new {len(set(b) - set(a))}")
+    for g in ("worker", "finalwisp", "other"):
+        for kind in ("OFFSET-ONLY", "RENAME-ONLY", "LOGIC"):
+            v = out.get((g, kind), [])
+            print(f"{g:9s} {kind:11s} {len(v)}")
+            if kind == "LOGIC" or g == "worker":
+                for k in v:
+                    print("    ", k[:200])
+                    for x, y in sorted(RENAMES.get(k, ())):
+                        print("         target", x[:120], "->", y[:120])
+    for side, s in (("only in base", set(a) - set(b)), ("only in new", set(b) - set(a))):
+        for g in ("worker", "finalwisp"):
+            v = sorted(k for k in s if group(k) == g)
+            print(f"{side}, {g}: {len(v)}")
             for k in v:
                 print("    ", k[:200])
-                for x, y in sorted(RENAMES.get(k, ())):
-                    print("         target", x[:120], "->", y[:120])
-for side, s in (("only in base", set(a) - set(b)), ("only in new", set(b) - set(a))):
-    for g in ("worker", "finalwisp"):
-        v = sorted(k for k in s if group(k) == g)
-        print(f"{side}, {g}: {len(v)}")
-        for k in v:
-            print("    ", k[:200])
-if show:
-    import difflib
-    for k in diff:
-        if show in k:
-            print("---", k)
-            for l in difflib.unified_diff("\n=====\n".join(a[k]).splitlines(), "\n=====\n".join(b[k]).splitlines(), "base", "new", lineterm="", n=3):
-                print(l)
+    if show:
+        import difflib
+        for k in diff:
+            if show in k:
+                print("---", k)
+                for l in difflib.unified_diff("\n=====\n".join(a[k]).splitlines(), "\n=====\n".join(b[k]).splitlines(), "base", "new", lineterm="", n=3):
+                    print(l)
+
+
+if __name__ == "__main__":
+    main()

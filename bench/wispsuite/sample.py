@@ -42,6 +42,27 @@ def group_usage(pgids):
     return cpu, rss / MIB, hwm / MIB
 
 
+def group_pids(pgids):
+    """live pids of the groups or sessions, without shell / `ip netns exec` / systemd-run wrappers (the server processes)"""
+    want = {pgids} if isinstance(pgids, int) else set(pgids)
+    out = []
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        try:
+            with open(f"/proc/{d}/stat") as fh:
+                f = fh.read().rsplit(")", 1)[1].split()
+            if (int(f[2]) not in want and int(f[3]) not in want) or f[0] == "Z":
+                continue
+            with open(f"/proc/{d}/status") as fh:
+                if fh.read().startswith(_WRAPPERS):
+                    continue
+            out.append(int(d))
+        except (OSError, IndexError, ValueError):
+            pass
+    return out
+
+
 def rss_mib(pid):
     """VmRSS of one process in MiB (None if gone)."""
     try:
@@ -156,13 +177,21 @@ class TcpMemPeak:
     sender with nothing in flight can stall the whole run (50.02): such reps are "at tcp_mem max". sockstat lags the
     real total by up to the per-CPU reserves (1 MiB per CPU), so the flag counts within that margin."""
 
-    def __init__(self, every=0.05):
+    def __init__(self, every=0.05, pids=()):
         self.every, self.max_seen, self._stop = every, None, threading.Event()
         self.press_samples = self.samples = 0  # 60.42 verify: samples with the global TCP pressure flag set
+        # 60.78 G22: the largest sum of VmRSS (exact, not the per-CPU-cached VmHWM) of `pids` over the samples, MiB; None
+        # without pids or when no sample read one. A peak shorter than one sample interval can be missed.
+        self.pids, self.rss_max = list(pids), None
         self._t = threading.Thread(target=self._run, daemon=True)
 
     def _run(self):
         while True:
+            if self.pids:
+                vals = [rss_mib(p) for p in self.pids]
+                if any(v is not None for v in vals):
+                    s = sum(v for v in vals if v is not None)
+                    self.rss_max = s if self.rss_max is None else max(self.rss_max, s)
             v = tcp_mem_pages()
             if v is not None and (self.max_seen is None or v > self.max_seen):
                 self.max_seen = v

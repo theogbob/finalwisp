@@ -16,13 +16,13 @@ finalwisp          # after the install below: serves ws://127.0.0.1:6001/
 ## Install
 
 ```sh
-V=v1.3.3
+V=v1.4.0
 curl -LO https://github.com/theogbob/finalwisp/releases/download/$V/finalwisp-$V-x86_64-linux.tar.gz
 curl -LO https://github.com/theogbob/finalwisp/releases/download/$V/SHA256SUMS
 tar -xzf finalwisp-$V-x86_64-linux.tar.gz
 sha256sum -c SHA256SUMS      # must print OK twice: the download, and the binary inside it
 sudo install -m 0755 finalwisp-$V-x86_64-linux/finalwisp /usr/local/bin/finalwisp
-finalwisp --version          # finalwisp 1.3.3
+finalwisp --version          # finalwisp 1.4.0
 ```
 
 finalwisp is one static binary for Linux on x86_64. It has no runtime dependencies and no minimum glibc version.
@@ -43,10 +43,10 @@ The tarball also holds `BUILDINFO`: the commit, toolchain and checksum of the bu
 finalwisp
 ```
 
-<!-- sample: real output of the merged 1.3.0 build on a terminal (2026-11-11, a 15-thread machine; raw data (not published)) -->
+<!-- sample: real output of finalwisp 1.4.0 (md5 2fce78f4) on a terminal (2026-11-17, a 15-thread machine); printed by bench/tools/startsample.py -->
 ```text
 finalwisp listening on ws://127.0.0.1:6001/
-  version     1.3.0
+  version     1.4.0
   threads     15
   memory      up to 31410 MiB (half of this machine's memory)
   open files  up to 524288
@@ -130,12 +130,16 @@ in the [configuration reference](configuration.md#config-file). The file is read
 ```sh
 bench/release.sh
 # output: server/target/x86_64-unknown-linux-gnu/release/finalwisp and BUILDINFO
+bench/release.sh --compare-ci BUILDINFO   # BUILDINFO of the release tarball: same libc6-dev first, then the same md5
 ```
 
 It needs rustup (the toolchain is pinned in `rust-toolchain.toml`), gcc, and a static glibc 2.34 or newer on the build
 machine (Debian and Ubuntu: `libc6-dev`; Fedora: `glibc-static`). The build is reproducible: the same commit, the pinned
-Rust toolchain and the same gcc, binutils and glibc versions give the same binary, byte for byte, wherever it is built.
-`BUILDINFO` records those versions and the md5, so you can compare your build with the release.
+Rust toolchain, the same gcc and binutils and the same `libc6-dev` package give the same binary, byte for byte,
+wherever it is built. The same glibc version is not enough: a security update of the package (2.43-2ubuntu2.4 to
+2.43-2ubuntu2.7) changed the binary. `BUILDINFO` records those versions, the `libc6-dev` package and the md5. The second
+command above (Debian and Ubuntu: it reads the package with `dpkg-query`) builds only when this host has the
+release's `libc6-dev` package, and when the commit is the release's, it checks that the md5 is the release's.
 
 Compiler options such as `-C target-cpu=native` or profile-guided optimization gave no measurable gain in our tests:
 the kernel does most of the work (TCP, splice, TLS). They also make the binary stop running on older CPUs, so the

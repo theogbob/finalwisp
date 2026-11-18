@@ -24,7 +24,7 @@ impl Worker {
                 // max each) above level 3's exit for good: VPS1, 64M from level 0, upload 10x10: 10 of 12 runs at
                 // 0 MiB/s for 6-22 s until l3_sweep closed clients. A backlog stops it again (pend_account resumes it).
                 if c.rdhup {
-                    self.close_client(ci, Why::ClientClose);
+                    self.close_hup(ci); // 60.78 G42 a timeout is a dead peer
                 }
                 return;
             }
@@ -38,7 +38,7 @@ impl Worker {
                 // rbuf_max does not grow: its bytes wait in the (capped) socket buffer; l3_sweep sheds it
                 // first (H7c), set_level reads it again below level 2. A peer that hung up goes now.
                 if c.rdhup {
-                    self.close_client(ci, Why::ClientClose);
+                    self.close_hup(ci); // 60.78 G42 a timeout is a dead peer
                 }
                 return;
             }
@@ -235,6 +235,12 @@ impl Worker {
         // uses the lane), all but the rest of a partly sent frame, which must go out before the Close.
         c.bulk_cut();
         c.closing = true;
+        if why != Why::ClientClose && c.state != CState::Http {
+            // 60.78 bundle B3 a close the server starts after the upgrade: the client may still be sending (an upload,
+            // frames behind a bad one), so its close lingers (flush_dirty). An HTTP refusal lingers only if more than
+            // its request came; a client that closed itself only if more than its Close or EOF came.
+            c.readable = true;
+        }
         if !c.dirty {
             c.dirty = true;
             self.dirty.push((ci, self.clients.gen(ci)));
@@ -294,6 +300,10 @@ impl Worker {
                     return;
                 }
                 self.flush_upload(); // its CONTINUE must not land after our Close frame
+                if p.len() > 2 && ws::reason_not_utf8(p) {
+                    self.ws_fail(ci, 1007); // 60.78 G43 RFC 6455 8.1
+                    return;
+                }
                 let code: &[u8] = if p.len() >= 2 { &p[..2] } else { &[] };
                 let c = self.clients.at(ci);
                 ws::push_frame(&mut c.obuf, OP_CLOSE, &[code]);

@@ -79,6 +79,14 @@ pub fn parse(b: &[u8], max: usize) -> Result<Option<Frame>, FrameError> {
     Ok(Some(Frame { fin, opcode, mask, hdr_len: hdr, len }))
 }
 
+/// RFC 6455 8.1 (1007: 7.4.1): a client's Close payload `p` (2 bytes or more) whose reason, the bytes after the status
+/// code, is not UTF-8 (7.1.6): the connection is failed with 1007. Out of line: on_frame is inlined into the frame loop,
+/// whose code stays as it was.
+#[inline(never)]
+pub fn reason_not_utf8(p: &[u8]) -> bool {
+    std::str::from_utf8(p.get(2..).unwrap_or_default()).is_err()
+}
+
 /// Server frame header for a FIN frame with `len` payload bytes. Returns header length.
 #[inline(always)]
 pub fn write_header(dst: &mut [u8; 10], opcode: u8, len: usize) -> usize {
@@ -181,6 +189,114 @@ mod tests {
             assert_eq!(v, orig);
         }
     }
+    /// 60.78 G46: header parse table: every length form at its edges, each short prefix needs more bytes, the errors
+    #[test]
+    fn parse_table() {
+        let m = [9u8, 8, 7, 6];
+        // (frame header bytes, max) -> (fin, opcode, mask, hdr_len, len)
+        type Want = (bool, u8, bool, usize, usize);
+        let ok: &[(&[u8], usize, Want)] = &[
+            (&[0x82, 0x00], 10, (true, OP_BIN, false, 2, 0)),
+            (&[0x02, 0x7d], 1000, (false, OP_BIN, false, 2, 125)),
+            (&[0x81, 0x80 | 0x05, 9, 8, 7, 6], 10, (true, OP_TEXT, true, 6, 5)),
+            (&[0x00, 126, 0x00, 0x7e], 1000, (false, OP_CONT, false, 4, 126)),
+            (&[0x82, 126, 0xff, 0xff], 0xffff, (true, OP_BIN, false, 4, 0xffff)),
+            (&[0x82, 0x80 | 127, 0, 0, 0, 0, 0, 1, 0, 0, 9, 8, 7, 6], 1 << 16, (true, OP_BIN, true, 14, 1 << 16)),
+            (&[0x88, 0x80 | 125, 9, 8, 7, 6], 10_000, (true, OP_CLOSE, true, 6, 125)),
+            (&[0x89, 0x80, 9, 8, 7, 6], 0, (true, OP_PING, true, 6, 0)),
+            (&[0x8a, 0x00], 0, (true, OP_PONG, false, 2, 0)),
+        ];
+        for (b, max, (fin, op, masked, hdr, len)) in ok {
+            let f = parse(b, *max).unwrap().unwrap_or_else(|| panic!("{b:02x?}"));
+            assert_eq!((f.fin, f.opcode, f.mask.is_some(), f.hdr_len, f.len), (*fin, *op, *masked, *hdr, *len), "{b:02x?}");
+            if *masked {
+                assert_eq!(f.mask, Some(m));
+            }
+            for cut in 0..b.len() {
+                assert!(parse(&b[..cut], *max).unwrap().is_none(), "{b:02x?} cut at {cut}");
+            }
+        }
+        // (bytes, max, error)
+        let bad: &[(&[u8], usize, &str)] = &[
+            (&[0xc2, 0x00], 10, "Reserved"),            // RSV1 (no extension negotiated)
+            (&[0xa2, 0x00], 10, "Reserved"),            // RSV2
+            (&[0x92, 0x00], 10, "Reserved"),            // RSV3
+            (&[0x83, 0x00], 10, "Reserved"),            // opcode 3
+            (&[0x87, 0x00], 10, "Reserved"),            // opcode 7
+            (&[0x8b, 0x00], 10, "Reserved"),            // opcode 0xb
+            (&[0x8f, 0x00], 10, "Reserved"),            // opcode 0xf
+            (&[0x08, 0x00], 10, "BadControl"),          // fragmented Close
+            (&[0x09, 0x00], 10, "BadControl"),          // fragmented Ping
+            (&[0x8a, 126, 0, 126], 1000, "BadControl"), // control frame over 125 bytes
+            (&[0x82, 0x0b], 10, "TooBig"),
+            (&[0x82, 126, 0x01, 0x00], 255, "TooBig"),
+            (&[0x82, 127, 0x80, 0, 0, 0, 0, 0, 0, 0], 1 << 24, "TooBig"), // 2^63
+            (&[0x82, 127, 0, 0, 0, 1, 0, 0, 0, 0], 1 << 24, "TooBig"),    // checked before the mask bytes arrive
+        ];
+        for (b, max, e) in bad {
+            let got = parse(b, *max);
+            let name = match &got {
+                Err(e) => format!("{e:?}"),
+                Ok(f) => format!("{f:?}"),
+            };
+            assert_eq!(name, *e, "{b:02x?}");
+        }
+    }
+    /// 60.78 G46: a header written by write_header parses back (the server's own frames: FIN, unmasked)
+    #[test]
+    fn write_header_round_trip() {
+        for len in [0usize, 1, 125, 126, 127, 0xffff, 0x1_0000, 1 << 24] {
+            let mut h = [0u8; 10];
+            let hl = write_header(&mut h, OP_BIN, len);
+            assert_eq!(
+                hl,
+                if len <= 125 {
+                    2
+                } else if len <= 0xffff {
+                    4
+                } else {
+                    10
+                }
+            );
+            let f = parse(&h[..hl], usize::MAX).unwrap().unwrap();
+            assert_eq!((f.fin, f.opcode, f.mask, f.hdr_len, f.len), (true, OP_BIN, None, hl, len));
+        }
+        let mut out = Vec::new();
+        push_frame(&mut out, OP_CLOSE, &[&1000u16.to_be_bytes(), b"bye"]);
+        assert_eq!(out, [0x88, 5, 0x03, 0xe8, b'b', b'y', b'e']);
+    }
+    /// 60.78 G46: RFC 4648 section 10 vectors
+    #[test]
+    fn base64_vectors() {
+        for (i, o) in
+            [("", ""), ("f", "Zg=="), ("fo", "Zm8="), ("foo", "Zm9v"), ("foob", "Zm9vYg=="), ("fooba", "Zm9vYmE="), ("foobar", "Zm9vYmFy")]
+        {
+            assert_eq!(base64(i.as_bytes()), o);
+        }
+        assert_eq!(base64(&[0xfb, 0xff, 0xbf]), "+/+/");
+        // the key is trimmed (RFC 6455 4.2.1: optional whitespace around a header value)
+        assert_eq!(accept_key(" dGhlIHNhbXBsZSBub25jZQ== "), "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=");
+    }
+    /// 60.78 G43: the reason of a client's Close payload (after the 2-byte code) must be UTF-8 (RFC 6455 7.1.6, 8.1)
+    #[test]
+    fn reason_not_utf8_table() {
+        let t: &[(&[u8], bool)] = &[
+            (b"", false),
+            (&[0x03], false),
+            (&[0x03, 0xe8], false),
+            (b"\x03\xe8bye", false),
+            (b"\x03\xe9h\xc3\xa9 \xe2\x82\xac \xf0\x9f\x98\x80", false), // 2-, 3- and 4-byte UTF-8
+            (b"\x03\xe8\xff", true),
+            (b"\x03\xe8ok\xc3", true),           // a truncated 2-byte sequence
+            (b"\x03\xe8\xed\xa0\x80", true),     // an encoded surrogate
+            (b"\x03\xe8\xc0\xaf", true),         // an overlong form
+            (b"\x0f\xa0\xf4\x90\x80\x80", true), // above U+10FFFF
+        ];
+        for (p, want) in t {
+            assert_eq!(reason_not_utf8(p), *want, "{p:02x?}");
+        }
+    }
+
     #[test]
     fn parse_lengths() {
         let f = parse(&[0x82, 0x80 | 126, 0x01, 0x00, 1, 2, 3, 4], 1 << 24).unwrap().unwrap();

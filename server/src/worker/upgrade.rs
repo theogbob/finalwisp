@@ -1,6 +1,7 @@
 //! 20.05 HTTP upgrade to WebSocket (Wisp at `/`, legacy wsproxy at `/prefix/host:port`).
 
 use super::*;
+use crate::fdgate::MARK_POOL;
 
 impl Worker {
     pub(super) fn handle_http(&mut self, ci: u32) {
@@ -109,8 +110,10 @@ impl Worker {
                 return;
             }
             let live = self.targets.slots.len() - self.targets.free.len();
-            if !self.st.admit || live >= self.max_streams {
+            // 60.78 G44 --stream-pool: the pool's unit before the 101 (the pool sets max_streams to no limit)
+            if !self.st.admit || live >= self.max_streams || (self.fd_mask & MARK_POOL != 0 && self.sl_upgrade_short()) {
                 // 20.26 memory pressure: no new streams (review: wsproxy must not bypass admission)
+                let c = self.clients.at(ci);
                 http::simple(&mut c.obuf, "503 Service Unavailable", "server under memory pressure\n");
                 self.begin_close(ci, Why::PressureShed);
                 return;

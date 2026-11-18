@@ -1,0 +1,65 @@
+*ZGET /%s1%16%37.0.0.1:4444 HTTP/1.1
+Hgst: x
+Upgrade: w                             aat-Protocol: wjZQ=
+Hgst: x
+Upgrade: w                             aaaaaaaaaaa:aaaaaaaaaaaaaaaaaaaaaaaaaaBub25jZQ==
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Protocol: wjZQ=et-Protocrsion: 13
+Sec-WebSocket-Protocol: aaaaaaaaaaa:aa 13
+Sec-WebSocket-Protocol: wisp-v2a
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Protocol: wjZQ=
+Hgst: x
+Upgrade: w                             aaaaaaaaaaa:aaaaaaaaaaaaaaaaaaaaaaaaaaBukkkkkkkkkkkkkkkkkkkb25jZQ==
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Protocol: wjZQ=et-Protocrsion: 13
+Sec-WebSocket-Protocol: aaaaaaaaaaa:aa 13
+Sec-WebSocket-Protocol: wisp-v2aaaaaaaaaaaaaaaa3
+Sec-WebSocket-Protocol: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabSocket-Version: 06
+Sec-WebSocket-Protocrsion: 13
+Sec-WebSocket-Protocol: aaaaaaaaaaa:aa 13
+Sec-WebSocket-Protocol: wisp-v2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaBub25jZQ==
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Protocol: wjZQ=et-Protocrsion: 13
+Sec-WebSocket-Protocol: aaaaaaaaaaa:aa 13
+Sec-WebSocket-Protocol: wisp-v2a
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Protocol: wjZQ=
+Hgst: x
+Upgrade: w     aaaaaaaaa:aaaaaaaaaaaaaaaaaaaaaaaaaaBub25jZQ==
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Protocol: wjZQ=
+Hgst: x
+Upgrade: w                             aaaaaaaaaaa:aaaaaaa3
+Sec-WebSocket-Protocol: wjZQ=
+Hgst: x
+Upgrade: w                             aaaaaaaaaaa:aaaaaaaaaaaaaaaaaaaaaaaaaaBub25jZQ==
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Protocol: wjZQ=et-Protocrsion: 13
+Sec-WebSocket-Protocol: aaaaaaaaaaa:aa 13
+Sec-WebSocket-Protocol: wisp-v2a
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Protocol: wjZQ=
+Hgst: x
+Upgrade: w                             aaaaaaaaaaa:aaaaaaaaaaaaaaaaaaaaaaaaaaBukkkkkkkkkkkkkkkkkkkb25jZQ==
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Protocol: wjZQ=et-Protocrsion: 13
+Sec-WebSocket-Protocol: aaaaaaaaaaa:aa 13
+Sec-WebSocket-Protocol: wisp-v2aaaaaaaaaaaaaaaa3
+Sec-WebSocket-Protocol: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabSocket-Version: 06
+Sec-WebSocket-Protocrsion: 13
+Sec-WebSocket-Protocol: aaaaaaaaaaa:aa 13
+Sec-WebSocket-Protocol: wisp-v2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaBub25jZQ==
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Protocol: wjZQ=et-Protocrsion: 13
+Sec-WebSocket-Protocol: aaaaaaaaaaa:aa 13
+Sec-WebSocket-Protocol: wi-WebSocket-Protocol: wisp-v2aaaaaaaaaaaaaaaa3
+SecmWebSocket-Protocol: aaaaaaaaaaa:aa 13
+Sec-WebSocket-Protocol: wisp-v2aaaaaaaaaa_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabSocket-Versia:aa 13
+Sec-WebSocket-Protocol: wisp-v2aaaaaaaaaaaaaaaa3
+SecmWebSocket-Protocol: aaaaaaaaaaa:aa 13
+Sec-WebSocket-Protocol: wisp-v2aaaaaaaaaa_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabSocket-Version: 06
+Sec-WebSocket-Protocrsion: 13
+Sec-WebSocket-Protocol: aaaaaaaaaaa:aa 13
+Sec-WebSocket-Protocol: wisp-v2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaafailaaaaaaaaaaaaaaHNhbXÿBsZSB0>
+

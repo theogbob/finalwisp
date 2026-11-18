@@ -21,6 +21,8 @@ mod pool;
 mod prom;
 mod proxyproto; // 60.34
 mod slimits; // 60.72
+#[cfg(test)]
+mod testlag; // 60.74 4.5 host lag for timing tests
 mod tls;
 mod ui; // 60.60
 mod upstream;
@@ -305,19 +307,6 @@ const WARN_RTT_MS: u64 = 50;
 /// `open files`: the block's key column keeps its width, so no other row moves when this one is there.
 const BUFFER_ROW: &str = "TCP buffer";
 
-/// 60.47 --park-rcvlock: the worker's receive-buffer floor (Config::park_rcvlock, kernel units: SO_RCVBUF as reported, i.e.
-/// doubled) from the SO_BUF_LOCK probe and `limit` = 2 x net.core.rmem_max (net::rcvbuf_limit: a probe, not the sysctl,
-/// which containers hide). SO_RCVBUF is clamped to that, so the floor stays at or below it (a raise never shrinks a
-/// buffer); limit unknown: refused (a floor of 1 never raises: the 60.47 gold2 loss).
-fn park_rcvlock_floor(buf_lock: Option<bool>, limit: Option<u64>) -> Result<u32, &'static str> {
-    const FLOOR: u64 = 512 << 10;
-    match buf_lock {
-        Some(true) => limit.map(|m| FLOOR.min(m).max(1) as u32).ok_or("--park-rcvlock: the receive buffer limit probe failed"),
-        Some(false) => Err("--park-rcvlock needs SO_BUF_LOCK (Linux 5.15 or later)"),
-        None => Err("--park-rcvlock: the SO_BUF_LOCK probe failed"),
-    }
-}
-
 fn sysctl(path: &str, field: usize) -> Option<u64> {
     std::fs::read_to_string(path).ok()?.split_whitespace().nth(field)?.parse().ok()
 }
@@ -545,12 +534,6 @@ fn show_config(
     pool_max: &(usize, String),
 ) -> ! {
     let o = &st.opts;
-    // what a start refuses from the options and this kernel alone is refused here too (exit 2, as there)
-    if let Some(e) = o.park_rcvlock.then(|| park_rcvlock_floor(net::buf_lock_supported(), net::rcvbuf_limit()).err()).flatten() {
-        // SAFETY: isatty only reads the descriptor number
-        eprint!("{}", ui::usage_error(e, unsafe { libc::isatty(2) } == 1));
-        std::process::exit(2)
-    }
     // 60.57 A1 the raise as a start does it (this process exits), so the rows show what a start gets. A2: nothing is
     // opened here, so the fixed fds are the estimate.
     let nofile = fdgate::raise_nofile(o.nofile_raise);
@@ -907,6 +890,10 @@ fn option_warnings(o: &cli::Opts, upstream_on_cmdline: bool) -> Vec<String> {
         // 60.58 (net::dns_slow_cap: the slow clients keep at least one thread)
         w.push("--dns-reserve keeps no thread with 1 resolver thread. Fix: --dns-threads 2 or more (the default is 16)".to_string());
     }
+    if o.park_rcvlock {
+        // 60.78 bundle B2: retired, still parsed so that old start commands and config files start
+        w.push("--park-rcvlock has no effect since 1.4.0: --unread-close manages these receive buffers".to_string());
+    }
     w
 }
 
@@ -1123,15 +1110,6 @@ fn main() {
             std::process::exit(1)
         }))
     });
-    // 60.47 --park-rcvlock: refused without SO_BUF_LOCK (a lock it could not lift would stay for the stream's life)
-    let park_rcvlock = if o.park_rcvlock {
-        park_rcvlock_floor(net::buf_lock_supported(), net::rcvbuf_limit()).unwrap_or_else(|e| {
-            eprintln!("finalwisp: {e}");
-            std::process::exit(2)
-        })
-    } else {
-        0
-    };
     // 60.63 section E: the state the workers and the guard thread share (None: no option of it is on, or none can work
     // on this host). Built before the configuration: the options that are in effect decide whether a connection's
     // peer is kept. Installed before the workers are built; the thread starts after them.
@@ -1168,7 +1146,6 @@ fn main() {
         ext,
         credit_v2: o.credit_v2,
         credit_pace: o.credit_pace,
-        park_rcvlock,
         adaptive_splice: o.adaptive_splice,
         conn_gate: (o.max_conns > 0).then(|| Arc::new(net::ConnGate::new(o.max_conns))),
         max_streams_per_conn: o.max_streams_per_conn,
@@ -1239,6 +1216,11 @@ fn main() {
     if let Some(b) = &bd {
         bounds::install(b.clone());
     }
+    if cfg.adaptive_splice && cfg.splice {
+        // 60.78 the kernel's min RTT window: a client older than it is not read (worker/splicefar.rs); read-only
+        let w = std::fs::read_to_string("/proc/sys/net/ipv4/tcp_min_rtt_wlen").ok().and_then(|s| s.trim().parse().ok());
+        worker::set_rtt_wlen(w);
+    }
     let workers: Vec<Worker> = (0..cfg.threads)
         .map(|i| {
             Worker::new(cfg.clone(), dns.clone(), i, peers.clone(), stats[i].clone()).unwrap_or_else(|e| {
@@ -1293,7 +1275,6 @@ fn main() {
     }
     let v2_note = if cfg.credit_v2 { ", upload credit v2" } else { "" }; // 20.30
     let pace_note = if cfg.credit_pace { ", credit pace" } else { "" }; // 60.42
-    let lock_note = if cfg.park_rcvlock != 0 { ", park rcvlock" } else { "" }; // 60.47
     let splice_note = if cfg.adaptive_splice && cfg.splice { ", adaptive splice" } else { "" }; // 60.46 (inert without splice)
                                                                                                 // 60.60 the first line: tools wait for "listening on"; the details follow in the block and, at debug, in two lines
     say!(Info, "{}", paint().bold(&format!("finalwisp listening on {scheme}://{}/", cfg.addr)));
@@ -1423,7 +1404,7 @@ fn main() {
     say!(Info, "{}", ui::block(&block).trim_end());
     // The details, at --log-level debug (and, without a start, in --show-config): the line tools and bug reports read.
     // 80.01 F7: kernel, cgroup layout and SO_BUF_LOCK (F2), so a support report shows them without guessing
-    say!(Debug, "finalwisp: start: {} threads, buffer {}{v2_note}{pace_note}{lock_note}{splice_note}{auth_note}", cfg.threads, cfg.buffer);
+    say!(Debug, "finalwisp: start: {} threads, buffer {}{v2_note}{pace_note}{splice_note}{auth_note}", cfg.threads, cfg.buffer);
     let cgroup = mem::cgroup_mode(&std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default());
     let buflock = buflock_text();
     say!(
@@ -1519,6 +1500,21 @@ mod tests {
         assert_eq!([0, 1, 10, 86400].map(|t| dns_expire(s(t))), [s(1), s(1), s(10), s(86400)]);
     }
 
+    /// 60.78 bundle B2: --park-rcvlock (retired) starts, from the command line or a config file, with one warning
+    #[test]
+    fn park_rcvlock_is_accepted_with_one_warning() {
+        let w = |args: Vec<String>| {
+            let o = cli::parse_args(args, 4).unwrap();
+            option_warnings(&o, false).into_iter().filter(|w| w.contains("--park-rcvlock")).collect::<Vec<_>>()
+        };
+        assert!(w(vec![]).is_empty());
+        let one = w(vec!["--park-rcvlock".to_string()]);
+        assert_eq!(one, ["--park-rcvlock has no effect since 1.4.0: --unread-close manages these receive buffers"]);
+        let lines = cli::parse_config("f", b"park-rcvlock\n").unwrap();
+        let args = lines.into_iter().flat_map(|(_, k, v)| std::iter::once(k).chain(v)).collect();
+        assert_eq!(w(args), one);
+    }
+
     /// 60.58 --dns-reserve keeps a quarter of the threads, at least one, and leaves the slow clients at least one: with
     /// 1 thread it keeps none, and the start says so
     #[test]
@@ -1538,22 +1534,6 @@ mod tests {
             ],
             [0; 4]
         );
-    }
-
-    #[test]
-    fn park_rcvlock_floor_rules() {
-        // 60.47: 512 KiB, or the SO_RCVBUF limit (2 x rmem_max) below that (stock 425984); refused without SO_BUF_LOCK
-        assert_eq!(park_rcvlock_floor(Some(true), Some(8 << 20)), Ok(512 << 10));
-        assert_eq!(park_rcvlock_floor(Some(true), Some(425984)), Ok(425984));
-        let lim = net::rcvbuf_limit().expect("probe");
-        assert!(lim >= 4608 && lim.is_multiple_of(2), "2 x rmem_max: {lim}");
-        assert_eq!(park_rcvlock_floor(Some(true), Some(0)), Ok(1));
-        assert!(park_rcvlock_floor(Some(true), None).is_err()); // (refused: a floor of 1 never raises, a measured loss)
-        assert!(park_rcvlock_floor(Some(false), Some(1 << 20)).unwrap_err().contains("SO_BUF_LOCK"));
-        assert!(park_rcvlock_floor(None, Some(1 << 20)).is_err());
-        for e in [park_rcvlock_floor(Some(false), None), park_rcvlock_floor(None, None), park_rcvlock_floor(Some(true), None)] {
-            assert!(!e.unwrap_err().contains(|c| cli::REDACTION_MARKS.contains(c)));
-        }
     }
 
     #[test]

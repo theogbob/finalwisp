@@ -26,6 +26,43 @@ def key_metric(test):
     return "rps" if test in RATE_TESTS else ("mib_s_up" if test == "upload" else "mib_s_down")
 
 
+# 60.78 G27: abfan / abbox cells that are not one plain wbench test on loopback. Cell "NAME:C:S" runs
+# `wbench run --test TEST --conns C --streams S ARGS` from netns fwa to the servers in netns fws across the link of
+# bench/vps/netns_hol.sh (RATE DELAY LIMIT; root, so VPS boxes only), with its own window (dur / warmup, seconds).
+# A box that cannot make a network namespace (boxes file "netns": false, not root, or the probe NETNS_PROBE fails, e.g. a
+# container without CAP_NET_ADMIN) reads the cell SKIPPED (no netns): never FAILED, never a loopback stand-in.
+# Verdict on "key" (stats.py, "higher" = higher is better); "info" metrics are shown with their reading, no verdict.
+# hol: head-of-line latency: one connection carries a bulk download and one small request/response stream; the
+# requests' latency (p50 / p99) is what waits behind the bulk data (server write buffer, socket, link queue).
+LINK_CELLS = {"hol": {"test": "browse", "args": ["--size", "64", "--resp", "64", "--reqs-per-stream", "1000000000", "--bulk", "1"],
+                      "link": ["100mbit", "10ms", "200"], "dur": 30, "warmup": 2,  # 30 s: ~660 requests, so p99 is not the top 2-3 values
+                      "key": "p99_us", "higher": False, "info": [["p50_us", False], ["bulk_mib_s", True]],
+                      # p99 sits on the link ceiling (RTT + full netem queue, histogram steps ~0.2 %): the 30 s A/A on VPS1
+                      # read copy/base 0.996 WIN [0.992, 0.998]; below 1 % a verdict of this cell means nothing
+                      "min_effect": 0.01}}
+NETNS_PROBE = ["unshare", "-n", "sh", "-c", "ip link set lo up && tc qdisc add dev lo root netem delay 1ms"]  # netns + netem
+LINK_ENV = {"SRV_PREFIX": "ip netns exec fws", "CLI_PREFIX": "ip netns exec fwa", "SRV_HOST": "10.77.0.2", "SRV_BIND": "--host 10.77.0.2"}
+
+
+def floored(c, test):
+    """60.78 G27: the per-cell floor of a link cell (LINK_CELLS "min_effect" m) on one stats.compare result c: |ratio - 1| < m
+    and the 90 % interval inside [1 - 2m, 1 + 2m] -> verdict "tie (below the 1 % floor of hol)". stats.py is unchanged;
+    every other cell (no min_effect) gets c back as it is. On stats.compare's 3-decimal ratio: 0.990 / 1.010 are NOT below."""
+    m = (LINK_CELLS.get(test) or {}).get("min_effect")
+    if not m or not c or c.get("verdict") == "tie" or not c.get("ci90"):
+        return c
+    lo, hi = c["ci90"]
+    if abs(c["ratio"] - 1) < m and 1 - 2 * m <= lo and hi <= 1 + 2 * m:
+        return dict(c, verdict=f"tie (below the {m * 100:g} % floor of {test})", verdict_raw=c["verdict"])
+    return c
+
+
+def cell_key(test):
+    """-> (key metric, higher is better) of an abfan cell's test name (a LINK_CELLS name or a wbench test)"""
+    s = LINK_CELLS.get(test)
+    return (s["key"], s["higher"]) if s else (key_metric(test), True)
+
+
 def start_target(wb, port, mode, prefix=(), log=None, extra=(), wait=True):
     """Start `wbench target`; waits for the port (wait=True, TCP modes, host namespace) or 0.3 s otherwise."""
     p = proc.spawn([*prefix, wb, "target", "--port", str(port), "--mode", mode, *extra], log=log)

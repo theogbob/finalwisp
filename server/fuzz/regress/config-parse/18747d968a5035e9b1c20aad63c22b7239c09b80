@@ -1,0 +1,46 @@
+buffer 15 
+#   
+#$#$ 
+ 
+#$s001t    
+#$ *#
+ 
+#$ 
+   
+#$ 
+buffer 01000118  
+#$ 
+buffer 01000119 
+#01t -SSSSallSSS__$s001t    
+#$ fer 15 
+#   
+#$ 
+ 
+#buffer 15 
+#   
+#$ 
+ 
+#$s001t    
+#$ *#
+ 
+#$ 
+   
+#$ 
+buffer 01000118  
+#get 10g
+motd //mbudget et 21mot--allowB-sm-budZmpd
+mem-budget 21g
+motd //mbudget etZmpd
+mem-budget 21g
+motd //motd m//tZmpd
+mem-budget 01m
+motd //motd m /tiiiiiiiiiiiiiiiiiiiiiiiiiiiiiitZmpd
+mem-budget 10g
+motd //mbudget et 21m
+motd  /tZmpd
+mem-budget 21g
+motd //mbudget et 21m
+motd //mot--allowB-sm-budZmpd
+mem-budget 21g
+motd //mbudget  
+#01t_______

@@ -64,12 +64,19 @@ def metrics(p, keys):
     if len(vals) <= n0: return {}
     kv = dict(x.split("=", 1) for x in vals[-1].split() if "=" in x)
     return {k: int(kv[k]) for k in keys if k in kv and kv[k].isdigit()}
-def settle(p, keys, total, secs=15):
-    """the metrics once sum(keys) == total (None: not within secs)"""
-    end = time.time() + secs
+def settle(p, keys, total, secs=30):
+    """the metrics once sum(keys) == total in two metrics lines in a row with equal values (None: not within secs).
+    60.74 4.5: one line is a snapshot that a loaded host can take while the worker is between a CONNECT and its
+    deferred start (seen: 304 streams and no refusal, then 60 of them refused by the rule); two equal lines 1 s apart
+    are the settled state (the wait ends at that event)"""
+    end, prev = time.time() + secs, None
     while time.time() < end:
         m = metrics(p, keys)
-        if len(m) == len(keys) and sum(m.values()) == total: return m
+        if len(m) == len(keys) and sum(m.values()) == total:
+            if m == prev: return m
+            prev = m
+        else:
+            prev = None
     return None
 
 def frame(payload):

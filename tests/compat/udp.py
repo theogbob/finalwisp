@@ -3,7 +3,7 @@
 #   PORT          server with UDP enabled and --allow-loopback (private addresses blocked)
 #   --no-udp-port a second server started with --no-udp
 #   --ref         reference-server mode: only report what happens (no finalwisp-specific asserts)
-import os, socket, struct, sys, time, base64, threading
+import errno, os, socket, struct, sys, time, base64, threading
 
 args = sys.argv[1:]
 PORT = int(args[0])
@@ -182,23 +182,35 @@ for v2 in (False, True):
     ok([p[2] for p in got if p[1] == 2] == [b"early1", b"early2"], f"{tag}: DATA before resolve queued + delivered in order ({[p[2] for p in got]})")
     w.close()
 
-# closed port: ICMP port unreachable must not kill the stream; when the port opens, traffic flows
-w = Wisp()
-cp = free_udp_port()
-w.connect(5, cp)
-w.send(2, 5, b"ping1"); time.sleep(0.3); w.send(2, 5, b"ping2"); time.sleep(0.3)
-got = w.packets(0.5)
-closed = [p for p in got if p[0] == 4 and p[1] == 5]
-if REF:
-    print(f"INFO ref: closed port -> {['CLOSE 0x%02x' % p[2][0] for p in closed] or 'no CLOSE'}")
-else:
+# closed port: ICMP port unreachable must not kill the stream; when the port opens, traffic flows.
+# 60.78 T1: the closed port is free for any process until the echo binds it again (seen: EADDRINUSE at that bind, 1 of
+# 45 farm gates); then the case starts over with a new closed port and a new connection
+for attempt in range(1, 21):
+    w = Wisp()
+    cp = free_udp_port()
+    w.connect(5, cp)
+    w.send(2, 5, b"ping1"); time.sleep(0.3); w.send(2, 5, b"ping2"); time.sleep(0.3)
+    got = w.packets(0.5)
+    closed = [p for p in got if p[0] == 4 and p[1] == 5]
+    if REF:
+        print(f"INFO ref: closed port -> {['CLOSE 0x%02x' % p[2][0] for p in closed] or 'no CLOSE'}")
+        w.close()
+        break
+    try:
+        late, _ = udp_echo(cp)
+    except OSError as e:
+        if e.errno != errno.EADDRINUSE or attempt == 20:
+            raise
+        print(f"INFO closed port: port {cp} was taken by another process before the echo bound it again, a new port (run {attempt})", flush=True)
+        w.close()
+        continue
     ok(not closed, f"closed port: ICMP refusals do not close the stream ({got})")
-    late, _ = udp_echo(cp)
     w.send(2, 5, b"hello")
     p = w.packet(2)
     ok(p is not None and p[:2] == (2, 5) and p[2] == b"hello", f"closed port: after the port opens the same stream works ({p})")
     late.close()
-w.close()
+    w.close()
+    break
 
 # blocked / invalid / unresolvable
 w = Wisp()

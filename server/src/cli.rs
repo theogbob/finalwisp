@@ -105,7 +105,7 @@ pub const OPTIONS: &[OptSpec] = &[
     o("--help", "[TOPIC]", "config", "", "print this help, or the options of a topic", "Print the overview, the options of one topic, or with the topic all the options of every topic. Also -h.").early(),
     o("--version", "", "config", "", "print the version and exit", "Print the version and exit. Also -V.").early(),
     o("--host", "IP", "listen", "127.0.0.1", "address to listen on", "The address to listen on: an IP address, not a name. Use 0.0.0.0 or :: for direct clients; keep 127.0.0.1 behind a reverse proxy on the same host."),
-    o("--port", "PORT", "listen", "6001", "port to listen on", "The TCP port to listen on (1 to 65535). A bare number does the same: finalwisp 7000. 0 is accepted but do not use it: the kernel then picks the port, and the start line does not show it."),
+    o("--port", "PORT", "listen", "6001", "port to listen on", "The TCP port to listen on (1 to 65535). A bare number does the same: finalwisp 7000. 0 is refused: the kernel would pick a random port that the start line does not show."),
     o("--threads", "N", "listen", "one per CPU", "worker threads", "The number of worker threads. Lower it to leave CPUs to other services. 0 counts as 1."),
     o("--buffer", "N", "advanced", "128", "first upload credit of a stream, in packets", "The first stream credit (packets) the server grants. 0 counts as 1. Leave it, except on a small host where streams that upload and download at once cause kernel TCP memory pressure: --buffer 32 holds less memory there, but a large upload on an open connection waits one more round trip."),
     o("--allow-loopback", "", "destinations", "off", "let clients reach loopback addresses", "Let clients reach loopback targets (127.0.0.0/8, ::1). Only for tests or a trusted service on the same host."),
@@ -134,7 +134,7 @@ pub const OPTIONS: &[OptSpec] = &[
     o("--mem-budget", "SIZE", "memory", "automatic", "memory to stay under, 0 turns it off", "The memory the server plans to stay under (K, M, G are KiB, MiB, GiB). Automatic: the memory limit of the container or service (cgroup), else half of the machine's memory. Near the budget the server shrinks queues and buffers and stops taking new streams instead of running into the out-of-memory killer. 0 turns the budget off."),
     o("--tcpmem-adapt", "", "memory", "off", "shrink socket buffers near the kernel TCP limit", "When the host is near its kernel TCP memory limit (net.ipv4.tcp_mem), shrink the buffers of this server's sockets to remote peers. For a small host that runs out of TCP memory under many fast streams. Needs cgroup v2 socket accounting, Linux 5.15 or later, the host network namespace, credit v2 and the memory budget; --show-config says why it is off otherwise."),
     o("--no-credit-pace", "", "memory", "credit pace on", "give upload credit while a download waits", "Turn off credit pacing. By default a stream gets no new upload credit while its download waits on the client, so streams that upload and download at once cannot fill the kernel socket buffers faster than the client reads. Turn it off only to compare or roll back."),
-    o("--park-rcvlock", "", "memory", "off", "freeze the receive buffer of a waiting download", "Stop the kernel from growing the receive buffer of a download's target connection while the stream waits on a slow client. Many waiting downloads then hold less kernel memory on a small host. The buffer is never made smaller and grows again once the client catches up. Needs Linux 5.15 or later (the server refuses to start otherwise)."),
+    o("--park-rcvlock", "", "memory", "off", "no effect since 1.4.0", "No effect since 1.4.0: --unread-close manages the receive buffers of waiting downloads. Still accepted so that old start commands and config files start; a start with it logs one line."),
     o("--adaptive-splice", "", "memory", "on", "the default; kept for 1.2.0 configs", "Turn adaptive splice on. It is on by default; this option undoes an earlier --no-adaptive-splice and keeps 1.2.0 configs valid."),
     o("--no-adaptive-splice", "", "memory", "adaptive splice on", "same read size for far and near clients", "Turn off adaptive splice. By default a client 10 ms or more away with more than 4 streams whose socket is backed up gets 64 KiB reads from its targets instead of 256 KiB, so many slow far downloads hold less kernel TCP memory on a small host. Clients closer than 10 ms, clients behind a reverse proxy on the same host and clients on --listen-unix always get 256 KiB. Turn it off only to compare or roll back. --adaptive-splice, still accepted for 1.2.0 configs, turns it back on."),
     o("--metrics-interval", "SECS", "logs", "off", "print a line with all counters every SECS", "Print one line with all counters on stderr every SECS seconds, and a last one at exit. 0 is off."),
@@ -187,7 +187,7 @@ pub const OPTIONS: &[OptSpec] = &[
     o("--no-tcpmem-share", "", "limits", "", "undo --tcpmem-share", "Undo --tcpmem-share of a preset, a config file or earlier on the command line."),
     o("--port-share", "", "limits", "off", "one address cannot take a destination's ports", "Keep the host's source ports toward one destination for all clients. A host has a fixed number of source ports toward one destination address and port (net.ipv4.ip_local_port_range, about 28000 by default), so that many target sockets to it at most. From 1/4 of them in use toward one destination, new target sockets to it get the socket option IP_LOCAL_PORT_RANGE (Linux 6.3; without it connects slow down past half of the ports). From 3/4, a client address (an IPv4 address or an IPv6 /64) that holds more than half of the sockets to that destination gets no new streams to it (CLOSE 0x49) while another client holds a socket to it. From 15/16, an address that is alone on the destination gets none while another client is connected, so the last ports stay free for a client that comes later. When no port is left the stream is refused with CLOSE 0x49. Open streams go on and nothing is closed. Never applies to loopback, private and other addresses that are not public, to --trusted-proxy addresses and to a client without a client address. Behind a reverse proxy it needs --trusted-proxy, or every client has the proxy's address. TCP streams only. The public preset sets it."),
     o("--no-port-share", "", "limits", "", "undo --port-share", "Undo --port-share of a preset, a config file or earlier on the command line."),
-    o("--dest-failfast", "", "limits", "off", "no new connects to a destination that is dead", "Stop sending connects to a destination that does not answer. A destination (target address and port) is taken for dead when 8 or more connects of one worker thread to it have each got no answer to 4 SYNs and none has opened. Until it answers, a new stream to it is refused at once with CLOSE 0x43, the reason it would get at the connect timeout; one connect per second per worker thread still goes out as a probe, and the first one that connects ends it. Only while another client is connected: a client alone on the server is never refused. A name with more addresses goes on with the next one. Streams that are connecting go on until --connect-timeout. Never applies to loopback, private and other addresses that are not public, to --trusted-proxy addresses and to a client without a client address. TCP streams only; not in effect with --upstream. The public preset sets it."),
+    o("--dest-failfast", "", "limits", "off", "no new connects to a destination that is dead", "Stop sending connects to a destination that does not answer. A destination (target address and port) is taken for dead when 8 or more connects of one worker thread to it are in the last 2.5 seconds of --connect-timeout with no answer to 4 SYNs each, and none has opened: a host that answers a late SYN is not. Until it answers, a new stream to it is refused at once with CLOSE 0x43, the reason it would get at the connect timeout; one connect per second per worker thread still goes out as a probe, and the first one that connects ends it. Many destinations that do not answer: one client address may have 64 connects in flight per worker thread that got no answer for 3 seconds or go to a destination where one did (failing until a stream to it opens, or for 30 seconds); above that, its new connects to such a destination or to one with no open stream on that thread are refused the same way. Only while another client is connected: a client alone on the server is never refused. A name with more addresses goes on with the next one. Streams that are connecting go on until --connect-timeout. Never applies to loopback, private and other addresses that are not public, to --trusted-proxy addresses and to a client without a client address. TCP streams only; not in effect with --upstream. The public preset sets it."),
     o("--no-dest-failfast", "", "limits", "", "undo --dest-failfast", "Undo --dest-failfast of a preset, a config file or earlier on the command line."),
     o("--net-watch", "", "limits", "off", "counters and a log line: SYN retransmits, UDP", "Watch two things that no option bounds, because the host has no readable limit for packets out: connects to many destinations that do not answer, and UDP datagrams. Nothing is refused. The metrics get host_syn_retrans and host_udp_out (SYN retransmits and UDP datagrams sent by the host since boot) and the gauge connecting (streams with a connect in flight). Every 10 seconds one thread compares the host's counters: a warning is logged when the host sent 30000 or more SYN retransmits in 10 seconds and 3 or more per connect attempt, or 75000 or more UDP datagrams in 10 seconds and they are half of all its packets; the next warning of a kind comes only at twice that value. It also reads the host's connection-tracking table (nf_conntrack_count and nf_conntrack_max, where readable): a warning at the start and while it runs when it is 3/4 full, the gauges host_conntrack and host_conntrack_max, and a --show-config row that compares its size with the file descriptors for connections and streams. The public preset sets it."),
     o("--no-net-watch", "", "limits", "", "undo --net-watch", "Undo --net-watch of a preset, a config file or earlier on the command line."),
@@ -195,7 +195,7 @@ pub const OPTIONS: &[OptSpec] = &[
     o("--no-stream-share", "", "limits", "", "undo --stream-share", "Undo --stream-share of a preset, a config file or earlier on the command line."),
     o("--stream-pool", "", "memory", "off", "one stream limit for all threads, not one each", "Under memory pressure (memory level 1, and always with a budget under 256 MiB) each worker thread has a limit on its open streams, sized from the budget (counter refuse_streams). With --stream-pool the threads share one limit of the same total, so a busy thread is not refused while another thread has room. The memory bound stays the same. A thread takes the streams in small blocks from the shared count and gives back what it does not use. The public preset sets it."),
     o("--no-stream-pool", "", "memory", "", "undo --stream-pool", "Undo --stream-pool of a preset, a config file or earlier on the command line."),
-    o("--unread-close", "", "limits", "off", "reset a client that stopped reading its downloads", "While the host's TCP memory is short (from 3/4 of net.ipv4.tcp_mem's maximum until below 11/16; in a container that cannot read it, while the kernel reports TCP memory pressure), reset a connection that holds a download its client does not read: the client's receive window has been 0 and it took no data for 600 seconds (10 minutes). A reset frees the kernel memory of all its streams. Nothing is reset while the host has TCP memory to spare. A slow reader can take no data for minutes while its buffer drains (in our tests up to 187 s at 2 KiB per second with the kernel's default buffer, 346 s with an 8 MiB buffer): one that reads slower, or has a larger buffer, can be reset under pressure, as can a client paused for 10 minutes or more (a phone app in the background, a frozen browser tab); it connects again. Counter close_unread. Needs Linux 5.4 or later. Off unless asked for: the public preset does not set it (a later release may)."),
+    o("--unread-close", "", "limits", "off", "reset a client that stopped reading its downloads", "While the host's TCP memory is short (from 3/4 of net.ipv4.tcp_mem's maximum until below 11/16; in a container that cannot read it, while the kernel reports TCP memory pressure), reset a connection that holds a download its client does not read once its stall time is used up. Stall time is time with the client's receive window at 0 and no data taken. Each connection starts with 600 seconds (10 minutes); data the client takes adds 1 second per 512 bytes, up to 3600 seconds. So a slow reader with a large buffer, which takes no data for minutes while its buffer drains, has bought the time it needs, and a client that takes nothing, or a few bytes now and then, gets 600 seconds in all. A connection that holds more of the host's TCP memory than one stream can (the maximum of net.ipv4.tcp_rmem) uses its time up faster. A reset frees the kernel memory of all its streams. Nothing is reset while the host has TCP memory to spare. A client that pauses for 10 minutes or more in all without taking data (a phone app in the background, a frozen browser tab) can be reset under pressure; it connects again. Counter close_unread. It also relieves waiting downloads at the same marks: a download that waits for its client and whose target socket holds more than half of a socket's share of the host's TCP memory (net.ipv4.tcp_mem's maximum divided by the TCP sockets on the host) is read out into its client's own queue, and the socket's receive buffer is kept at half the share until the pressure ends. Without that, the kernel drops what the destination sends to such a socket, and the destination ends the connection after about 15 minutes (the stream ends with CLOSE 0x03). These bytes use at most a quarter of the memory budget (--mem-budget), each worker thread a quarter of its part; past that a stream is left as it is (counters relief_bytes, relief_streams, relief_capped). Needs Linux 5.4 or later; the relief needs Linux 5.15 or later and a readable net.ipv4.tcp_mem (a start without them logs that the relief is not in effect). The public preset sets it."),
     o("--no-unread-close", "", "limits", "", "undo --unread-close", "Undo --unread-close of a preset, a config file or earlier on the command line."),
     o("--auto-balance", "", "advanced", "off", "try a busy connection on an idle thread", "When one thread is fully busy with two or more busy connections while another thread is idle, move one of those connections to the idle thread for a trial of about 2.5 seconds: measure, move, measure, move back, measure. The move is kept only if the server as a whole carried more bytes or more packets with it than before and after it, and less of neither. It can help on a host with many cores and many short connections; on a host with two cores it finds nothing to move. On a host with up to 4 worker threads it checks less and less often while it finds nothing to do (every 5 seconds, doubling up to every 160 seconds). No effect on light traffic or when every thread is busy. A process that shares the host and loses CPU without it showing in this server's traffic is not seen."),
 ];
@@ -492,7 +492,7 @@ fn unknown(p: &str) -> String {
         return "unknown argument (not shown: not an option name; it may hold a secret)".to_string();
     }
     if p.bytes().all(|b| b.is_ascii_digit()) {
-        return format!("{p:?} is not a port (0-65535)");
+        return format!("{p:?} is not a port (1-65535)");
     }
     match spec(&format!("--{p}")) {
         Some(s) => format!("unknown argument {p:?} (did you mean {}?)", s.name),
@@ -1066,10 +1066,20 @@ fn list<T>(flag: &str, v: &str, one: impl Fn(&str) -> Result<T, &'static str>) -
     v.split(',').enumerate().map(|(i, e)| one(e.trim()).map_err(|why| format!("{flag}: entry {} of {v:?}: {why}", i + 1))).collect()
 }
 
-/// a number; the error says what is expected (`what`: "a port (0-65535)")
+/// a number; the error says what is expected (`what`: "a port (1-65535)")
 fn num<T: std::str::FromStr>(flag: &str, v: String, what: &str) -> Result<T, String> {
     v.parse().map_err(|_| format!("{flag}: {v:?} is not {what}"))
 }
+
+/// 60.78 G45 the listening port: 0 is refused like any value that is not a port (the kernel would pick a random one).
+/// A value check, so a 0 is an error wherever it is given (a config line, before a later --port), as `--port abc` is.
+fn port_value(p: u16) -> Result<u16, String> {
+    match p {
+        0 => Err(PORT0.to_string()),
+        p => Ok(p),
+    }
+}
+const PORT0: &str = "--port: 0 is not allowed (the kernel would pick a random port that the start line does not show); use 1 to 65535";
 
 /// what `num` expects, by the type of the setting
 const COUNT: &str = "a whole number";
@@ -1183,7 +1193,7 @@ fn parse_args_of<I: IntoIterator<Item = String>>(args: I, threads: usize, whole:
         let mut val = || args.next().ok_or_else(|| needs_value(&a));
         match a.as_str() {
             "--host" => host = val()?,
-            "--port" => o.port = num(&a, val()?, "a port (0-65535)")?,
+            "--port" => o.port = port_value(num(&a, val()?, "a port (1-65535)")?)?,
             "--threads" => o.threads = num(&a, val()?, COUNT)?,
             "--buffer" => o.buffer = num(&a, val()?, COUNT32)?,
             "--connect-timeout" => {
@@ -1397,7 +1407,7 @@ fn parse_args_of<I: IntoIterator<Item = String>>(args: I, threads: usize, whole:
                 }
                 // a bare number is the port; anything else is unknown (60.60: --help and --version are handled before
                 // parse_args, cli::special, so here they are unknown too)
-                o.port = p.parse().map_err(|_| unknown(p))?
+                o.port = port_value(p.parse().map_err(|_| unknown(p))?)?
             }
         }
     }
@@ -1979,6 +1989,7 @@ mod tests {
             ("max-con 5", "f:1: unknown option \"max-con\" (did you mean max-conns?)"),
             ("--port 1", "f:1: write option names without the leading dashes"),
             ("port", "f:1: --port needs a value: --port PORT"),
+            ("port 0\nport 7000", &format!("f:1: {PORT0}")), // 60.78 G45: a value check, as port abc
             ("balance s3cretVALUE", "f:1: --balance takes no value"),
             ("config other.conf", "f:1: --config inside a config file (no includes)"),
             ("help", "f:1: unknown option \"help\""),
@@ -2476,15 +2487,23 @@ mod tests {
             e.args,
             words(
                 "--block-smtp --max-streams-per-conn 1024 --fd-admission --conn-share --dns-own --dns-reserve --tcpmem-share \
-                 --port-share --dest-failfast --net-watch --stream-share --stream-pool"
+                 --unread-close --port-share --dest-failfast --net-watch --stream-share --stream-pool"
             )
         );
         assert_eq!(
             preset_line(&e).unwrap(),
             "preset public (command line): block-smtp on (preset), max-streams-per-conn 1024 (preset), fd-admission on (preset), \
-             conn-share on (preset), dns-own on (preset), dns-reserve on (preset), tcpmem-share on (preset), port-share on \
-             (preset), dest-failfast on (preset), net-watch on (preset), stream-share on (preset), stream-pool on (preset)"
+             conn-share on (preset), dns-own on (preset), dns-reserve on (preset), tcpmem-share on (preset), unread-close on \
+             (preset), port-share on (preset), dest-failfast on (preset), net-watch on (preset), stream-share on (preset), \
+             stream-pool on (preset)"
         );
+        // 60.78 bundle B2: the relief is a part of --unread-close; its old option (never released) is unknown
+        for a in ["--unread-relief", "--no-unread-relief"] {
+            assert!(parse(a).unwrap_err().contains(a), "{a}");
+        }
+        assert!(parse_config("f", b"unread-relief\n").is_err());
+        // --park-rcvlock (no effect since 1.4.0) still parses, in a file too (main warns at the start)
+        assert!(parse_config("f", b"park-rcvlock\n").is_ok() && parse("--park-rcvlock").unwrap().park_rcvlock);
     }
 
     #[test]
@@ -2659,12 +2678,13 @@ mod tests {
 
     /// opts_diff of a corpus case as the base commit saw it (`base`: the corpus column). The corpus was classified when
     /// the public preset had two lines; v1.3.0 added switches to it (fd-admission, conn-share, dns-reserve, which sets
-    /// dns-share, and the four of 60.63: tcpmem-share, port-share, dest-failfast, net-watch; and 60.72's two stream limits). No old command line names
+    /// dns-share, and the four of 60.63: tcpmem-share, port-share, dest-failfast, net-watch; 60.72's two stream limits; and
+    /// 60.78's unread-close). No old command line names
     /// them, so they are on exactly when the public preset is in effect: checked here, then left out of the comparison
     /// with the corpus column. The preset's dns-own is a setting that old command lines do name (--dns-own,
     /// --dns-server): on with the preset, and left out where the base had it off.
     fn diff_as_at_base(st: &Start, base: &str) -> String {
-        const ADDED: [&str; 10] = [
+        const ADDED: [&str; 11] = [
             "dns_share: true",
             "dns_reserve: true",
             "fd_admission: true",
@@ -2675,6 +2695,7 @@ mod tests {
             "net_watch: true",
             "stream_share: true", // 60.72
             "stream_pool: true",
+            "unread_close: true", // 60.78
         ];
         const OWN: &str = "dns_own: true";
         let diff = opts_diff(&st.opts);
@@ -2717,15 +2738,26 @@ mod tests {
     /// - `preset` must still print the preset,
     /// - `err` must still be an error, except for the words this work made valid on purpose: --help / -h, --version /
     ///   -V, --show-config and `--name=value`.
+    /// - 60.78 G45: a `run` that gave port 0 a value somewhere (a config line or a word the base accepted) is the
+    ///   port-0 error now, on purpose; their number is pinned.
     #[test]
     fn corpus_parses_as_before() {
         let cases = corpus();
-        let (mut runs, mut errs, mut new_ok) = (0, 0, 0);
+        let (mut runs, mut errs, mut new_ok, mut port0) = (0, 0, 0, 0);
         for (words, file, class) in cases {
             let added = |w: &String| matches!(w.as_str(), "-h" | "--help" | "-V" | "--version" | "--show-config");
             let new_form = words.iter().any(|w| added(w) || (w.starts_with("--") && w.contains('=')));
             let (kind, diff) = class.split_once('\t').unwrap_or((class.as_str(), ""));
-            match (kind, run(words.clone(), file)) {
+            let got = run(words.clone(), file.clone());
+            if kind == "run" && port0_error(&got) {
+                // (a necessary sign of a port 0 in the input: a word or a config value that is all zeros)
+                let zero = |w: &str| !w.is_empty() && w.bytes().all(|b| b == b'0');
+                let text = file.map(|f| String::from_utf8_lossy(&f).into_owned()).unwrap_or_default();
+                assert!(words.iter().any(|w| zero(w)) || text.split_whitespace().any(zero), "{words:?}: no 0 in it");
+                port0 += 1;
+                continue;
+            }
+            match (kind, got) {
                 ("run", Ok(Command::Start(st))) => {
                     assert_eq!(diff_as_at_base(&st, diff), diff, "{words:?}: another Config than before");
                     assert!(!st.show);
@@ -2740,15 +2772,24 @@ mod tests {
                 (was, now) => panic!("{words:?}: was {was}, is now {}", if now.is_ok() { "accepted" } else { "an error" }),
             }
         }
-        assert!(runs >= 490 && errs >= 2000, "{runs} run, {errs} err: the corpus shrank");
+        assert!(runs + port0 >= 490 && errs >= 2000, "{runs} run, {port0} port 0, {errs} err: the corpus shrank");
+        assert_eq!(port0, PORT0_RUNS, "the run cases of the corpus that give the port a 0");
         assert!(new_ok < 200, "{new_ok} old errors are accepted now");
     }
+
+    /// 60.78 G45: the error of a port 0 (a config line's error has its `FILE:LINE: ` in front)
+    fn port0_error(r: &Result<Command, (String, Option<String>)>) -> bool {
+        r.as_ref().err().is_some_and(|e| e.0.ends_with(PORT0))
+    }
+    const PORT0_RUNS: usize = 40; // (the fuzz-made lines with a bare 0, and config files with a `port 0` line)
 
     /// 60.60 the second corpus: every `run` case again with its options in the `--name=value` form: the same Opts
     #[test]
     fn corpus_with_equals_forms_parses_equal() {
         let mut merged = 0;
-        for (words, file, class) in corpus().into_iter().filter(|c| c.2.starts_with("run")) {
+        // (60.78 G45: a run case with port 0 is an error now: corpus_parses_as_before checks those)
+        let cases = corpus().into_iter().filter(|c| c.2.starts_with("run") && !port0_error(&run(c.0.clone(), c.1.clone())));
+        for (words, file, class) in cases {
             let (mut eq, mut i) = (Vec::new(), 0);
             while i < words.len() {
                 // (a name that is not a real option, or the last word, stays as it is)
@@ -2869,7 +2910,7 @@ mod tests {
             ("version", "unknown argument \"version\" (did you mean --version?)"),
             ("port", "unknown argument \"port\" (did you mean --port?)"),
             ("start", "unknown argument \"start\" (options start with two dashes; a bare number is the port)"),
-            ("70000", "\"70000\" is not a port (0-65535)"),
+            ("70000", "\"70000\" is not a port (1-65535)"),
             ("--port=1", "unknown option --port (did you mean --port?)"), // (only when split_eq did not run before)
             ("--Upstream", "unknown option (not shown: not an option name; it may hold a secret)"),
             ("-", "unknown option (not shown: not an option name; it may hold a secret)"),
@@ -2883,8 +2924,18 @@ mod tests {
         assert_eq!((distance(b"", b"abc"), distance(b"abc", b""), distance(b"abc", b"abc"), distance(b"ab", b"ba")), (3, 3, 0, 2));
         // a bad value says what is expected
         for (line, want) in [
-            ("--port abc", "--port: \"abc\" is not a port (0-65535)"),
-            ("--port 70000", "--port: \"70000\" is not a port (0-65535)"),
+            ("--port abc", "--port: \"abc\" is not a port (1-65535)"),
+            ("--port 70000", "--port: \"70000\" is not a port (1-65535)"),
+            // 60.78 G45: port 0 is refused (as --metrics-listen's); a bare 0 is the same field
+            (
+                "--port 0",
+                "--port: 0 is not allowed (the kernel would pick a random port that the start line does not show); use 1 to 65535",
+            ),
+            ("0", "--port: 0 is not allowed (the kernel would pick a random port that the start line does not show); use 1 to 65535"),
+            (
+                "--port 00",
+                "--port: 0 is not allowed (the kernel would pick a random port that the start line does not show); use 1 to 65535",
+            ),
             ("--threads many", "--threads: \"many\" is not a whole number"),
             ("--max-conns -1", "--max-conns: \"-1\" is not a whole number (at most 4294967295)"),
             ("--drain-timeout soon", "--drain-timeout: \"soon\" is not a number of seconds"),
@@ -2983,6 +3034,7 @@ mod tests {
                 "dns-own",
                 "dns-reserve",
                 "tcpmem-share",
+                "unread-close",
                 "port-share",
                 "dest-failfast",
                 "net-watch",

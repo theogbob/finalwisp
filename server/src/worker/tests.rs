@@ -30,7 +30,6 @@ fn dirty_client_closed_in_same_turn_is_skipped() {
         ext: ext::Ext::default(),
         credit_v2: false,
         credit_pace: false,
-        park_rcvlock: 0,
         adaptive_splice: false,
         conn_gate: None,
         max_streams_per_conn: 0,
@@ -122,7 +121,6 @@ fn stalled_partial_frame_is_shed_at_level_2() {
         ext: ext::Ext::default(),
         credit_v2: false,
         credit_pace: false,
-        park_rcvlock: 0,
         adaptive_splice: false,
         conn_gate: None,
         max_streams_per_conn: 0,
@@ -255,7 +253,6 @@ fn early_dns_answer_and_late_family() {
         ext: ext::Ext::default(),
         credit_v2: false,
         credit_pace: false,
-        park_rcvlock: 0,
         adaptive_splice: false,
         conn_gate: None,
         max_streams_per_conn: 0,
@@ -432,7 +429,6 @@ fn credit_v2_ping_after_continue_pong_retires_and_grants() {
         ext: ext::Ext::default(),
         credit_v2: true,
         credit_pace: false,
-        park_rcvlock: 0,
         adaptive_splice: false,
         conn_gate: None,
         max_streams_per_conn: 0,
@@ -516,6 +512,9 @@ fn credit_v2_ping_after_continue_pong_retires_and_grants() {
     assert_eq!(bound(&mut w), 128 + 128, "before the pong: additive");
     w.on_frame(ci, true, OP_PONG, b"wbench");
     assert_eq!(w.clients.at(ci).cv.as_ref().unwrap().pongs, 0, "a foreign pong is ignored");
+    // 60.74 4.5: the pongs are prompt (a round trip of about 0): the test thread may be preempted between the ping
+    // and its pong on a loaded host, which would read as a long round trip and size the window by it
+    w.clients.at(ci).cv.as_mut().unwrap().queued_now();
     w.on_frame(ci, true, OP_PONG, &1u64.to_le_bytes());
     assert_eq!(w.clients.at(ci).cv.as_ref().unwrap().pongs, 1);
     std::thread::sleep(credit::PING_GAP); // (the next CONTINUE's ping is not held back by PING_GAP)
@@ -529,6 +528,7 @@ fn credit_v2_ping_after_continue_pong_retires_and_grants() {
     data(&mut w, 1);
     assert_eq!(frames(&mut w), [cont(8), (OP_PING, 2u64.to_le_bytes().to_vec())]);
     assert_eq!(bound(&mut w), 222 + 8);
+    w.clients.at(ci).cv.as_mut().unwrap().queued_now();
     w.on_frame(ci, true, OP_PONG, &2u64.to_le_bytes());
     assert_eq!(w.clients.at(ci).cv.as_ref().unwrap().pongs, 2);
     assert_eq!(bound(&mut w), 166 + 8, "the 56 left of CONTINUE(128) are retired");
@@ -579,7 +579,6 @@ fn credit_v2_state_is_lazy() {
         ext: ext::Ext::default(),
         credit_v2: true,
         credit_pace: false,
-        park_rcvlock: 0,
         adaptive_splice: false,
         conn_gate: None,
         max_streams_per_conn: 0,
@@ -734,7 +733,6 @@ fn starve_retry_keeps_flush_order() {
             ext: ext::Ext::default(),
             credit_v2: false,
             credit_pace: false,
-            park_rcvlock: 0,
             adaptive_splice: false,
             conn_gate: None,
             max_streams_per_conn: 0,
@@ -886,7 +884,6 @@ fn starved_client_reads_a_bounded_slice() {
         ext: ext::Ext::default(),
         credit_v2: false,
         credit_pace: false,
-        park_rcvlock: 0,
         adaptive_splice: false,
         conn_gate: None,
         max_streams_per_conn: 0,
@@ -1065,6 +1062,16 @@ fn splice_length_stays_v111_when_off() {
     splice_length_steps(false);
 }
 
+/// 60.78 a client's adaptive-splice class, set by hand (as the first need of rule B would)
+fn set_far(w: &mut super::Worker, ci: u32, far: bool) {
+    let tag = w.clients.gen(ci).wrapping_add(1);
+    let v = if far { super::splicefar::FAR_FAR } else { super::splicefar::FAR_NEAR };
+    if w.splice_far.len() <= ci as usize {
+        w.splice_far.resize(ci as usize + 1, (0, 0));
+    }
+    w.splice_far[ci as usize] = (tag, v);
+}
+
 fn splice_length_steps(adaptive: bool) {
     use super::*;
     use std::io::Write;
@@ -1090,7 +1097,6 @@ fn splice_length_steps(adaptive: bool) {
         ext: ext::Ext::default(),
         credit_v2: false,
         credit_pace: false,
-        park_rcvlock: 0,
         adaptive_splice: adaptive,
         conn_gate: None,
         max_streams_per_conn: 0,
@@ -1118,10 +1124,13 @@ fn splice_length_steps(adaptive: bool) {
     let ci = 0;
     w.clients.at(ci).state = CState::Open;
     assert_eq!(w.clients.at(ci).splice, SPLICE_SLOW, "a new client starts SLOW");
-    // 60.51 the socketpair client has no TCP RTT: near (v1.1.1 length) with the flag; the steps below act as a far client
-    assert_eq!(w.splice_far.first().copied(), adaptive.then_some(false), "splice_far is only kept with the flag");
+    // 60.78 nothing is read or written at accept; the socketpair client has no TCP RTT: near (v1.1.1 length) at its first
+    // need. The steps below act as a far client
+    assert!(w.splice_far.is_empty(), "no adaptive-splice entry at accept");
     if adaptive {
-        w.splice_far[ci as usize] = true;
+        assert!(!w.splice_is_far(ci) && w.stats.splice_near.get() == 1, "no RTT sample: near, counted once");
+        assert!(!w.splice_is_far(ci) && w.stats.splice_near.get() == 1, "the class is kept (no second read)");
+        set_far(&mut w, ci, true);
     }
     let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = l.local_addr().unwrap().port();
@@ -1242,7 +1251,7 @@ fn splice_length_steps(adaptive: bool) {
         assert!(c.splice == SPLICE_SLOW && w.targets.at(ti).blocked);
         // 3b. (60.51) the same for a near client (min RTT at accept < SPLICE_FAR_RTT_US): up to SPLICE_PIPE, as v1.1.1
         if adaptive {
-            w.splice_far[ci as usize] = false;
+            set_far(&mut w, ci, false);
             empty_client(&mut w);
             refill(&mut peer);
             fill_client();
@@ -1251,7 +1260,7 @@ fn splice_length_steps(adaptive: bool) {
             let c = w.clients.at(ci);
             assert!((SPLICE_SLICE + 1..=SPLICE_PIPE).contains(&c.splice_pending), "near: {}", c.splice_pending);
             assert!(c.splice == SPLICE_SLOW && w.targets.at(ti).blocked);
-            w.splice_far[ci as usize] = true;
+            set_far(&mut w, ci, true);
         }
         // 4. SLOW + few streams (<= SPLICE_FEW): SPLICE_PIPE, as v1.1.1
         many(&mut w, false);
@@ -1308,7 +1317,6 @@ fn tcp_level_caps_remote_sockets_only() {
         ext: ext::Ext::default(),
         credit_v2: false,
         credit_pace: false,
-        park_rcvlock: 0,
         adaptive_splice: false,
         conn_gate: None,
         max_streams_per_conn: 0,
@@ -1422,7 +1430,6 @@ fn up_rig(n: u32, small: bool) -> (super::Worker, Vec<(u32, u32, std::net::TcpSt
         ext: ext::Ext::default(),
         credit_v2: false,
         credit_pace: false,
-        park_rcvlock: 0,
         adaptive_splice: false,
         conn_gate: None,
         max_streams_per_conn: 0,
@@ -1865,7 +1872,6 @@ fn honest_upload_over_pend_hard_pauses_instead_of_close() {
         ext: ext::Ext::default(),
         credit_v2: false,
         credit_pace: false,
-        park_rcvlock: 0,
         adaptive_splice: false,
         conn_gate: None,
         max_streams_per_conn: 0,
@@ -1913,17 +1919,19 @@ fn honest_upload_over_pend_hard_pauses_instead_of_close() {
         assert!(w.targets.get(ti, tg).is_some_and(|t| t.state == TState::Open));
         (ti, tg, peer)
     };
-    let chunk = vec![7u8; 1 << 20];
+    // (64 KiB frames, as real clients send: they are held past PEND_CEIL too, never closed by it: 60.78 review r1)
+    let chunk = vec![7u8; 64 << 10];
     let backlog = |w: &mut Worker, ti: u32| {
         let t = w.targets.at(ti);
         t.pend.len() - t.phead
     };
     let has_ready = |w: &Worker| w.ready.contains(&tok(K_CLIENT, ci, cg));
 
-    // 1. in credit (granted far more than PEND_HARD): never closed; the client is held past PEND_HARD
+    // 1. in credit (granted far more than PEND_HARD): never closed; the client is held past PEND_HARD. 60.78 review r1:
+    // also past PEND_CEIL (the rest of one read of an rbuf that an earlier big frame grew), with frames of 64 KiB
     let (ti, tg, mut peer) = open(&mut w, 1);
     w.targets.at(ti).allow = 1 << 20;
-    while backlog(&mut w, ti) <= PEND_HARD + (2 << 20) {
+    while backlog(&mut w, ti) <= PEND_CEIL + (1 << 20) {
         let before = backlog(&mut w, ti);
         w.write_target(ti, &chunk);
         assert!(w.targets.get(ti, tg).is_some(), "an honest stream was closed at {} MiB of backlog", before >> 20);
@@ -1996,6 +2004,7 @@ fn honest_upload_over_pend_hard_pauses_instead_of_close() {
 
     // 4. past its credit: closed at the cap as before (no hold)
     let (ti, tg, _peer2) = open(&mut w, 3);
+    let big = vec![7u8; 1 << 20];
     // (the kernel takes what fits in the socket buffers first: write until closed, at most 512 MiB)
     for _ in 0..512 {
         if w.targets.get(ti, tg).is_none() {
@@ -2004,9 +2013,10 @@ fn honest_upload_over_pend_hard_pauses_instead_of_close() {
         assert!(backlog(&mut w, ti) <= w.st.pend_over, "over-credit backlog past the cap");
         // (set before each write: a refill while the kernel still takes everything resets since/allow)
         (w.targets.at(ti).since, w.targets.at(ti).allow) = (1000, 5);
-        w.write_target(ti, &chunk);
+        w.write_target(ti, &big);
     }
     assert!(w.targets.get(ti, tg).is_none(), "over-credit stream not closed");
+    assert_eq!(w.stats.shed_over_credit.get(), 1, "60.78 G16");
     assert!(!w.clients.at(ci).hpaused);
 
     assert!(w.clients.get(ci, cg).is_some_and(|c| !c.dead), "the client survived the sweeps");
@@ -2055,7 +2065,6 @@ fn pool_is_small_at_level_2() {
             ext: ext::Ext::default(),
             credit_v2: false,
             credit_pace: false,
-            park_rcvlock: 0,
             adaptive_splice: false,
             conn_gate: None,
             max_streams_per_conn: 0,
@@ -2301,7 +2310,6 @@ fn conn_gate_reserve_and_release_on_every_exit() {
             ext: ext::Ext::default(),
             credit_v2: false,
             credit_pace: false,
-            park_rcvlock: 0,
             adaptive_splice: false,
             conn_gate: Some(gate.clone()),
             max_streams_per_conn: 0,
@@ -2422,7 +2430,6 @@ fn streams_per_conn_cap_and_every_stream_end_frees_a_slot() {
         ext: ext::Ext::default(),
         credit_v2: false,
         credit_pace: false,
-        park_rcvlock: 0,
         adaptive_splice: false,
         conn_gate: None,
         max_streams_per_conn: 2,
@@ -2555,7 +2562,6 @@ fn conn_gate_follows_a_balance_hand_over() {
         ext: ext::Ext::default(),
         credit_v2: false,
         credit_pace: false,
-        park_rcvlock: 0,
         adaptive_splice: false,
         conn_gate: Some(gate.clone()),
         max_streams_per_conn: 0,
@@ -2636,7 +2642,6 @@ fn policy_refuses_before_the_cap_and_dns_and_filters_late_answers() {
         ext: ext::Ext::default(),
         credit_v2: false,
         credit_pace: false,
-        park_rcvlock: 0,
         adaptive_splice: false,
         conn_gate: None,
         max_streams_per_conn: 1,
@@ -2768,6 +2773,11 @@ fn policy_refuses_before_the_cap_and_dns_and_filters_late_answers() {
 
 /// A TCP connection from `src` (a 127.0.0.x source address) to 127.0.0.1:port.
 fn connect_from(src: [u8; 4], port: u16) -> std::net::TcpStream {
+    connect_from_to(src, [127, 0, 0, 1], port)
+}
+
+/// a connection from `src` to `dst`:`port`
+fn connect_from_to(src: [u8; 4], dst: [u8; 4], port: u16) -> std::net::TcpStream {
     use std::os::fd::FromRawFd;
     unsafe {
         let fd = libc::socket(libc::AF_INET, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0);
@@ -2777,7 +2787,7 @@ fn connect_from(src: [u8; 4], port: u16) -> std::net::TcpStream {
         sa.sin_addr.s_addr = u32::from_ne_bytes(src);
         let len = std::mem::size_of::<libc::sockaddr_in>() as u32;
         assert_eq!(libc::bind(fd, &sa as *const _ as *const _, len), 0);
-        sa.sin_addr.s_addr = u32::from_ne_bytes([127, 0, 0, 1]);
+        sa.sin_addr.s_addr = u32::from_ne_bytes(dst);
         sa.sin_port = port.to_be();
         assert_eq!(libc::connect(fd, &sa as *const _ as *const _, len), 0);
         std::net::TcpStream::from_raw_fd(fd)
@@ -2814,7 +2824,6 @@ fn clientip_cfg(
         ext: ext::Ext::default(),
         credit_v2: false,
         credit_pace: false,
-        park_rcvlock: 0,
         adaptive_splice: false,
         conn_gate: None,
         max_streams_per_conn: 0,
@@ -3358,8 +3367,12 @@ fn conn_rate_per_ip_at_accept_and_at_upgrade() {
     use super::*;
     use std::io::{Read as _, Write as _};
     use std::os::fd::FromRawFd;
+    // 60.74 4.5: the listener is on an address of its own (127.73.75.1): a stray connect of another test to a port the
+    // kernel gave out before (to 127.0.0.1) cannot reach it (seen: 11 refusals counted for the test's 2)
+    const LISTEN: [u8; 4] = [127, 73, 75, 1];
     let rated = |trusted: &[&str]| {
         let mut cfg = clientip_cfg(trusted, 0, false, 1, None);
+        Arc::get_mut(&mut cfg).unwrap().addr = "127.73.75.1:0".parse().unwrap();
         // rate 0 (none comes back during the test; the cli takes 1..), burst 2
         Arc::get_mut(&mut cfg).unwrap().clientip.as_mut().unwrap().table = Some(clientip::IpTable::with_rates(None, None, Some((0, 2))));
         cfg
@@ -3375,8 +3388,8 @@ fn conn_rate_per_ip_at_accept_and_at_upgrade() {
     let tab = cfg.clientip.as_ref().unwrap().table.as_ref().unwrap();
     let port = unsafe { std::net::TcpListener::from_raw_fd(libc::dup(w.lfd)) }.local_addr().unwrap().port();
     let k1 = clientip::key("127.0.0.1".parse().unwrap());
-    let mut peers: Vec<_> = (0..3).map(|_| connect_from([127, 0, 0, 1], port)).collect();
-    peers.push(connect_from([127, 0, 0, 2], port));
+    let mut peers: Vec<_> = (0..3).map(|_| connect_from_to([127, 0, 0, 1], LISTEN, port)).collect();
+    peers.push(connect_from_to([127, 0, 0, 2], LISTEN, port));
     std::thread::sleep(Duration::from_millis(20));
     w.accept_all();
     let s = &w.stats;
@@ -3386,7 +3399,7 @@ fn conn_rate_per_ip_at_accept_and_at_upgrade() {
     w.close_client(1, Why::ClientClose);
     w.reap_dead();
     assert_eq!((tab.conns(k1), tab.keys()), (0, 2), "127.0.0.1's drained bucket is kept with no connection");
-    let mut again = connect_from([127, 0, 0, 1], port);
+    let mut again = connect_from_to([127, 0, 0, 1], LISTEN, port);
     std::thread::sleep(Duration::from_millis(20));
     w.accept_all();
     assert!(reset(&mut again), "reconnecting does not reset the bucket");
@@ -3408,7 +3421,7 @@ fn conn_rate_per_ip_at_accept_and_at_upgrade() {
               Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n";
     let mut socks = Vec::new();
     for _ in 0..3 {
-        let mut s = connect_from([127, 0, 0, 1], port);
+        let mut s = connect_from_to([127, 0, 0, 1], LISTEN, port);
         s.write_all(up.as_bytes()).unwrap();
         socks.push(s);
     }
@@ -3813,7 +3826,6 @@ fn upstream_side_entry_released_on_every_exit() {
         ext: ext::Ext::default(),
         credit_v2: false,
         credit_pace: false,
-        park_rcvlock: 0,
         adaptive_splice: false,
         conn_gate: None,
         max_streams_per_conn: 0,
@@ -3982,7 +3994,6 @@ fn upload_rate_pauses_and_resumes() {
         ext: ext::Ext::default(),
         credit_v2: false,
         credit_pace: false,
-        park_rcvlock: 0,
         adaptive_splice: false,
         conn_gate: None,
         max_streams_per_conn: 0,
@@ -4017,7 +4028,9 @@ fn upload_rate_pauses_and_resumes() {
     let n = unsafe { libc::send(fds[1], b.as_ptr() as *const _, b.len(), libc::MSG_DONTWAIT) };
     assert_eq!(n as usize, b.len());
     w.clients.at(ci).readable = true;
+    let t_read1 = Instant::now();
     w.read_client(ci);
+    let t_read1_end = Instant::now();
     let c = w.clients.at(ci);
     assert!(c.rlen <= 16384, "the burst: {}", c.rlen);
     assert!(c.lpaused && w.lwait.len() == 1);
@@ -4034,9 +4047,16 @@ fn upload_rate_pauses_and_resumes() {
     w.meter_timers();
     assert!(!w.clients.at(ci).lpaused && w.ready.len() == 1);
     w.ready.clear();
+    let t_read2 = Instant::now();
     w.read_client(ci);
+    let t_read2_end = Instant::now();
     let more = w.clients.at(ci).rlen - first;
-    assert!((4096..=8192).contains(&more), "about 0.7 s x 8 KiB/s: {more}");
+    // 60.74 4.5: the allowance is the rate times the time the meter saw between the two reads, which a loaded host
+    // makes longer than the 700 ms slept: the old band (4096 ..= 8192 for 0.7 s) scaled by the time measured around the
+    // reads (shortest and longest), capped by the 16 KiB burst
+    let (lo_s, hi_s) = ((t_read2 - t_read1_end).as_secs_f64(), (t_read2_end - t_read1).as_secs_f64());
+    let (lo, hi) = ((8192.0 * lo_s).min(16384.0) * 4096.0 / 5734.4, (8192.0 * hi_s).min(16384.0) * 8192.0 / 5734.4);
+    assert!(lo <= more as f64 && more as f64 <= hi, "about {lo_s:.3} to {hi_s:.3} s x 8 KiB/s: {more} (band {lo:.0} ..= {hi:.0})");
     assert!(w.clients.at(ci).lpaused, "spent again");
     w.close_client(ci, Why::ClientClose);
     w.reap_dead();
@@ -4390,7 +4410,6 @@ fn dest_cfg(dest: crate::destrate::DestTable, upstream: Option<crate::upstream::
         proxy_from: Box::new([]),
         dest_rate: Some(Box::new(dest)),
         credit_pace: false,
-        park_rcvlock: 0,
         adaptive_splice: false,
     })
 }
@@ -4612,7 +4631,6 @@ fn credit_pace_holds_grants_while_the_target_is_parked() {
             ext: ext::Ext::default(),
             credit_v2: v2,
             credit_pace: pace,
-            park_rcvlock: 0,
             adaptive_splice: false,
             conn_gate: None,
             max_streams_per_conn: 0,
@@ -4747,177 +4765,6 @@ fn credit_pace_holds_grants_while_the_target_is_parked() {
         w.pace_resume(t2, g2);
         assert!(frames(&mut w).is_empty(), "another generation's hold releases nothing");
         assert!(w.pace_hold(t2) == pace::PACE_GO && !w.cpace_st[ti as usize].held, "not parked: the stale hold is reset");
-        w.close_target(t2, None);
-    }
-}
-
-/// 60.47 --park-rcvlock: a download-only stream's target that parks again at a resume gets SOCK_RCVBUF_LOCK (size never
-/// lowered); a resume that reads without parking again lifts the lock. A stream with DATA in the last RCVLOCK_QUIET is not locked, one quiet
-/// for longer is. Off: the side vector stays empty. A new target in the same slot starts unlocked.
-#[test]
-fn park_rcvlock_locks_parked_download_only_targets() {
-    use super::*;
-    use std::io::Write;
-    // the floor as main sizes it: 512 KiB, or the SO_RCVBUF limit (2 x rmem_max) below that
-    let limit = net::rcvbuf_limit().expect("SO_RCVBUF probe") as u32;
-    for floor in [0u32, (512u32 << 10).min(limit)] {
-        let cfg = Arc::new(Config {
-            addr: "127.0.0.1:0".parse().unwrap(),
-            threads: 1,
-            buffer: 128,
-            filter: net::Filter::new(true, false),
-            connect_timeout: Duration::from_secs(10),
-            dns_own: false,
-            abort_close: true,
-            splice: false,
-            balance: false,
-            auto_balance: false,
-            tfo: false,
-            tls: None,
-            udp: true,
-            tls_rekey: 0,
-            notsent_lowat: 0,
-            adapt_lowat: 0,
-            keepalive: true,
-            prio: true,
-            ext: ext::Ext::default(),
-            credit_v2: false,
-            credit_pace: false,
-            park_rcvlock: floor,
-            adaptive_splice: false,
-            conn_gate: None,
-            max_streams_per_conn: 0,
-            policy: None,
-            clientip: None,
-            log_conns: false,
-            log_streams: false,
-            want_peer: false,
-            pace: net::Pacing::default(),
-            unix: None,
-            upstream: None,
-            upload_rate: None,
-            proxy_tcp: false,
-            proxy_unix: false,
-            proxy_from: Box::new([]),
-            dest_rate: None,
-        });
-        let (tx, _rx) = mpsc::channel();
-        let mut w = Worker::new(cfg, tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
-        w.pend_cap = usize::MAX;
-        let mut fds = [0; 2];
-        assert_eq!(unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_NONBLOCK, 0, fds.as_mut_ptr()) }, 0);
-        w.inbox.load.fetch_add(1, Relaxed);
-        assert!(w.fd_take(1)); // 60.57 A2 (accept_on counts the fd)
-        w.adopt(net::Handoff::bare(fds[0]));
-        let ci = 0;
-        w.clients.at(ci).state = CState::Open;
-        w.clients.at(ci).hs_credit = 128;
-        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = l.local_addr().unwrap().port();
-        let open = |w: &mut Worker, sid: u32| {
-            let (ti, tg) = w.new_target(ci, sid, "127.0.0.1".into(), port, false, false).unwrap();
-            w.clients.at(ci).streams.insert(sid, ti);
-            w.run_deferred();
-            let (peer, _) = l.accept().unwrap();
-            peer.set_nonblocking(true).unwrap();
-            for _ in 0..1000 {
-                if w.targets.get(ti, tg).is_some_and(|t| t.state == TState::Open) {
-                    break;
-                }
-                w.target_event(ti, tg, libc::EPOLLOUT as u32);
-                std::thread::sleep(Duration::from_millis(1));
-            }
-            (ti, tg, peer)
-        };
-        let (ti, tg, mut peer) = open(&mut w, 1);
-        let fd = w.targets.at(ti).fd;
-        let high = w.st.out_high;
-        // the origin sends 128 KiB; the client's output is full: every resume parks the target again
-        let _ = peer.write(&vec![7u8; 128 << 10]);
-        std::thread::sleep(Duration::from_millis(20));
-        let repark = |w: &mut Worker| {
-            w.clients.at(ci).obuf = vec![0; high];
-            w.clients.at(ci).ohead = 0;
-            w.resume(tok(K_TARGET, ti, tg));
-            assert!(w.targets.at(ti).blocked, "parked again");
-            w.clients.at(ci).blocked.clear();
-        };
-        let locked = |fd| net::buf_lock(fd).unwrap() & net::RCVBUF_LOCK != 0;
-        // (the first resume locks: upkts == 0; the size before it, against the size after)
-        let size0 = net::rcvbuf(fd).unwrap();
-        repark(&mut w);
-        if floor == 0 {
-            assert!(!locked(fd) && w.rcvlock.is_empty() && w.stats.rcvlock_locks.get() == 0, "off: nothing");
-            w.close_target(ti, None);
-            continue;
-        }
-        assert!(locked(fd), "download-only (no DATA) and parked again: locked");
-        assert!(net::rcvbuf(fd).unwrap() >= size0.max(floor as i32), "never lowered, raised to the floor");
-        assert_eq!(w.stats.rcvlock_locks.get(), 1);
-        repark(&mut w);
-        assert_eq!(w.stats.rcvlock_locks.get(), 1, "one lock per episode");
-        // the client drains: the resume reads the 128 KiB to EAGAIN and lifts the lock
-        w.clients.at(ci).obuf.clear();
-        w.clients.at(ci).ohead = 0;
-        w.resume(tok(K_TARGET, ti, tg));
-        let (b, p) = (w.targets.at(ti).blocked, w.clients.at(ci).out_pending());
-        assert!(!b && !locked(fd), "drained: unlocked (blocked {b}, pending {p}, out_high {high})");
-        assert_eq!(w.stats.rcvlock_errors.get(), 0);
-        // the client sends DATA: within RCVLOCK_QUIET a repark does not lock, after it one does
-        let mut msg = vec![2u8, 1, 0, 0, 0];
-        msg.resize(5 + 100, 7);
-        w.on_message(ci, &msg);
-        let _ = peer.write(&vec![7u8; 64 << 10]);
-        std::thread::sleep(Duration::from_millis(20));
-        w.now = Instant::now();
-        repark(&mut w);
-        repark(&mut w);
-        assert!(!locked(fd), "DATA just now: full duplex, not locked");
-        w.now += rcvlock::RCVLOCK_QUIET;
-        if w.cpace_st.len() <= ti as usize {
-            w.cpace_st.resize(ti as usize + 1, pace::PaceSt::default());
-        }
-        let mut p = pace::PaceSt::default();
-        (p.g1, p.held) = (tg + 1, true);
-        w.cpace_st[ti as usize] = p;
-        repark(&mut w);
-        assert!(!locked(fd), "credit pacing holds its grant: full duplex, not locked");
-        w.cpace_st[ti as usize].held = false;
-        repark(&mut w);
-        assert!(locked(fd), "no DATA for RCVLOCK_QUIET: locked");
-        assert_eq!(w.stats.rcvlock_locks.get(), 2);
-        // a caps episode while locked (TCP level 1 under --tcpmem-adapt: the loopback target is same-host, so the caps skip
-        // it and leave our bit): no lift while capping, lifted after it; a repark after the episode locks again
-        let caps = |w: &mut Worker| (w.st.sock_cap, w.stats.cap_apply.get());
-        w.set_levels(0, 1);
-        assert!(w.st.sock_cap != 0, "stage (0, 1) caps sockets: {:?}", caps(&mut w));
-        w.clients.at(ci).obuf.clear();
-        w.clients.at(ci).ohead = 0;
-        w.resume(tok(K_TARGET, ti, tg));
-        assert!(locked(fd), "no lift while a stage caps sockets");
-        w.stats.cap_apply.bump(); // (a remote socket was capped meanwhile)
-        w.set_levels(0, 0);
-        w.resume(tok(K_TARGET, ti, tg));
-        assert!(!locked(fd), "lifted after the episode (floor0: the bit left is ours)");
-        let _ = peer.write(&vec![7u8; 64 << 10]);
-        std::thread::sleep(Duration::from_millis(20));
-        repark(&mut w);
-        assert!(locked(fd), "locks again after the episode");
-        assert_eq!(w.stats.rcvlock_locks.get(), 3);
-        // locked, then closed: a new target in the same slot starts unlocked (and a drain of it lifts nothing)
-        w.close_target(ti, None);
-        w.clients.at(ci).obuf.clear();
-        w.clients.at(ci).ohead = 0;
-        let (t2, g2, _p2) = open(&mut w, 3);
-        assert!(!w.targets.at(t2).blocked);
-        assert_eq!(t2, ti, "slot reused");
-        w.rcvlock_resumed(t2, g2);
-        assert!(!locked(w.targets.at(t2).fd), "another generation's lock lifts nothing on the new socket");
-        // the new target parks: a fresh state, so it locks (an inherited LOCKED would skip it)
-        w.clients.at(ci).obuf = vec![0; high];
-        w.resume(tok(K_TARGET, t2, g2));
-        assert!(w.targets.at(t2).blocked && locked(w.targets.at(t2).fd), "the new generation locks on its own");
-        w.clients.at(ci).blocked.clear();
         w.close_target(t2, None);
     }
 }
@@ -5146,6 +4993,132 @@ fn a_client_timeout_counts_as_a_dead_peer() {
     }
 }
 
+/// 60.78 G42: a client closed while not read (paused under memory pressure) or lingering (a kTLS close draining) on a
+/// hang-up or socket error: a keepalive or retransmission timeout pending on the socket counts in dead_peers; a plain FIN
+/// is not counted. The log line: a paused client's says dead_peer (else client_close); a lingering client was closing, so
+/// its line keeps the reason it was closing for (the first reason wins, as for a closing client's failed write, v1.3.1
+/// K2). The timeout is real: a loopback TCP socket with
+/// TCP_USER_TIMEOUT 300 ms and unsent data its peer never reads (zero window) fails with ETIMEDOUT (poll: POLLERR,
+/// SO_ERROR left for the worker to read).
+#[test]
+fn a_paused_or_lingering_client_timeout_counts_as_a_dead_peer() {
+    use super::*;
+    use std::io::Write as _;
+    use std::os::fd::{AsRawFd, IntoRawFd};
+    let timed_out = || -> (i32, std::net::TcpStream) {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        net::cap_bufs(l.as_raw_fd(), (4096, 4096)); // (the accepted peer inherits the small receive buffer)
+        let mut c = std::net::TcpStream::connect(l.local_addr().unwrap()).unwrap();
+        let (peer, _) = l.accept().unwrap();
+        net::cap_bufs(c.as_raw_fd(), (4096, 4096));
+        let ms: libc::c_int = 300;
+        let sz = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+        let fd = c.as_raw_fd();
+        assert_eq!(unsafe { libc::setsockopt(fd, libc::IPPROTO_TCP, libc::TCP_USER_TIMEOUT, (&ms as *const libc::c_int).cast(), sz) }, 0);
+        c.set_nonblocking(true).unwrap();
+        let mut sent = 0;
+        while sent < 1 << 22 {
+            match c.write(&[7u8; 65536]) {
+                Ok(n) => sent += n,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(e) => panic!("{e}"),
+            }
+        }
+        let mut p = libc::pollfd { fd, events: 0, revents: 0 };
+        let end = Instant::now() + Duration::from_secs(20);
+        while p.revents & libc::POLLERR == 0 && Instant::now() < end {
+            unsafe { libc::poll(&mut p, 1, 100) };
+        }
+        assert!(p.revents & libc::POLLERR != 0, "no timeout after {sent} bytes queued");
+        (c.into_raw_fd(), peer)
+    };
+    let fin = || -> (i32, std::net::TcpStream) {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let c = std::net::TcpStream::connect(l.local_addr().unwrap()).unwrap();
+        let (peer, _) = l.accept().unwrap();
+        peer.shutdown(std::net::Shutdown::Write).unwrap();
+        (c.into_raw_fd(), peer)
+    };
+    let mut cfg = fd::fd_cfg();
+    (cfg.log_conns, cfg.want_peer) = (true, true);
+    let (tx, _rx) = mpsc::channel();
+    let mut w = Worker::new(Arc::new(cfg), tx, 0, Arc::new(vec![Inbox::new()]), Arc::default()).unwrap();
+    let adopt = |w: &mut Worker, fd: i32| -> u32 {
+        w.inbox.load.fetch_add(1, Relaxed);
+        assert!(w.fd_take(1));
+        w.adopt(net::Handoff::bare(fd));
+        let ci = w.clients.slots.iter().rposition(|s| s.1.as_ref().is_some_and(|c| c.fd == fd)).unwrap() as u32;
+        w.clients.at(ci).state = CState::Open;
+        ci
+    };
+    // paused: read_client finds the hang-up and closes without reading
+    let paused = |w: &mut Worker, fd: i32| {
+        let ci = adopt(w, fd);
+        let c = w.clients.at(ci);
+        (c.mpaused, c.readable, c.rdhup) = (true, true, true);
+        w.read_client(ci);
+        assert!(w.clients.at(ci).dead);
+        w.reap_dead();
+    };
+    // lingering: closing (begin_close names the reason first: client_close here, a WS Close from the client), its output
+    // drained, waiting on kTLS (flush_dirty sets `lingering`); the epoll event closes it (dispatch)
+    let lingering = |w: &mut Worker, fd: i32| {
+        let ci = adopt(w, fd);
+        w.begin_close(ci, Why::ClientClose);
+        w.clients.at(ci).lingering = true;
+        let g = w.clients.gen(ci);
+        w.dispatch(tok(K_CLIENT, ci, g), (libc::EPOLLERR | libc::EPOLLHUP) as u32);
+        assert!(w.clients.at(ci).dead);
+        w.reap_dead();
+    };
+    let mut keep = Vec::new();
+    let (fd, p) = timed_out();
+    keep.push(p);
+    paused(&mut w, fd);
+    assert_eq!(w.stats.dead_peers.get(), 1, "paused, timed out");
+    let (fd, p) = fin();
+    keep.push(p);
+    paused(&mut w, fd);
+    assert_eq!(w.stats.dead_peers.get(), 1, "paused, FIN: not a dead peer");
+    let (fd, p) = timed_out();
+    keep.push(p);
+    lingering(&mut w, fd);
+    assert_eq!(w.stats.dead_peers.get(), 2, "lingering, timed out");
+    let (fd, p) = fin();
+    keep.push(p);
+    lingering(&mut w, fd);
+    assert_eq!(w.stats.dead_peers.get(), 2, "lingering, FIN: not a dead peer");
+    let mut all = Vec::new();
+    assert_eq!(w.outbox.as_ref().unwrap().take(&mut all), 0, "nothing dropped");
+    let text = String::from_utf8(all).unwrap();
+    let whys: Vec<&str> =
+        text.lines().filter(|l| l.contains("ev=conn_close")).filter_map(|l| l.split(' ').find_map(|f| f.strip_prefix("why="))).collect();
+    assert_eq!(whys, ["dead_peer", "client_close", "client_close", "client_close"], "{text}");
+    drop(keep);
+    std::mem::forget(w);
+}
+
+/// 60.78 G43: a client's WebSocket Close is echoed with its status code; a Close whose reason is not UTF-8 is failed
+/// with 1007 (RFC 6455 8.1, 7.4.1), a 1-byte body with 1002; either way the client closes with nothing after the Close
+#[test]
+fn ws_close_reason_not_utf8_fails_with_1007() {
+    use super::*;
+    for (body, want, why) in [
+        (&b"\x03\xe8bye"[..], [0x88u8, 2, 0x03, 0xe8], "echo 1000"),
+        (&b""[..], [0x88, 0, 0, 0], "empty: empty echo"),
+        (&b"\x03\xe8\xff\xfe"[..], [0x88, 2, 0x03, 0xef], "1007"),
+        (&b"\x03"[..], [0x88, 2, 0x03, 0xea], "1002"),
+    ] {
+        let (mut w, _peers, _cl) = up_rig(0, false);
+        up_feed(&mut w, &up_frame(OP_CLOSE, true, body));
+        let c = w.clients.at(0);
+        let want = if body.is_empty() { &want[..2] } else { &want[..] };
+        assert_eq!(&c.obuf[c.ohead..], want, "{why}");
+        assert!(c.closing, "{why}");
+        std::mem::forget(w);
+    }
+}
+
 // 60.63 section E (its own file)
 #[path = "bdtests.rs"]
 mod bd;
@@ -5156,3 +5129,12 @@ mod sl;
 // 60.64 a connection that moves between workers (its own file)
 #[path = "migtests.rs"]
 mod mig;
+// 60.78 bundle B3 the lingering close (its own file)
+#[path = "lgtests.rs"]
+mod lg;
+// 60.78 G16 the counters no test asserted before (its own file)
+#[path = "covtests.rs"]
+mod cov;
+// 60.78 the adaptive-splice class (its own file)
+#[path = "sftests.rs"]
+mod sf;

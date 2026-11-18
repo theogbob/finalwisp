@@ -115,6 +115,71 @@ mod tests {
         assert_eq!(p.protocol.as_deref(), Some("wisp-v2"));
     }
 
+    /// 60.78 G46: request parse table (Partial / Bad / Done with or without an upgrade), consumed length, responses
+    #[test]
+    fn parse_table() {
+        let k = "dGhlIHNhbXBsZSBub25jZQ==";
+        let ok = format!("GET /p?q HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {k}\r\nSec-WebSocket-Version: 13\r\n\r\n");
+        // every strict prefix is Partial; the whole request is Done and consumes exactly its bytes (a frame after it stays)
+        for cut in 0..ok.len() {
+            assert!(matches!(parse(&ok.as_bytes()[..cut]), Parsed::Partial), "cut {cut}");
+        }
+        let with_frame = [ok.as_bytes(), &[0x82, 0x80, 1, 2, 3, 4]].concat();
+        let Parsed::Done(r, n) = parse(&with_frame) else { panic!() };
+        assert_eq!(
+            (n, r.path.as_str(), r.upgrade.as_ref().map(|u| u.accept.as_str())),
+            (ok.len(), "/p?q", Some("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="))
+        );
+        // "bad": Parsed::Bad; "plain": Done without an upgrade (a plain GET: the worker answers it, no 101); "up": upgrade
+        let cases: &[(String, &str)] = &[
+            (ok.clone(), "up"),
+            (ok.replace("websocket", "WebSocket").replace("Connection: Upgrade", "connection: keep-alive, UPGRADE"), "up"),
+            (ok.replace(k, &format!("  {k}  ")), "up"), // key trimmed
+            (ok.replace("GET", "POST"), "bad"),
+            (ok.replace("HTTP/1.1", "HTTP/1.0"), "bad"),
+            (ok.replace(k, "dGhlIHNhbXBsZSBub25jZQ="), "bad"),               // 23 chars
+            (ok.replace(k, "dGhlIHNhbXBsZSBub25jZQAA"), "bad"),              // no "=="
+            (ok.replace(&format!("Sec-WebSocket-Key: {k}\r\n"), ""), "bad"), // upgrade without a key
+            (ok.replace("Version: 13", "Version: 8"), "plain"),              // not version 13: no upgrade
+            (ok.replace("Connection: Upgrade", "Connection: keep-alive"), "plain"),
+            (ok.replace("Upgrade: websocket", "Upgrade: h2c"), "plain"),
+            (ok.replace("Upgrade: websocket", "Upgrade: websockets"), "plain"), // a token, not a prefix
+            ("GET / HTTP/1.1\r\nHost: x\r\n\r\n".into(), "plain"),
+            ("NOT HTTP\r\n\r\n".into(), "bad"),
+            ("GET / HTTP/1.1\r\nBad Header: x\r\n\r\n".into(), "bad"), // a space in a name
+            (format!("GET / HTTP/1.1\r\n{}\r\n", "A: b\r\n".repeat(65)), "bad"), // over 64 headers
+            (format!("GET / HTTP/1.1\r\n{}\r\n", "A: b\r\n".repeat(64)), "plain"),
+        ];
+        for (req, want) in cases {
+            let got = match parse(req.as_bytes()) {
+                Parsed::Partial => "partial",
+                Parsed::Bad => "bad",
+                Parsed::Done(r, _) if r.upgrade.is_some() => "up",
+                Parsed::Done(..) => "plain",
+            };
+            assert_eq!(got, *want, "{req:?}");
+        }
+        // a non-UTF-8 Upgrade value is no token (no upgrade, no panic)
+        let raw = [&b"GET / HTTP/1.1\r\nUpgrade: web\xffsocket\r\nConnection: Upgrade\r\n\r\n"[..]].concat();
+        assert!(matches!(parse(&raw), Parsed::Done(Request { upgrade: None, .. }, _)));
+        // responses: the 101 echoes a non-empty first subprotocol only
+        let mut out = Vec::new();
+        switching(&mut out, &Upgrade { accept: "A=".into(), protocol: Some(String::new()) });
+        assert_eq!(
+            out,
+            b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: A=\r\n\r\n"
+        );
+        out.clear();
+        switching(&mut out, &Upgrade { accept: "A=".into(), protocol: Some("wisp-v2".into()) });
+        assert!(out.ends_with(b"Sec-WebSocket-Accept: A=\r\nSec-WebSocket-Protocol: wisp-v2\r\n\r\n"));
+        out.clear();
+        simple(&mut out, "400 Bad Request", "bad\n");
+        assert_eq!(
+            out,
+            b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: 4\r\nConnection: close\r\nServer: finalwisp\r\n\r\nbad\n"
+        );
+    }
+
     #[test]
     fn capture_header_lines() {
         let req =

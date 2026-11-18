@@ -192,34 +192,6 @@ impl Worker {
         }
     }
 
-    /// review r1: close the kTLS clients waiting on `lingering` once drained (Client::ktls_drained)
-    /// or at their deadline. An entry whose slot was reused or whose client is already dead goes.
-    pub(super) fn linger_check(&mut self) {
-        let now = Instant::now();
-        if now < self.next_linger {
-            return;
-        }
-        self.next_linger = now + Duration::from_millis(TIMER_TICK_MS as u64);
-        let mut k = 0;
-        while k < self.lingering.len() {
-            let (ci, g, until) = self.lingering[k];
-            let close = match self.clients.get(ci, g) {
-                Some(c) if !c.dead => {
-                    if now < until && !c.ktls_drained() {
-                        k += 1;
-                        continue;
-                    }
-                    true
-                }
-                _ => false,
-            };
-            self.lingering.swap_remove(k);
-            if close {
-                self.close_client(ci, Why::ServerClose);
-            }
-        }
-    }
-
     /// 50.02 retry the starved kTLS sends that are due (Client::starve_at) through flush_dirty, which then sends
     /// everything queued as one request (A2, Client::send_gather). B (starve_room, read_target): the blocked streams may
     /// also read a slice each past the caps, from the second retry if that request is below STARVE_MIN_SEND, else from

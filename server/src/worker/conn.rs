@@ -336,17 +336,7 @@ impl Worker {
                 net::cap_bufs(fd, mem::client_caps(self.capl));
                 self.stats.cap_apply.bump(); // 60.12
             }
-            let unix = c.local == LOCAL_UNIX;
             let (i, g) = self.clients.insert(c);
-            if self.cfg.adaptive_splice {
-                // 60.51 read once: the handshake's RTT sample (a unix client has none: near)
-                let far = !unix && net::min_rtt_us(fd).is_some_and(|r| r >= SPLICE_FAR_RTT_US);
-                let i = i as usize;
-                if self.splice_far.len() <= i {
-                    self.splice_far.resize(i + 1, false);
-                }
-                self.splice_far[i] = far;
-            }
             if !ep_add(self.ep, fd, tok(K_CLIENT, i, g), EV_ALL) {
                 unsafe { libc::close(fd) };
                 self.clients.remove(i);
@@ -441,6 +431,31 @@ impl Worker {
             self.stats.dead_peers.bump();
         }
         w
+    }
+
+    /// 60.78 G42 a client closed on a hang-up or socket error while it was not read (paused under pressure, a held
+    /// frame, a lingering kTLS close): a keepalive or retransmission timeout pending on the socket (SO_ERROR) is a dead
+    /// peer (counted in dead_peers, as io_why), anything else (a FIN, a reset) client_close. A lingering client was
+    /// closing: its log keeps the reason begin_close gave (the first wins). Out of line (not #[cold]: the call it
+    /// replaced was not, and a cold call moves the caller's blocks: dispatch in run).
+    #[inline(never)]
+    pub(super) fn close_hup(&mut self, ci: u32) {
+        let why = match net::so_error(self.clients.at(ci).fd) {
+            libc::ETIMEDOUT | libc::EHOSTUNREACH => {
+                self.stats.dead_peers.bump();
+                Why::DeadPeer
+            }
+            0 if self.clients.at(ci).lingering => {
+                // 60.78 bundle B3 a lingering client's FIN after ours: what it sent before goes first (close() with
+                // unread bytes sends RST); a hang-up with an error closes at once
+                if self.linger_drain(ci, &mut 0) == super::linger::Drain::Capped {
+                    self.stats.linger_capped.bump(); // (more than LINGER_BYTES queued behind its FIN: close() resets)
+                }
+                Why::ClientClose
+            }
+            _ => Why::ClientClose,
+        };
+        self.close_client(ci, why);
     }
 
     /// `why`: the reason for --log-conns (the first one given for the connection wins: begin_close names it first;

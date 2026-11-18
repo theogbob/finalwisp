@@ -32,7 +32,6 @@ pub(super) fn fd_cfg() -> Config {
         ext: ext::Ext::default(),
         credit_v2: false,
         credit_pace: false,
-        park_rcvlock: 0,
         adaptive_splice: false,
         conn_gate: None,
         max_streams_per_conn: 0,
@@ -78,6 +77,9 @@ pub(super) fn pump(w: &mut Worker, ms: i32) {
     w.flush_dirty();
     if !w.connecting.is_empty() {
         w.run_timers();
+    }
+    if !w.lingering.is_empty() {
+        w.linger_check(); // 60.78 B3 (as run: a lingering connection ends at its bound, a stale entry goes)
     }
     if std::mem::take(&mut w.accept_retry) {
         w.accept_all();

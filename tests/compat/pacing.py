@@ -8,6 +8,8 @@ are unpaced, so the band is wide: 0.8..1.25 x CAP; the netns/veth matrix in 60.2
 - --upload-rate-per-stream 1M: two upload streams on one connection, each at the cap (per stream, not shared)
 - startup line: `pacing: download/conn ... (splice off)`, `upload/stream ...`; bad values refused; --config form."""
 import base64, os, socket, struct, subprocess, sys, tempfile, threading, time
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hostlag import judged  # 60.74 4.5: a rate is judged on a run whose host lag stayed low
 
 BIN, BASE = os.path.abspath(sys.argv[1]), int(sys.argv[2])
 TPORT = BASE + 1
@@ -28,7 +30,7 @@ def serve(c):
             if kind == b"S":
                 d = b"x" * 65536
                 while True: c.sendall(d)
-            rec = [0, []]; SINKS.append(rec)
+            rec = [time.monotonic(), []]; SINKS.append(rec)  # (its start: a run counts only its own sinks)
             while (d := c.recv(1 << 20)):
                 rec[1].append((time.monotonic(), len(d)))
         except OSError:
@@ -116,6 +118,7 @@ def download_rate():
     return got / DUR
 
 def upload_rates(n):
+    t_start = time.monotonic()
     w = Wisp(); SINKS.clear(); credit = {}
     for sid in range(1, n + 1): w.connect(sid, b"U")
     chunk = b"u" * 16384; t0 = time.monotonic()
@@ -131,7 +134,8 @@ def upload_rates(n):
             for ty, sid, body in w.frames(0.05):
                 if ty == 3: credit[sid] = struct.unpack("<I", body[:4])[0]
     w.s.close()
-    return [sum(b for t, b in r[1] if t0 + WARM <= t < t0 + WARM + DUR) / DUR for r in SINKS]
+    # 60.74 4.5: only the sinks of this run (a late connection of a run before, measured again, is not one of them)
+    return [sum(b for t, b in r[1] if t0 + WARM <= t < t0 + WARM + DUR) / DUR for r in SINKS if r[0] >= t_start]
 
 band = lambda r: LO * CAP <= r <= HI * CAP
 
@@ -139,17 +143,22 @@ p = start("--download-rate", "1M", "--upload-rate-per-stream", "1M")
 log = srvlog(p)
 ok("pacing: download/conn 1048576 B/s = 8.4 Mbit/s (splice off) upload/stream 1048576 B/s = 8.4 Mbit/s (TCP streams only)" in log,
    "startup line names both caps, splice off")
-r = download_rate()
-ok(band(r), f"download 1 stream at --download-rate 1M: {r / CAP:.3f} x cap")
-rs = upload_rates(2)
-ok(len(rs) == 2 and all(band(x) for x in rs), f"upload 2 streams at --upload-rate-per-stream 1M: {[round(x / CAP, 3) for x in rs]} x cap each")
+# 60.74 4.5: at 1 MiB/s a 64 KiB send leaves every 62.5 ms; a wakeup 15 ms late (of the pacer or the client) takes the
+# rate below the band (seen: 0.78 x cap at load1 94 on 16 threads, other processes of the host). A rate measured
+# while the host lag was above 15 ms is not a judgement: measured again (5 runs at most; the last one counts).
+TOL = 0.015
+ok(*judged("download", TOL, 5, lambda lag, run: (lambda r: (band(r), f"download 1 stream at --download-rate 1M: {r / CAP:.3f} x cap"))(download_rate())))
+ok(*judged("upload", TOL, 5, lambda lag, run: (lambda rs: (len(rs) == 2 and all(band(x) for x in rs),
+   f"upload 2 streams at --upload-rate-per-stream 1M: {[round(x / CAP, 3) for x in rs]} x cap each"))(upload_rates(2))))
 stop(p)
 
 p = start("--threads", "2", "--balance", "--download-rate", "1M")
-res = []
-ths = [threading.Thread(target=lambda: res.append(download_rate())) for _ in range(3)]
-[t.start() for t in ths]; [t.join() for t in ths]
-ok(len(res) == 3 and all(band(x) for x in res), f"--balance, 3 clients: {[round(x / CAP, 3) for x in res]} x cap each")
+def three(lag, run):
+    res = []
+    ths = [threading.Thread(target=lambda: res.append(download_rate())) for _ in range(3)]
+    [t.start() for t in ths]; [t.join() for t in ths]
+    return len(res) == 3 and all(band(x) for x in res), f"--balance, 3 clients: {[round(x / CAP, 3) for x in res]} x cap each"
+ok(*judged("balance", TOL, 5, three))
 stop(p)
 
 p = start()

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # 30.11 soak analysis (30.14: server metrics table, run-wide expectations): slopes after warm-up, event/probe/workload summaries, optional plots.
-# usage: analyze.py RUN_DIR [--warmup-min 60] [--out DIR]   (plots need matplotlib:
+# usage: analyze.py RUN_DIR [--warmup-min 60] [--out DIR] [--check]   (plots need matplotlib:
 #        uv run --with matplotlib python bench/soak/analyze.py RUN_DIR)
+# --check (60.78): build the text again from the raw files and compare it with OUT/analysis.md (nothing is written);
+#        exit 1 if it differs (the file is stale or was edited by hand)
 import argparse, csv, json, os, statistics, sys
 from collections import Counter
 
@@ -9,6 +11,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument("run")
 ap.add_argument("--warmup-min", type=float, default=60)
 ap.add_argument("--out")
+ap.add_argument("--check", action="store_true", help="compare with OUT/analysis.md instead of writing it")
 a = ap.parse_args()
 OUT = a.out or a.run
 os.makedirs(OUT, exist_ok=True)
@@ -857,8 +860,12 @@ if EXP:
     P("## Expectations")
     for k, t in EXP:
         P(f"- {k} {t}")
-    open(os.path.join(OUT, "analysis.md"), "w").write("\n".join(lines) + "\n")
 
+if a.check:
+    have = open(os.path.join(OUT, "analysis.md")).read()
+    same = have == "\n".join(lines) + "\n"
+    print(f"analyze --check: {os.path.join(OUT, 'analysis.md')} {'OK (same as a fresh build)' if same else 'STALE (differs from a fresh build)'}")
+    sys.exit(0 if same else 1)
 open(os.path.join(OUT, "analysis.md"), "w").write("\n".join(lines) + "\n")
 print("\n".join(lines))
 

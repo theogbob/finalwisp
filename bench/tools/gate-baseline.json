@@ -1,0 +1,826 @@
+{
+ "classes": {
+  "farm-vm-fast": {
+   "binary_md5": "5b6d0c64b2a9391bbebfeebd98618d57",
+   "from": "an internal note (not published)",
+   "gate_broken": [
+    "baseline",
+    "startsample"
+   ],
+   "head": "4a67b38fcfdebe9312bc60120dd0dff4d69e7452",
+   "inventory": {
+    "adv--balance": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 24,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "adv--dns-own": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 24,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "adv--graceful-close": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 24,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "adv--no-splice": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 24,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "adv--no-tfo": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 24,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "adv-lane": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 24,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "adv-noprio": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 24,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "adv-v2c": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 24,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "bounds": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 33,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "cargo": {
+     "kind": "cargo",
+     "status": "PASS",
+     "test_binaries": 1,
+     "tests_failed": 0,
+     "tests_ignored": 5,
+     "tests_passed": 400
+    },
+    "config": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 11,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "credit-v2": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 6,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "dns-own": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 34,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "dns-preset": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 39,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "drain": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 17,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "fds": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 56,
+     "skip": 1,
+     "status": "PASS"
+    },
+    "form": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 44,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "fuzz-build": {
+     "kind": "none",
+     "status": "PASS"
+    },
+    "fuzz-cli-parse": {
+     "corpus_files": 2611,
+     "kind": "fuzz",
+     "runs": 2612,
+     "status": "PASS"
+    },
+    "fuzz-config-parse": {
+     "corpus_files": 2620,
+     "kind": "fuzz",
+     "runs": 2621,
+     "status": "PASS"
+    },
+    "fuzz-dns-parse": {
+     "corpus_files": 1020,
+     "kind": "fuzz",
+     "runs": 1021,
+     "status": "PASS"
+    },
+    "fuzz-ext-records": {
+     "corpus_files": 891,
+     "kind": "fuzz",
+     "runs": 893,
+     "status": "PASS"
+    },
+    "fuzz-http-parse": {
+     "corpus_files": 773,
+     "kind": "fuzz",
+     "runs": 774,
+     "status": "PASS"
+    },
+    "fuzz-policy-host": {
+     "corpus_files": 509,
+     "kind": "fuzz",
+     "runs": 510,
+     "status": "PASS"
+    },
+    "fuzz-pool-ops": {
+     "corpus_files": 177,
+     "kind": "fuzz",
+     "runs": 178,
+     "status": "PASS"
+    },
+    "fuzz-proxy-parse": {
+     "corpus_files": 330,
+     "kind": "fuzz",
+     "runs": 331,
+     "status": "PASS"
+    },
+    "fuzz-tls-framing": {
+     "corpus_files": 10,
+     "kind": "fuzz",
+     "runs": 11,
+     "status": "PASS"
+    },
+    "fuzz-upstream-parse": {
+     "corpus_files": 592,
+     "kind": "fuzz",
+     "runs": 593,
+     "status": "PASS"
+    },
+    "fuzz-worker-stream": {
+     "corpus_files": 2979,
+     "kind": "fuzz",
+     "runs": 3215,
+     "status": "PASS"
+    },
+    "fuzz-worker-tls": {
+     "corpus_files": 1341,
+     "kind": "fuzz",
+     "runs": 1626,
+     "status": "PASS"
+    },
+    "fuzz-worker-wisp": {
+     "corpus_files": 2303,
+     "kind": "fuzz",
+     "runs": 2635,
+     "status": "PASS"
+    },
+    "fuzz-ws-parse": {
+     "corpus_files": 43,
+     "kind": "fuzz",
+     "runs": 44,
+     "status": "PASS"
+    },
+    "late": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 7,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "limits": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 28,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "logs": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 39,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "membudget": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 10,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "metrics": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 43,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "pacing": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 11,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "policy": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 40,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "prom": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 28,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "proxyproto": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 39,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "realip": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 25,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "streampool": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 12,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "streamshare": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 20,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "tls": {
+     "fail": 0,
+     "kind": "tls",
+     "pass": 160,
+     "sections": 7,
+     "sections_all_pass": 9,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "udp": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 27,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "unix": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 31,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "uplimit": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 15,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "upstream": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 98,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "v2ext": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 53,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "wispjs": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 24,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "wispjs--balance": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 22,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "wispjs--dns-own": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 22,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "wispjs--graceful-close": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 22,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "wispjs--no-splice": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 22,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "wispjs--no-tfo": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 22,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "wispjs-udp": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 14,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "wispjs-v2c": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 22,
+     "skip": 0,
+     "status": "PASS"
+    }
+   },
+   "skip_lines": [
+    {
+     "line": "SKIP A1: hard limit infinity / 1073741816 (needs root; covered by the unit tests and on the test boxes)",
+     "step": "fds",
+     "why": "needs root (a hard limit of infinity / nr_open); covered by the unit tests and on the test boxes"
+    }
+   ],
+   "written": "2026-11-16T05:11:42Z"
+  },
+  "laptop-fast": {
+   "binary_md5": "5b6d0c64b2a9391bbebfeebd98618d57",
+   "from": "an internal note (not published)",
+   "gate_broken": [
+    "baseline",
+    "startsample"
+   ],
+   "head": "2577e3a6973090754d6ef7a895dece68fdfcb412",
+   "inventory": {
+    "adv--balance": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 24,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "adv--dns-own": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 24,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "adv--graceful-close": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 24,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "adv--no-splice": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 24,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "adv--no-tfo": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 24,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "adv-lane": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 24,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "adv-noprio": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 24,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "adv-v2c": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 24,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "bounds": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 33,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "cargo": {
+     "kind": "cargo",
+     "status": "PASS",
+     "test_binaries": 1,
+     "tests_failed": 0,
+     "tests_ignored": 5,
+     "tests_passed": 400
+    },
+    "config": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 11,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "credit-v2": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 6,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "dns-own": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 34,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "dns-preset": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 39,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "drain": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 17,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "fds": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 56,
+     "skip": 1,
+     "status": "PASS"
+    },
+    "form": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 44,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "fuzz-build": {
+     "kind": "none",
+     "status": "PASS"
+    },
+    "fuzz-cli-parse": {
+     "corpus_files": 2611,
+     "kind": "fuzz",
+     "runs": 2612,
+     "status": "PASS"
+    },
+    "fuzz-config-parse": {
+     "corpus_files": 2620,
+     "kind": "fuzz",
+     "runs": 2621,
+     "status": "PASS"
+    },
+    "fuzz-dns-parse": {
+     "corpus_files": 1020,
+     "kind": "fuzz",
+     "runs": 1021,
+     "status": "PASS"
+    },
+    "fuzz-ext-records": {
+     "corpus_files": 891,
+     "kind": "fuzz",
+     "runs": 893,
+     "status": "PASS"
+    },
+    "fuzz-http-parse": {
+     "corpus_files": 773,
+     "kind": "fuzz",
+     "runs": 774,
+     "status": "PASS"
+    },
+    "fuzz-policy-host": {
+     "corpus_files": 509,
+     "kind": "fuzz",
+     "runs": 510,
+     "status": "PASS"
+    },
+    "fuzz-pool-ops": {
+     "corpus_files": 177,
+     "kind": "fuzz",
+     "runs": 178,
+     "status": "PASS"
+    },
+    "fuzz-proxy-parse": {
+     "corpus_files": 330,
+     "kind": "fuzz",
+     "runs": 331,
+     "status": "PASS"
+    },
+    "fuzz-tls-framing": {
+     "corpus_files": 10,
+     "kind": "fuzz",
+     "runs": 11,
+     "status": "PASS"
+    },
+    "fuzz-upstream-parse": {
+     "corpus_files": 592,
+     "kind": "fuzz",
+     "runs": 593,
+     "status": "PASS"
+    },
+    "fuzz-worker-stream": {
+     "corpus_files": 2979,
+     "kind": "fuzz",
+     "runs": 3214,
+     "status": "PASS"
+    },
+    "fuzz-worker-tls": {
+     "corpus_files": 1341,
+     "kind": "fuzz",
+     "runs": 1622,
+     "status": "PASS"
+    },
+    "fuzz-worker-wisp": {
+     "corpus_files": 2303,
+     "kind": "fuzz",
+     "runs": 2633,
+     "status": "PASS"
+    },
+    "fuzz-ws-parse": {
+     "corpus_files": 43,
+     "kind": "fuzz",
+     "runs": 44,
+     "status": "PASS"
+    },
+    "late": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 7,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "limits": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 28,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "logs": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 39,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "membudget": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 10,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "metrics": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 43,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "pacing": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 11,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "policy": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 40,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "prom": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 28,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "proxyproto": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 39,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "realip": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 25,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "streampool": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 12,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "streamshare": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 20,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "tls": {
+     "fail": 0,
+     "kind": "tls",
+     "pass": 160,
+     "sections": 7,
+     "sections_all_pass": 9,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "udp": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 27,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "unix": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 31,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "uplimit": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 15,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "upstream": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 98,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "v2ext": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 53,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "wispjs": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 24,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "wispjs--balance": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 22,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "wispjs--dns-own": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 22,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "wispjs--graceful-close": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 22,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "wispjs--no-splice": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 22,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "wispjs--no-tfo": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 22,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "wispjs-udp": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 14,
+     "skip": 0,
+     "status": "PASS"
+    },
+    "wispjs-v2c": {
+     "fail": 0,
+     "kind": "lines",
+     "pass": 22,
+     "skip": 0,
+     "status": "PASS"
+    }
+   },
+   "skip_lines": [
+    {
+     "line": "SKIP A1: hard limit infinity / 1073741816 (needs root; covered by the unit tests and on the test boxes)",
+     "step": "fds",
+     "why": "needs root (a hard limit of infinity / nr_open); covered by the unit tests and on the test boxes"
+    }
+   ],
+   "written": "2026-11-16T03:39:20Z"
+  }
+ }
+}

@@ -15,6 +15,9 @@ usage: wst compat --bin FINALWISP [--base-port 8300] [--out DIR] [--matrix] [--s
   wispjs-udp    tests/compat/wispjs_udp.mjs (real wisp-js client over UDP streams)               base+20, +21
   wispjs        tests/compat/wispjs.mjs (real wisp-js client v1+v2, 2x64 MiB pattern download)
                 + default SSRF guard on a server without --allow-loopback                         base+20, +21
+  forced-move   tests/compat/forced_move.py (60.74 step 3: wisp-js v1+v2, a v1 client with stream limit / credit / close codes,
+                credit_v2.py, through connections that the test hook FW_FORCE_MOVE moves between workers every 1 and 7
+                loop turns; a pooltest build of --cargo DIR, not --bin; --bin is checked to have no hook)    base+30..+39
   credit-v2     tests/compat/credit_v2.py (20.30 credit v2: pong / no-pong / eager / foreign-pong clients)  base+66
   wispjs-v2c    wispjs.mjs + adversarial.py (adv-v2c) with credit v2 (wisp-js sends inside its CONTINUE handler)  base+67
   limits        tests/compat/limits.py (60.20 C3a: --max-conns with/without --balance, --max-streams-per-conn;
@@ -316,6 +319,9 @@ def gate_finalwisp(a, g):
                     g.step("wispjs", ["node", "wispjs.mjs", f"ws://127.0.0.1:{B + 20}/", f"ws://127.0.0.1:{B + 21}/"], cwd=COMPAT, env=DEAD_ENV(B), timeout=WISPJS_TIMEOUT)
         proc.stop(a1)
         proc.stop(b1)
+    if want("forced-move"):  # 60.74 step 3 moved connections (a pooltest build of --cargo DIR; ports B+30..B+39, membudget's range between steps)
+        g.step("forced-move", [sys.executable, os.path.join(COMPAT, "forced_move.py"), "--build", os.path.abspath(a.cargo), str(B + 30), "--release-bin", binp],
+               timeout=900)
     if want("credit-v2"):  # 20.30 upload credit v2 (default on since 60.13): every ping behaviour of a client
         g.step("credit-v2", [sys.executable, os.path.join(COMPAT, "credit_v2.py"), binp, str(B + 66)], timeout=300)
     if want("wispjs-v2c") or want("adv-v2c"):

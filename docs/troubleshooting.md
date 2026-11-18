@@ -111,12 +111,26 @@ The resolver threads are busy, most often with names whose name server does not 
 
 ### Clients are reset with `why=unread`
 
-`--unread-close` is on (it is off unless asked for), and the host's TCP memory was short. A connection with a download that its client did not
-read (receive window 0, no data taken for 600 seconds) was reset. The counter is `close_unread`, the log has one
-warning per 10 s at most. A client that was paused for 10 minutes or more (a phone app in the background, a frozen
-browser tab), or one that reads very slowly into a large buffer, can be one of them; it connects again. If honest clients are reset often, the host needs more TCP memory
-(`net.ipv4.tcp_mem`, or more RAM), or turn the option off with `--no-unread-close`. See the
-[reference](configuration.md#--unread-close).
+`--unread-close` is on (the public preset sets it), and the host's TCP memory was short. A connection with a download that its client did not
+read (receive window 0, no data taken) used up its stall time (600 seconds, more for data it took) and was reset.
+The counter is `close_unread`, the log has one warning per 10 s at most. A client that was paused for 10 minutes or
+more in all (a phone app in the background, a frozen browser tab), or one that reads slower than 512 bytes per second,
+can be one of them; it connects again. If honest clients are reset often, the host needs more TCP memory
+(`net.ipv4.tcp_mem`, or more RAM), or turn the option off with `--no-unread-close` (that also turns off its relief of
+waiting downloads). See the [reference](configuration.md#--unread-close).
+
+### Slow downloads end with `0x03` while the host's TCP memory stays short
+
+A download whose client reads slowly ends with `0x03` (`why=target_close` in `--log-streams`) after 25 minutes or more,
+while the host's TCP memory has been short all that time. The destination ended the connection, not finalwisp. The
+bytes that the slow client has not read yet wait in the kernel, in the receive buffer of the server's connection to the
+destination. While TCP memory is short, the kernel accepts new data for a socket only while the socket holds less than
+its share (about `net.ipv4.tcp_mem` maximum divided by the number of TCP sockets on the host). A socket with more than
+that drops what the destination sends. The destination gets no acknowledgement, and its kernel ends the connection
+after about 15 minutes (`net.ipv4.tcp_retries2`). The socket gets under its share again only as the client reads, and a
+client that reads a few KiB per second needs longer than that for a few MiB. With `--unread-close` (the public preset
+sets it) the server reads such a socket out into its own memory while TCP memory is short, so this happens only past
+its cap (a quarter of the memory budget), with the option off, or on a kernel older than 5.15. See [Known limits](#known-limits) for what to do.
 
 ### New connections and streams time out, and the host's connection-tracking table is full
 
@@ -139,7 +153,7 @@ values, with a note for each one that limits the server:
 | `tcp_wmem` / `tcp_rmem` max below 16 MiB | one stream's speed is limited to about max / round-trip time | `net.ipv4.tcp_wmem`, `net.ipv4.tcp_rmem` |
 | `tcp_mem` max below 512 MiB | the kernel runs out of TCP memory under many fast streams | `net.ipv4.tcp_mem` |
 | `somaxconn` below 4096 | bursts of new connections are dropped | `net.core.somaxconn` |
-| open files below 65536 | each connection and stream is one file descriptor | `LimitNOFILE=`, `ulimit -n` |
+| open files below 65536 | each connection and stream is one file descriptor | `LimitNOFILE=`, `ulimit -n`, `docker run --ulimit nofile=1048576:1048576` |
 | memory budget off | `/proc/meminfo` could not be read | set `--mem-budget` |
 | connection-tracking table (with `--net-watch`) | 3/4 full: new connections are dropped when it is full | `net.netfilter.nf_conntrack_max` |
 
@@ -158,14 +172,30 @@ has it. The start output has one line for it, for example
 - `--download-rate` is per connection. There is no per-IP download cap: a client with several connections gets the
   cap on each.
 - UDP uploads are not paced by `--upload-rate-per-stream`; `--upload-rate` does cover them.
+- A UDP stream has no idle timeout, and the usual ICMP errors (port, host or network unreachable) do not close it: it
+  keeps its socket until the client closes the stream or the connection ends.
 - The first few packets of each connection are not paced, so a capped connection can burst at its start.
 - On a connection with a download cap, the upload slows down too, because control messages wait behind queued data.
 - All streams of one connection share it: with `--upload-rate`, a small request waits behind a bulk upload on the
   same connection.
-- Idle memory creeps up a little after load peaks (allocator retention, under 2 MiB in our longest tests). It resets
-  on restart. Long soak tests found no leak.
-- A client whose socket reports an error while it is paused or closing is logged as `client_close`; such a timeout
-  is not counted in `dead_peers`.
+- Idle memory creeps up a little after load peaks (allocator retention, with no proven ceiling). It resets on
+  restart. Long soak tests found no leak.
+- A client that times out while its connection is already closing keeps the reason it was closing for in its
+  `--log-conns` line (for example `client_close`); the timeout is counted in `dead_peers`.
+- Slow readers lose their downloads when the host's TCP memory stays short for long. If the host stays above 3/4 of
+  `net.ipv4.tcp_mem` for more than about 15 minutes while slow clients have MiBs of unread data waiting, the
+  destinations of some of those downloads end their connections, and the streams end with `0x03` (see
+  [above](#slow-downloads-end-with-0x03-while-the-hosts-tcp-memory-stays-short)). finalwisp leaves the bytes a client
+  has not read in the kernel's receive buffer of the connection to the destination, so that a slow client slows the
+  destination down; every proxy that does the same has this limit. `--unread-close` (in the public preset since
+  1.4.0) moves those bytes into the server's memory while the host's TCP memory is short, up to a quarter of the
+  memory budget. In our tests (a host held at 13/16 of `tcp_mem` for 90 minutes) some slow readers lost their
+  downloads after 25 minutes or more without this relief, and none with it. What to do: size `tcp_mem` so that the
+  host does not stay above 3/4 of it at its busiest (raise all three values, or add RAM; see
+  [memory](memory.md#small-hosts-and-many-slow-downloads)). The resets of `--unread-close` shorten the time that
+  clients which take no data at all keep the memory short (after their stall time, 600 seconds or more), and
+  `--tcpmem-share` stops one address from adding more unread downloads. Neither of those two helps when honest slow
+  readers alone fill the memory; the relief covers them up to its cap.
 - A client that vanished without closing (power loss, a NAT that dropped it) is found by TCP keepalive after 3 to 4
   minutes of idle time. `--no-keepalive` turns this off; the price is that such a client is no longer found while its
   connection is idle.

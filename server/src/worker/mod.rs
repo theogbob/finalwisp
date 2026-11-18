@@ -32,12 +32,14 @@ mod fds; // 60.57
 mod input;
 mod ktls;
 mod levels;
+mod linger; // 60.78 bundle B3
 mod meter;
 mod migrate; // 60.64
 mod pace;
 mod proxy;
-mod rcvlock;
 mod slimits; // 60.72
+mod splicefar; // 60.78
+pub(crate) use splicefar::set_rtt_wlen;
 mod streamlog;
 mod sweep;
 mod target;
@@ -115,10 +117,6 @@ pub struct Config {
     /// 60.42 --credit-pace (default off): no upload CONTINUE while the stream's target is parked on the client's output
     /// (worker/pace.rs)
     pub credit_pace: bool,
-    /// 60.47 --park-rcvlock (default off): the receive-buffer floor in kernel units (SO_RCVBUF as getsockopt reports it;
-    /// main: min(512 KiB, 2 x net.core.rmem_max)), 0 = off. A download-only stream's target socket that parks again on
-    /// its client's output gets its receive buffer locked until a read drains it (worker/rcvlock.rs)
-    pub park_rcvlock: u32,
     /// 60.46 adaptive splice (opt-in in v1.2.0, 60.50: ungated it cost same-host clients with more than SPLICE_FEW streams on
     /// a 2-vCPU host; default on since v1.2.1 with the 60.51 far-client gate): read_target splices SPLICE_SLICE for a
     /// backed-up many-stream far client; off (--no-adaptive-splice) = SPLICE_PIPE always
@@ -197,6 +195,17 @@ const L3_STUCK_SWEEPS: u32 = 2; // 20.26 idle sweeps at level 3 without progress
 const PEND_HARD: usize = 64 * 1024 * 1024; // misbehaving client cap per stream (20.26: Stage::pend_over for over-credit clients)
 /// 20.27 0x49 hold: an in-credit stream over PEND_HARD stops its client's reads (Client::hpaused) instead of CLOSE 0x49; reads
 /// resume once every stream of the client is at or below PEND_RESUME (Worker::pend_account)
+/// 60.78 a DATA packet (one frame or assembled fragments) bigger than the level-0 rbuf (256 KiB: real clients send
+/// <= 64 KiB) never takes an in-credit stream's backlog past PEND_CEIL: the hold (PEND_HARD) stops reading the client, but the rest of the read still lands, and with
+/// such frames that was up to 16 MiB more (20.06 known limit: 128 credits x 16 MiB). Such a frame closes the stream
+/// with 0x49 at once (shed_hold: the hold's own last step, without the wait). Smaller frames are only held, as before:
+/// their rest of one read is bounded by the client's rbuf, which an earlier big frame may have grown (review r1: a
+/// close there would hit honest 64 KiB frames). Only write_target's append branch checks it: an empty backlog takes at
+/// most one packet (MAX_FRAME) and a staged batch at most one read (rbuf: MAX_FRAME + slack), both under PEND_HARD
+/// (asserted below; review r2).
+const BIG_FRAME: usize = 256 * 1024;
+const PEND_CEIL: usize = PEND_HARD + BIG_FRAME;
+const _: () = assert!(BIG_FRAME == mem::STAGES[0].rbuf_max && MAX_FRAME + 64 * 1024 < PEND_HARD);
 const PEND_RESUME: usize = PEND_HARD / 4 * 3; // 48 MiB (parent): to resume within the hold a target drains 16 MiB in 4-6 s (~2.7-4 MiB/s; at /2: 5-8)
 /// 20.27 0x49 hold: the hold lasts at most this many idle sweeps (2 s each: 4-6 s; the whole connection is not read meanwhile)
 const HOLD_SWEEPS: u32 = 3;
@@ -237,9 +246,9 @@ const SPLICE_SLICE: usize = 64 * 1024;
 /// parked targets, and on a 2-vCPU loopback the smaller splices cost 1x1 6% (60.46). Open streams, not parked ones: the
 /// stream that splices is the first one resumed, when flush_dirty has just moved every parked stream to `ready`.
 const SPLICE_FEW: usize = 4;
-/// 60.51 --adaptive-splice slices only for a client whose TCP min RTT at accept (net::min_rtt_us: the handshake sample) is
-/// at least this. On a same-host or LAN client the client socket fills from the server host's own CPU and softirq
-/// scheduling, not from a slow peer: there 64 KiB slices cost CPU (VPS2 echo 10x5 +17% server CPU per MiB) and pressure
+/// 60.51 --adaptive-splice slices only for a client whose TCP min RTT (net::min_rtt_us; 60.78 read at its first need of
+/// rule B, worker/splicefar.rs, no longer at accept) is at least this. On a same-host or LAN client the client socket
+/// fills from the server host's own CPU and softirq scheduling, not from a slow peer: there 64 KiB slices cost CPU (VPS2 echo 10x5 +17% server CPU per MiB) and pressure
 /// (download 1x100 0.31-0.45 of v1.1.1), so such a client keeps the v1.1.1 length. Unix-socket clients, clients behind a
 /// same-host reverse proxy and clients without a sample count as near (v1.1.1 length).
 const SPLICE_FAR_RTT_US: u32 = 10_000;
@@ -265,7 +274,6 @@ pub fn adapt_lowat(lowat: u32, download_cap: u32) -> u32 {
         0
     }
 }
-const KTLS_LINGER: Duration = Duration::from_secs(10); // review r1: longest wait for a closing kTLS socket to drain
 /// review r1: a client still in Http/WaitInfo after 5 sweeps (8-10 s, active or not) is closed. 60.09 M4a: the first
 /// client after an idle gap (epoll_wait(-1), sweep deadline passed) can get ~6-8 s once: the phase-keeping catch-up puts
 /// the next sweep within one period. Kept: an upper (slowloris) bound; resetting from `now` would line workers up again.
@@ -444,8 +452,9 @@ pub struct Worker {
     // 20.13 handshake deadlines in accept order (constant timeout => FIFO is sorted). deliberate:
     // entries of finished handshakes stay until their deadline (bounded by accept rate x timeout).
     tls_deadlines: VecDeque<(u32, u32, Instant)>,
-    // review r1: closing kTLS clients waiting to drain (client, gen, deadline); see Client::ktls_drained
-    lingering: Vec<(u32, u32, Instant)>,
+    // review r1: closing kTLS clients waiting to drain; 60.78 bundle B3 and plain ones waiting for the client's EOF
+    // (worker/linger.rs)
+    lingering: Vec<linger::Linger>,
     next_linger: Instant,
     // 50.02 kTLS clients whose send is starved by host TCP memory (client, gen); see starve_check
     starved: Vec<(u32, u32)>,
@@ -486,9 +495,12 @@ pub struct Worker {
     lscan: u64,                              // 60.25 C10b next lwait scan (now_ms64)
     pending: HashMap<RawFd, proxy::Pending>, // 60.34 connections waiting for their PROXY header (empty when off)
     cpace_st: Vec<pace::PaceSt>,             // 60.42 --credit-pace per target slot (empty when off: Target unchanged)
-    rcvlock: Vec<rcvlock::LockSt>,           // 60.47 --park-rcvlock per target slot (empty when off: Target unchanged)
     now: Instant,                            // 60.47 the loop turn's time (read once after epoll_wait; idle_sweep uses it)
-    splice_far: Vec<bool>, // 60.51 --adaptive-splice per client slot: min RTT at accept >= SPLICE_FAR_RTT_US (empty when off)
+    /// 60.51 --adaptive-splice per client slot: (generation + 1, class or age stamp); 60.78 written at the first need of
+    /// rule B and by the stamping pass, never at accept (worker/splicefar.rs; empty when off)
+    splice_far: Vec<(u32, u32)>,
+    age_k: u32,           // 60.78 the stamp of a client the stamping pass has not seen yet
+    age_pass_at: Instant, // 60.78 the next stamping pass
     /// 60.57 A2 the process-wide fd count, this worker's allowance from it (its own count is Stats::fds) and the block
     /// it takes or returns at once (worker/fds.rs)
     fdg: Arc<crate::fdgate::FdGate>,
@@ -569,6 +581,7 @@ impl Worker {
         let first_sweep = Duration::from_millis(IDLE_SWEEP_MS + IDLE_SWEEP_MS * idx as u64 / cfg.threads.max(1) as u64);
         let meter = cfg.upload_rate.is_some() || cfg.clientip.as_ref().and_then(|c| c.table.as_ref()).is_some_and(|t| t.has_upload());
         let fdg = crate::fdgate::for_worker(); // 60.57 A2
+        let age_k = splicefar::first_k(); // 60.78
         Ok(Worker {
             cfg,
             ep,
@@ -646,9 +659,10 @@ impl Worker {
             lscan: 0,
             pending: HashMap::new(),
             cpace_st: Vec::new(),
-            rcvlock: Vec::new(),
             now: Instant::now(),
             splice_far: Vec::new(),
+            age_k,
+            age_pass_at: splicefar::t0() + splicefar::AGE_PASS * age_k,
             fd_block: fdg.block(),
             fdg,
             fd_have: 0,
@@ -773,7 +787,7 @@ impl Worker {
                     return;
                 }
                 if c.lingering && e & (libc::EPOLLHUP | libc::EPOLLERR) as u32 != 0 {
-                    self.close_client(idx, Why::ClientClose); // review r1: peer gone, nothing more can be delivered
+                    self.close_hup(idx); // review r1: peer gone, nothing more can be delivered (60.78 G42: or timed out)
                     return;
                 }
                 if c.state == CState::Tls {
@@ -833,9 +847,6 @@ impl Worker {
                             self.read_udp(idx);
                         } else {
                             self.read_target(idx);
-                            if self.cfg.park_rcvlock != 0 {
-                                self.rcvlock_resumed(idx, gen); // 60.47
-                            }
                             if self.cfg.credit_pace {
                                 self.pace_resume(idx, gen); // 60.42
                             }
@@ -869,6 +880,9 @@ impl Worker {
             }
             self.inbox.stopped.store(true, std::sync::atomic::Ordering::Release);
             // main may now trust `load` (the accepted ones are in it)
+        }
+        if stop >= net::STOP_CLOSE && !self.lingering.is_empty() {
+            self.linger_cut(); // 60.78 bundle B3
         }
         if stop >= net::STOP_CLOSE && !self.pending.is_empty() {
             self.pending_close(); // 60.34 PROXY headers still missing at the close phase (STOP_DRAIN: their timeout)
@@ -1035,11 +1049,11 @@ impl Worker {
                 c.compact_bulk();
             }
             if c.out_empty() && c.closing {
-                // review r1: kTLS sockets close from `lingering` once drained (Client::ktls_drained)
-                if c.ktls_on {
-                    c.ktls_notify();
-                    if !std::mem::replace(&mut c.lingering, true) {
-                        self.lingering.push((ci, g, Instant::now() + KTLS_LINGER));
+                // review r1: kTLS sockets close from `lingering` once drained (Client::ktls_drained); 60.78 bundle B3 and
+                // plain ones whose input may be unread (worker/linger.rs)
+                if c.lingering || c.ktls_on || c.readable || c.rpos < c.rlen {
+                    if !c.lingering {
+                        self.linger_start(ci, g);
                     }
                     continue;
                 }

@@ -1,0 +1,15 @@
+ÿþ#bo-direct-ip
+# l8# l88.0.0/8# l88.0.0/16
+park-rcvlock
+no-direct-ip
+# l16
+park-rcvlock
+no-direct-ip
+# l8a/16
+block-smtp
+no-direct-ip
+# l8# l88.0.0/16
+park-rcvlock
+no-direct-ip
+# l8aff 
+block-dest 192.168.0.0/.0,:: ÿþ

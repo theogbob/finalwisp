@@ -177,6 +177,9 @@ impl Worker {
                     self.target_eof(ti, CLOSE_THROTTLED);
                     return;
                 }
+                if data.len() > BIG_FRAME && t.pend.len() - t.phead + data.len() > PEND_CEIL {
+                    return self.pend_ceil(ti); // 60.78 (the two ways above stay under it: see PEND_CEIL)
+                }
                 // 20.27 0x49 hold: within its credit the client is honest: what it sent was granted and is in flight
                 // (absolute CONTINUE + refill at half let the in-flight data grow to the client's buffers on a
                 // long path). Stop reading the client instead: the rest waits in TCP, memory stays bounded.
@@ -195,6 +198,16 @@ impl Worker {
             t.pend.extend_from_slice(data);
         }
         self.after_write(ti);
+    }
+
+    /// 60.78 an in-credit stream that a frame over BIG_FRAME would take past PEND_CEIL (far bigger than real clients
+    /// send, past the hold): closed now with 0x49, as the hold's last step closes a stream still over PEND_HARD
+    /// (shed_hold). The client and its other streams go on.
+    #[cold]
+    #[inline(never)]
+    fn pend_ceil(&mut self, ti: u32) {
+        self.stats.shed_hold.bump();
+        self.shed(vec![ti], "shed_hold");
     }
 
     pub(super) fn flush_pending(&mut self, ti: u32) {

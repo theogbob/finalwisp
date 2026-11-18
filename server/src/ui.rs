@@ -525,9 +525,9 @@ mod tests {
         };
         assert_eq!(rows("", ""), ["preset: none"]);
         assert_eq!(rows("--port 6001 --host 127.0.0.1 --max-conns 0 --no-block-smtp", ""), ["preset: none"], "defaults are not listed");
-        // (T: the settings that v1.3.0 added to the preset: 60.57 / 60.58 and the four of 60.63; the two of 60.72)
-        const T: &str = ", fd-admission on, conn-share on, dns-own on, dns-reserve on, tcpmem-share on, port-share on, dest-failfast on, net-watch on, \
-                         stream-share on, stream-pool on";
+        // (T: the settings that v1.3.0 added to the preset: 60.57 / 60.58 and the four of 60.63; the two of 60.72; 60.78's unread-close)
+        const T: &str = ", fd-admission on, conn-share on, dns-own on, dns-reserve on, tcpmem-share on, unread-close on, port-share on, \
+                         dest-failfast on, net-watch on, stream-share on, stream-pool on";
         let t = |s: &str| format!("{s}{T}");
         assert_eq!(rows("--preset public", ""), [t("preset: public: block-smtp on, max-streams-per-conn 1024")]);
         assert_eq!(rows("--preset none 7000", ""), ["preset: none", "command line: port 7000"]);
@@ -536,7 +536,8 @@ mod tests {
             rows("--preset public --config f --no-dns-reserve", "no-conn-share\nno-dns-own\n"),
             [
                 "preset: public: block-smtp on, max-streams-per-conn 1024, fd-admission on, conn-share off (config file), dns-own off (config file), \
-                 dns-reserve off (command line), tcpmem-share on, port-share on, dest-failfast on, net-watch on, stream-share on, stream-pool on",
+                 dns-reserve off (command line), tcpmem-share on, unread-close on, port-share on, dest-failfast on, net-watch on, stream-share on, \
+                 stream-pool on",
                 "config file: f"
             ]
         );
@@ -567,7 +568,7 @@ mod tests {
         assert_eq!(
             b,
             "  version       1.3.0\n  preset        public: block-smtp on, max-streams-per-conn 1024,\n                fd-admission on, conn-share on, \
-             dns-own on, dns-reserve on,\n                tcpmem-share on, port-share on, dest-failfast on, net-watch on,\n                stream-share on, stream-pool on\n  command line  host 0.0.0.0, port 443, \
+             dns-own on, dns-reserve on,\n                tcpmem-share on, unread-close on, port-share on,\n                dest-failfast on, net-watch on, stream-share on, stream-pool on\n  command line  host 0.0.0.0, port 443, \
              splice off, balance on, udp off,\n                motd hello, max-conns 20000, max-conns-per-ip 64\n"
         );
         assert!(fits(&b));

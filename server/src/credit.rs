@@ -108,6 +108,13 @@ impl Pinger {
         self.at = self.at.map(|a| a - d);
     }
 
+    /// test hook: the outstanding ping was queued now (a prompt pong: a round trip of about 0, as on a quiet loopback,
+    /// whatever time a loaded host took between the test's two steps)
+    #[cfg(test)]
+    pub fn queued_now(&mut self) {
+        self.at = self.at.map(|_| Instant::now());
+    }
+
     /// v2 grants apply: the client answered a ping, and none is outstanding for PONG_LATE
     pub fn active(&self, now: Instant) -> bool {
         self.pongs > 0 && self.at.is_none_or(|a| now.saturating_duration_since(a) < PONG_LATE)

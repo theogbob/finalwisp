@@ -19,15 +19,20 @@
 //! without the kernel's search.
 //!
 //! E3 --dest-failfast: a destination that does not answer gets no new SYN. Worker-local (worker/bounds.rs): a
-//! destination is a suspect when DF_K of the worker's connecting sockets to it have each sent DF_SYNS SYNs without an
-//! answer and no target to it opened since the last count; until it answers, a new stream to it is refused at once
-//! (the CLOSE it would get at the connect deadline), except one probe per DF_PROBE_MS.
+//! destination is a suspect when DF_K of the worker's connecting sockets to it are ripe (in the last DF_RIPE_MS before
+//! their deadline) and have each sent DF_SYNS SYNs without an answer, and no target to it opened since the last count;
+//! until it answers, a new stream to it is refused at once (the CLOSE it would get at the connect deadline), except
+//! one probe per DF_PROBE_MS. 60.78 bundle B1: a destination with a connect DF_AGE_MS old and no answer is failing
+//! (DF_FAIL_KEEP_MS, or until a target to it opens); a client address with DF_FAIL_FLY connects in flight per worker
+//! that are that old or go to failing destinations gets no new connect to a failing destination or to one without an
+//! open target (many distinct destinations that do not answer).
 //!
 //! E5 --unread-close: a connection whose client stopped reading its downloads, while the host's TCP memory is short
 //! (the reading and the marks of E1: TM_SHARE_IN_16 / TM_SHARE_OUT_16), is reset. A worker judges at its idle sweep only: a connection
 //! with a parked download (Target::blocked, as E1 counts it) whose client advertises a zero receive window (TCP_INFO
 //! tcpi_snd_wnd: the client's own buffer is full, so neither the host's memory nor the network is the cause) and
-//! took no byte (tcpi_bytes_acked) for UC_STALL_MS (uc_step). A reset frees the target sockets'
+//! takes no byte (tcpi_bytes_acked) uses up its credit (uc_step): UC_STALL_MS to start, bought back by bytes taken
+//! (UC_RATE per second, at most UC_CAP_MS), used faster when the connection holds more than one full stream. A reset frees the target sockets'
 //! receive buffers and the client socket's send queue; a CLOSE per stream cannot reach a client that reads nothing.
 //!
 //! E4 --net-watch: no refusal. What the server cannot bound, because the host has no readable limit for packets out:
@@ -48,6 +53,8 @@ pub const OPT_PORT: u8 = 2;
 pub const OPT_DEAD: u8 = 4;
 pub const OPT_WATCH: u8 = 8;
 pub const OPT_UNREAD: u8 = 16;
+/// 60.78 G70 the relief part of --unread-close (OPT_UNREAD with the Mem form and SO_BUF_LOCK)
+pub const OPT_RELIEF: u8 = 32;
 
 /// Bounds::state bits: E1 the share mark
 pub const ST_TM_SHARE: u8 = 1;
@@ -83,6 +90,21 @@ pub const DF_K: u32 = 8;
 pub const DF_SYNS: u8 = 4;
 /// E3 no kernel sends its 4th SYN before this age (the first retransmit timeout is 1 s): younger sockets are not asked
 pub const DF_AGE_MS: u64 = 3000;
+/// E3 a connecting socket counts toward a suspect only in the last this many ms before its connect deadline (from 7.5 s
+/// of age at the default --connect-timeout 10): a destination that answers a late SYN (the 5th at 4 s, the 4th of the
+/// standard schedule at 7 s) is never taken for dead. Above the idle sweep's 2 s, so that a count sees every such socket.
+/// 60.78 bundle B1
+pub const DF_RIPE_MS: u64 = 2500;
+/// E3 a destination is failing from the first count that sees a connect to it DF_AGE_MS old without an answer, and
+/// stays so until a target to it opens or for this long after the last such count (or refused attempt). 60.78 bundle B1
+pub const DF_FAIL_KEEP_MS: u64 = 30_000;
+/// E3 the failing destinations a worker keeps (more: not kept, their connects are not in the budget)
+pub const DF_FAIL_MAX: usize = 4096;
+/// E3 one client address may have this many connects in flight per worker thread that are DF_AGE_MS old or go to failing
+/// destinations; above it its new connect to a failing destination or to one without an open target is refused (many
+/// distinct destinations that do not answer). Above a page of a browser on one slow host (60.78 bundle B1: e3five, at
+/// most about 50 in flight).
+pub const DF_FAIL_FLY: u32 = 64;
 /// E3 one probe per this per worker to a suspect destination
 pub const DF_PROBE_MS: u64 = 1000;
 /// E3 the suspects a worker keeps (more: not kept, nothing refused for them)
@@ -114,11 +136,25 @@ pub const TM_KEY_DIV: u64 = 2;
 /// ... and only when those sockets could matter on this host: their number times the kernel's default receive buffer
 /// (tcp_rmem[1], what a socket that was never read fast holds) is at least 1 / TM_FLOOR_DIV of the memory limit
 pub const TM_FLOOR_DIV: u64 = 16;
-/// E5 a connection is reset after this long with a zero receive window and no byte taken by its client. A Linux
-/// client with a full buffer opens its window again only when much of it is free, so an honest slow reader takes
-/// nothing for long: over 600-s runs (60.73 T-wnd-big) 168-187 s at 2 KiB/s with the autotuned default buffer, 315-346 s
-/// with an 8 MiB buffer (87 s at 8 KiB/s). v1.3.2: 600 s (was 120 s; a window-aware limit is open in 60.73)
+/// E5 the credit of a connection (60.78 T2): every connection starts with UC_STALL_MS of stall time. A stall is the time
+/// between two sweeps that both see a zero receive window and no new byte taken; it uses the credit up. Bytes the client
+/// takes buy credit back at UC_RATE bytes per second of stall (the first bytes seen, its fill, at UC_FILL_DIV x that
+/// price), up to UC_CAP_MS. A connection whose credit is used up is reset while the host is short. Why: a Linux client
+/// with a full buffer opens its window again only when much of it is free, so an honest slow reader takes nothing for
+/// long, and how long grows with its buffer (60.73 T-wnd-big: 168-187 s at 2 KiB/s with the autotuned default buffer,
+/// 315-346 s with 8 MiB). That gap is paid for: the drain before the window opens again is at most 1.30 x the bytes
+/// taken in the take before it, and at most 0.086 x the fill (8 MB and more). So credit bought with taken bytes keeps a
+/// reader of 1 KiB/s or more with any buffer, and a client that takes nothing (or a byte now and then) gets
+/// UC_STALL_MS in all, whatever it announces. v1.3.2/v1.3.3: a fixed 600 s per stall, restarted by any byte taken.
 pub const UC_STALL_MS: u64 = 600_000;
+/// E5 the most credit a connection can hold (a reader with a 32 MiB buffer at 1 KiB/s: an estimated first gap of 2100 s)
+pub const UC_CAP_MS: u64 = 3_600_000;
+/// E5 bytes taken per second of credit (half of the slowest reader the rule keeps, 1 KiB/s)
+pub const UC_RATE: u64 = 512;
+/// E5 the first bytes seen of a connection (its fill) buy credit at this many times UC_RATE. Only the bytes of the
+/// first sweep that sees the connection with a parked download: a client parked early pays the rest of its fill at
+/// UC_RATE, which is the re-buy price any client has (review)
+pub const UC_FILL_DIV: u64 = 8;
 /// E5 the TCP_INFO bytes up to tcpi_snd_wnd (offset 228, Linux 5.4 and later)
 pub const UC_INFO_LEN: usize = 232;
 
@@ -407,7 +443,7 @@ pub fn nw_lines(d: Net, connecting: u64, last: &mut (u64, u64)) -> Vec<String> {
         out.push(format!(
             "finalwisp: --net-watch: SYN retransmits on this host: {} in 10 s, {} per connect attempt ({} attempts); {connecting} \
              streams of this server are connecting. Connects that get no answer do this, and the host's packet rate out is \
-             the limit for every client. --dest-failfast covers one destination that does not answer, not many. Counters \
+             the limit for every client. --dest-failfast bounds this per client address, not for many. Counters \
              host_syn_retrans, connecting, connect_timeout; the next such line at twice this value",
             d.syn_retrans,
             d.syn_retrans / d.opens.max(1),
@@ -535,35 +571,72 @@ pub fn syns_sent(fd: RawFd) -> Option<u8> {
     }
 }
 
-/// E5 one connection's record (Wb::uc, by client slot): its slot generation, its client's bytes_acked at `since`, and
-/// the start of its stall in ms (0: none)
+/// E5 one connection's record (Wb::uc, by client slot): its slot generation + 1 (0: never used; a slot's first
+/// generation is 0, so a plain generation would take a fresh record for one in use), whether its fill was counted, its client's
+/// bytes_acked at the last sweep that read it, the time of the last sweep that saw it in a stall (0: not in one), and
+/// its credit in ms of stall
 #[derive(Clone, Copy, Default, PartialEq, Debug)]
 pub struct Stall {
-    pub gen: u32,
+    pub g1: u32,
+    pub filled: bool,
     pub acked: u64,
-    pub since: u64,
+    pub at: u64,
+    pub credit: u64,
+}
+
+/// E5 the credit's constants (UC_STALL_MS, UC_CAP_MS, UC_RATE; tests shorten the times) and `m0`: the bytes one full
+/// stream holds on this host (tcp_rmem's maximum + --notsent-lowat; 0 until a worker reads it). A connection that holds
+/// more of the host's TCP memory than m0 uses its credit up faster, by held / m0: its streams, not its client's buffer,
+/// decide what it costs.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct UcLim {
+    pub start_ms: u64,
+    pub cap_ms: u64,
+    pub rate: u64,
+    pub m0: u64,
+}
+
+impl UcLim {
+    pub const REAL: UcLim = UcLim { start_ms: UC_STALL_MS, cap_ms: UC_CAP_MS, rate: UC_RATE, m0: 0 };
 }
 
 /// E5 a sweep's step for one connection: `info` = (the client's receive window, bytes it took) when the connection holds
-/// a parked download (None: it holds none, or TCP_INFO is not readable), `limit_ms` = UC_STALL_MS (tests shorten it),
-/// `pressed` = ST_UNREAD. true = reset it. A stall starts at a zero window and ends at an open window or at any byte
-/// taken: only a connection whose client took nothing for `limit_ms`, its window zero at every sweep, is reset, and
-/// only while the host is short.
-pub fn uc_step(e: &mut Stall, gen: u32, info: Option<(u32, u64)>, now_ms: u64, limit_ms: u64, pressed: bool) -> bool {
-    if e.gen != gen {
-        *e = Stall { gen, ..Stall::default() };
+/// a parked download (None: it holds none, or TCP_INFO is not readable), `held` = the bytes of host TCP memory it holds
+/// (its send queue and its parked targets' receive queues), `pressed` = ST_UNREAD. true = reset it: its credit is used
+/// up, it is in a stall, and the host is short.
+pub fn uc_step(e: &mut Stall, gen: u32, info: Option<(u32, u64)>, held: u64, now_ms: u64, lim: &UcLim, pressed: bool) -> bool {
+    if e.g1 != gen.wrapping_add(1) {
+        *e = Stall { g1: gen.wrapping_add(1), credit: lim.start_ms, ..Stall::default() };
     }
-    match info {
-        Some((0, acked)) if e.since != 0 && acked == e.acked => pressed && now_ms.saturating_sub(e.since) >= limit_ms,
-        Some((0, acked)) => {
-            (e.acked, e.since) = (acked, now_ms.max(1));
-            false
-        }
-        _ => {
-            e.since = 0;
-            false
-        }
+    let Some((wnd, acked)) = info else {
+        e.at = 0;
+        return false;
+    };
+    // the time since a sweep that saw a stall is used up first, whatever this sweep sees: a client that takes a byte
+    // at every sweep pays for its stalls too (review)
+    let mut used = 0;
+    if e.at != 0 {
+        let m0 = lim.m0.max(1) as u128;
+        used = (now_ms.saturating_sub(e.at) as u128 * (held as u128).max(m0) / m0).min(u64::MAX as u128) as u64;
+        e.credit = e.credit.saturating_sub(used);
     }
+    e.at = if wnd == 0 { now_ms.max(1) } else { 0 };
+    if acked > e.acked {
+        // bytes taken since the last reading buy credit (the first reading: the fill, at UC_FILL_DIV x the price)
+        let div = if e.filled { lim.rate } else { lim.rate * UC_FILL_DIV };
+        let gain = ((acked - e.acked) as u128 * 1000 / div.max(1) as u128).min(lim.cap_ms as u128) as u64;
+        (e.credit, e.acked) = (e.credit.saturating_add(gain).min(lim.cap_ms), acked);
+    }
+    e.filled = true;
+    // used up: in a stall, and what is left does not pay for another interval like the one just spent (a few bytes at
+    // every sweep do not keep a connection)
+    wnd == 0 && pressed && (e.credit == 0 || e.credit < used)
+}
+
+/// E5 the bytes one full stream can hold on this host: tcp_rmem's maximum (6 MiB, the Linux default, if unreadable)
+pub fn rmem_max() -> u64 {
+    let v = std::fs::read_to_string("/proc/sys/net/ipv4/tcp_rmem").ok().and_then(|s| s.split_whitespace().nth(2)?.parse().ok());
+    v.filter(|v| *v > 0).unwrap_or(6 << 20)
 }
 
 /// E5 a TCP socket's peer receive window and the bytes the peer took (tcpi_snd_wnd, tcpi_bytes_acked); None: not a
@@ -575,6 +648,17 @@ pub fn wnd_acked(fd: RawFd) -> Option<(u32, u64)> {
     let r = unsafe { libc::getsockopt(fd, libc::IPPROTO_TCP, libc::TCP_INFO, b.as_mut_ptr() as *mut _, &mut len) };
     (r == 0 && len as usize >= UC_INFO_LEN)
         .then(|| (u32::from_ne_bytes(b[228..232].try_into().unwrap()), u64::from_ne_bytes(b[120..128].try_into().unwrap())))
+}
+
+/// E5 the bytes in a socket's receive queue (`req` = FIONREAD) or send queue (TIOCOUTQ); 0 on an error
+pub fn queued(fd: RawFd, req: libc::c_ulong) -> u64 {
+    let mut n: libc::c_int = 0;
+    // SAFETY: both requests write one c_int
+    let r = unsafe { libc::ioctl(fd, req as _, &mut n) };
+    if r != 0 {
+        return 0;
+    }
+    n.max(0) as u64
 }
 
 /// E5 does this kernel's TCP_INFO have tcpi_snd_wnd? (one socket, closed)
@@ -618,6 +702,8 @@ pub struct Bounds {
     log_at: Line<[AtomicU64; LOG_KINDS]>,
     /// the marks whose "armed" line was printed (ST_* bits): mark_line
     said: AtomicU8,
+    /// 60.78 G70 TCP sockets allocated on the host (sockstat TCP `alloc`) at the guard thread's last read; 0 = none yet
+    socks: AtomicU64,
 }
 
 impl Bounds {
@@ -642,7 +728,35 @@ impl Bounds {
             pt_max: Mutex::new(None),
             log_at: Line(Default::default()),
             said: AtomicU8::new(0),
+            socks: AtomicU64::new(0),
         }
+    }
+    /// 60.78 G70 a TCP socket's share of the host's TCP memory under pressure, in bytes: tcp_mem's maximum over the
+    /// sockets allocated (the kernel's rule in __sk_mem_raise_allocated: under pressure a socket gets memory only while
+    /// it holds less than that). None: the Flag form, or no reading yet
+    pub fn share_bytes(&self) -> Option<u64> {
+        let n = self.socks.load(Relaxed);
+        match self.tcp {
+            TcpForm::Mem { max_pages } if n > 0 => Some(max_pages * self.page / n),
+            _ => None,
+        }
+    }
+    /// Tests: the sockets allocated as the guard thread would publish them
+    #[cfg(test)]
+    pub fn set_socks(&self, n: u64) {
+        self.socks.store(n, Relaxed);
+    }
+    /// The guard's reading of /proc/net/sockstat (`t`): TCP memory in pages; with OPT_RELIEF it also publishes the TCP
+    /// sockets allocated (none before the first good reading: no share known, no relief)
+    fn read_mem(&self, t: &[u8]) -> Option<u64> {
+        let pages = sockstat_tcp_pages(t);
+        if self.opts & OPT_RELIEF != 0 && pages.is_some() {
+            // 60.78 G70 (a failed read keeps the last value, as the pages do)
+            if let Some(n) = sockstat_tcp_alloc(t) {
+                self.socks.store(n, Relaxed);
+            }
+        }
+        pages
     }
     /// E2 the host's port range (`lo`..=`hi`, `usable` of them) and which socket families take the option
     pub fn set_ports(&self, lo: u16, hi: u16, usable: u32, opt: u8) {
@@ -809,8 +923,9 @@ impl Bounds {
         if self.opts & OPT_TCPMEM == 0 && (was ^ now) & ST_UNREAD != 0 && self.mark_line(Log::UcMark, ST_UNREAD, now & ST_UNREAD != 0) {
             crate::metrics::log_nowait(if now & ST_UNREAD != 0 {
                 format!(
-                    "finalwisp: --unread-close is armed: {of}. A connection whose client took no data for {} s with its \
-                     receive window at 0 is reset. Fix: {FIX}; or --no-unread-close (at most one such line per 10 s)",
+                    "finalwisp: --unread-close is armed: {of}. A connection whose client took no data with its receive \
+                     window at 0 until its stall time was used up ({} s to start, more for data it took) is reset. Fix: {FIX}; \
+                     or --no-unread-close (at most one such line per 10 s)",
                     UC_STALL_MS / 1000
                 )
             } else {
@@ -838,7 +953,7 @@ impl Bounds {
         let next = at.load(Relaxed);
         now >= next && at.compare_exchange(next, now + LOG_EVERY_MS, Relaxed, Relaxed).is_ok()
     }
-    #[cfg(test)]
+    #[cfg(any(test, fuzzing))]
     pub fn set_state(&self, s: u8) {
         self.state.0.store(s, Relaxed);
     }
@@ -895,9 +1010,14 @@ impl Bounds {
             rows.push((
                 "dead destination guard",
                 format!(
-                    "a destination with {DF_K} or more connects of one worker thread that got no answer to {DF_SYNS} SYNs each, and \
-                     none that opened, gets no new connect (CLOSE 0x43 at once) except one probe per second per worker thread, \
-                     until it answers; only while another client is connected"
+                    "a destination with {DF_K} or more connects of one worker thread in the last {} s of the connect timeout \
+                     that got no answer to {DF_SYNS} SYNs each, and none that opened, gets no new connect (CLOSE 0x43 at once) \
+                     except one probe per second per worker thread, until it answers; one client address with \
+                     {DF_FAIL_FLY} connects per worker thread in flight that got no answer for {} s or go to such a \
+                     destination gets no new connect to such a destination or to one without an open stream (CLOSE 0x43 \
+                     at once); only while another client is connected",
+                    DF_RIPE_MS as f64 / 1000.0,
+                    DF_AGE_MS / 1000
                 ),
             ));
         }
@@ -913,10 +1033,22 @@ impl Bounds {
             rows.push((
                 "unread download guard",
                 format!(
-                    "{at}, a connection with a download waiting for its client is reset when the client's receive window has \
-                     been 0 and it took no data for {} s",
-                    UC_STALL_MS / 1000
+                    "{at}, a connection with a download waiting for its client is reset when its stall time is used up: \
+                     {} s to start (the client's receive window 0 and no data taken), 1 s more per {UC_RATE} bytes it takes \
+                     (at most {} s), used up faster by a connection that holds more than tcp_rmem's maximum",
+                    UC_STALL_MS / 1000,
+                    UC_CAP_MS / 1000
                 ),
+            ));
+        }
+        if self.opts & OPT_RELIEF != 0 {
+            rows.push((
+                "unread download relief",
+                "at the same marks, a download waiting for its client whose target socket holds more than half of a socket's \
+                 share of host TCP memory (tcp_mem's maximum over the TCP sockets) is read out into the client's queue, \
+                 and its receive buffer is kept at half the share until the pressure ends (then its old size \
+                 comes back); at most a quarter of the memory budget in such queues"
+                    .to_string(),
             ));
         }
         if self.opts & OPT_WATCH != 0 {
@@ -954,8 +1086,17 @@ impl ProcFile {
 
 /// Host TCP memory in pages from the text of /proc/net/sockstat (`TCP: inuse 5 orphan 0 tw 0 alloc 7 mem 1`)
 pub fn sockstat_tcp_pages(text: &[u8]) -> Option<u64> {
+    sockstat_tcp(text, "mem")
+}
+
+/// 60.78 G70 the TCP sockets allocated (`alloc`) of /proc/net/sockstat
+pub fn sockstat_tcp_alloc(text: &[u8]) -> Option<u64> {
+    sockstat_tcp(text, "alloc")
+}
+
+fn sockstat_tcp(text: &[u8], key: &str) -> Option<u64> {
     let l = text.split(|&b| b == b'\n').find(|l| l.starts_with(b"TCP:"))?;
-    std::str::from_utf8(l).ok()?.split_whitespace().skip_while(|w| *w != "mem").nth(1)?.parse().ok()
+    std::str::from_utf8(l).ok()?.split_whitespace().skip_while(|w| *w != key).nth(1)?.parse().ok()
 }
 
 /// (pages, pressure flag) of the TCP row of /proc/net/protocols (`TCP 2368 7 1 no 320 yes kernel ...`: protocol,
@@ -998,7 +1139,8 @@ pub fn host_ports() -> Option<(u16, u16, u32)> {
 }
 
 /// main: the state for the options that are on (`tcpmem`: --tcpmem-share, `port`: --port-share, `dead`:
-/// --dest-failfast, `watch`: --net-watch, `unread`: --unread-close; `upstream`: an --upstream proxy is set), or None
+/// --dest-failfast, `watch`: --net-watch, `unread`: --unread-close (with its relief part where
+/// the host allows it: OPT_RELIEF); `upstream`: an --upstream proxy is set), or None
 /// when none can work here, and the warnings of a start (an option that is on and not in effect)
 pub fn build(
     tcpmem: bool,
@@ -1025,6 +1167,11 @@ pub fn build(
             Ok(f) => (opts, tcp) = (opts | OPT_UNREAD, f),
             Err(e) => warn.push(format!("--unread-close is not in effect: {e}.")),
         }
+    }
+    // 60.78 G70: the share needs tcp_mem's maximum (the Mem form), and the buffer it shrinks must grow again after the
+    // pressure (SO_BUF_LOCK lifts the lock that SO_RCVBUF sets; without it a stream would keep the small buffer for life)
+    if opts & OPT_UNREAD != 0 {
+        opts |= relief_bit(matches!(tcp, TcpForm::Mem { .. }), crate::net::buf_lock_supported(), &mut warn);
     }
     if dead && upstream {
         // (every target socket goes to the proxy: a destination that does not answer is the proxy's to see)
@@ -1054,6 +1201,20 @@ pub fn build(
         b.set_ports(lo, hi, usable, port_range_probe(false, r) as u8 | (port_range_probe(true, r) as u8) << 1);
     }
     (Some(b), warn)
+}
+
+/// 60.78 bundle B2: the relief part of --unread-close (OPT_RELIEF) where the host allows it (`mem`: the Mem form of the
+/// TCP memory reading; `buf_lock`: net::buf_lock_supported), else a start warning; the reset part works either way
+fn relief_bit(mem: bool, buf_lock: Option<bool>, warn: &mut Vec<String>) -> u8 {
+    let why = if !mem {
+        "net.ipv4.tcp_mem is not readable here"
+    } else if buf_lock != Some(true) {
+        "this kernel cannot unlock a receive buffer (SO_BUF_LOCK, Linux 5.15)"
+    } else {
+        return OPT_RELIEF;
+    };
+    warn.push(format!("--unread-close: its relief of waiting downloads is not in effect: {why}."));
+    0
 }
 
 /// The guard thread's sleep: the shortest period of the parts that are on. `nw_ms`: the time since E4's last window
@@ -1155,7 +1316,7 @@ fn guard(b: Arc<Bounds>) -> ! {
         if b.opts & (OPT_TCPMEM | OPT_UNREAD) != 0 {
             // a failed read keeps the last value (and says so once): a mark never falls because a file went away
             let read = match b.tcp {
-                TcpForm::Mem { .. } => stat.as_mut().and_then(|f| sockstat_tcp_pages(f.read())).map(|p| (p, false)),
+                TcpForm::Mem { .. } => stat.as_mut().and_then(|f| b.read_mem(f.read())).map(|p| (p, false)),
                 TcpForm::Flag => prot.as_mut().and_then(|f| protocols_tcp(f.read())),
             };
             match read {
@@ -1222,42 +1383,68 @@ mod tests {
     #[test]
     fn uc_step_resets_only_a_stalled_client_under_pressure() {
         const L: u64 = UC_STALL_MS;
-        // a client with a zero window that takes nothing: the stall starts at the first sweep, the reset comes at L
-        // with the mark, never without it
+        const M0: u64 = 1 << 20;
+        let lim = UcLim { m0: M0, ..UcLim::REAL };
+        // a sweep every 2 s from `t0` until `t1` (ms) with `info(t)` and `held`: the time of the reset, or None
+        let run = |e: &mut Stall, t0: u64, t1: u64, held: u64, pressed: bool, info: &dyn Fn(u64) -> (u32, u64)| {
+            (t0..t1).step_by(2000).find(|&t| uc_step(e, 7, Some(info(t)), held, t, &lim, pressed))
+        };
+        let run_g0 = |e: &mut Stall, lim: &UcLim| (2001..10 * L).step_by(2000).find(|&t| uc_step(e, 0, Some((0, 0)), M0, t, lim, true));
+        // a client with a zero window that takes nothing (no fill either): its credit is L; never without the mark
         let mut e = Stall::default();
-        assert!(!uc_step(&mut e, 7, Some((0, 1000)), 1, L, true), "the first sweep only starts the stall");
-        assert_eq!(e, Stall { gen: 7, acked: 1000, since: 1 });
-        assert!(!uc_step(&mut e, 7, Some((0, 1000)), L, L, true));
-        assert!(!uc_step(&mut e, 7, Some((0, 1000)), 10 * L, L, false), "no mark: never");
-        assert!(uc_step(&mut e, 7, Some((0, 1000)), L + 1, L, true));
+        assert!(!uc_step(&mut e, 7, Some((0, 0)), 0, 1, &lim, true), "the first sweep only starts the stall");
+        assert_eq!(e, Stall { g1: 8, filled: true, acked: 0, at: 1, credit: L });
+        assert_eq!(run(&mut e.clone(), 2001, 10 * L, M0, false, &|_| (0, 0)), None, "no mark: never");
+        assert_eq!(run(&mut e, 2001, 10 * L, M0, true, &|_| (0, 0)), Some(L + 1), "the credit is used up at L");
+        // the fill buys credit at UC_FILL_DIV x the price: 8 MiB = 8 MiB / (8 x 512) s
+        let mut e = Stall::default();
+        assert!(!uc_step(&mut e, 7, Some((0, 8 << 20)), 0, 1, &lim, true));
+        assert_eq!(e.credit, L + (8 << 20) * 1000 / (8 * UC_RATE));
+        // ... at most UC_CAP_MS
+        let mut e = Stall::default();
+        assert!(!uc_step(&mut e, 7, Some((0, 1 << 40)), 0, 1, &lim, true));
+        assert_eq!(e.credit, UC_CAP_MS);
         // an open window (the network or the host is slow, not the client): no stall, also under pressure
         let mut e = Stall::default();
-        for t in (0..10 * L).step_by(2000) {
-            assert!(!uc_step(&mut e, 7, Some((65_535, 1000)), t, L, true));
-            assert_eq!(e.since, 0);
-        }
-        // a zero window at every sweep, but one byte taken now and then: a new stall starts at each such sweep
+        assert_eq!(run(&mut e, 0, 10 * L, M0, true, &|_| (65_535, 1000)), None);
+        assert_eq!((e.at, e.credit), (0, L + 1000 * 1000 / (8 * UC_RATE)));
+        // a trickler: one byte per L - 2000 ms keeps its window 0: it gets about L in all (v1.3.3: kept for ever)
         let mut e = Stall::default();
-        for t in (0..10 * L).step_by(2000) {
-            assert!(!uc_step(&mut e, 7, Some((0, t / (L - 2000))), t, L, true), "{t}");
-        }
-        // a pause shorter than L, then an open window: the stall ends, a new one starts from the next zero window
+        let at = run(&mut e, 0, 10 * L, M0, true, &|t| (0, t / (L - 2000)));
+        assert!(at.is_some_and(|t| (L..L + 10_000).contains(&t)), "{at:?}");
+        // ... and one that takes a byte at every sweep (its window 0 at each): the same, its stalls are paid for
         let mut e = Stall::default();
-        for t in (0..L).step_by(2000) {
-            assert!(!uc_step(&mut e, 7, Some((0, 5)), t, L, true));
-        }
-        assert!(!uc_step(&mut e, 7, Some((4096, 5)), L, L, true));
-        assert_eq!(e.since, 0);
-        assert!(!uc_step(&mut e, 7, Some((0, 5)), L + 2000, L, true));
-        assert!(!uc_step(&mut e, 7, Some((0, 5)), 2 * L + 1999, L, true));
-        assert!(uc_step(&mut e, 7, Some((0, 5)), 2 * L + 2000, L, true));
-        // no parked download (None): no stall; a new connection in the slot (another generation): a new stall
-        let mut e = Stall { gen: 7, acked: 0, since: 1 };
-        assert!(!uc_step(&mut e, 7, None, L * 5, L, true));
-        assert_eq!(e.since, 0);
-        let mut e = Stall { gen: 7, acked: 0, since: 1 };
-        assert!(!uc_step(&mut e, 8, Some((0, 0)), L * 5, L, true));
-        assert_eq!(e, Stall { gen: 8, acked: 0, since: L * 5 });
+        let at = run(&mut e, 0, 10 * L, M0, true, &|t| (0, t / 2000));
+        assert!(at.is_some_and(|t| (L..L + 10_000).contains(&t)), "{at:?}");
+        // an honest slow reader of 1 KiB/s (60.73 T-wnd-big: each gap drains 1.30 x the take before it): takes of
+        // 350 KB, a gap of 1.30 x 350 KB / 1 KiB/s (444 s) between them: kept for 10 hours
+        let p = 350_000u64;
+        let gap = p * 130 / 100 * 1000 / 1024 / 2000 * 2000;
+        let mut e = Stall::default();
+        assert_eq!(run(&mut e, 0, 36_000_000, M0, true, &|t| (0, p * (1 + t / gap))), None);
+        // a connection that holds 4 x one full stream uses its credit 4 x as fast
+        let mut e = Stall::default();
+        assert!(!uc_step(&mut e, 7, Some((0, 0)), 4 * M0, 1, &lim, true));
+        assert_eq!(run(&mut e, 2001, 10 * L, 4 * M0, true, &|_| (0, 0)), Some(L / 4 + 1));
+        // a pause shorter than L, then an open window without a byte taken: the credit is not bought back
+        let mut e = Stall::default();
+        assert_eq!(run(&mut e, 1, L - 1000, M0, true, &|_| (0, 5)), None);
+        assert!(!uc_step(&mut e, 7, Some((4096, 5)), M0, L, &lim, true));
+        assert_eq!(e.at, 0);
+        assert_eq!(run(&mut e, L + 2000, 3 * L, M0, true, &|_| (0, 5)).map(|t| t <= L + 8000), Some(true));
+        // no parked download (None): no stall; a new connection in the slot (another generation): a new credit
+        let mut e = Stall { g1: 8, filled: true, acked: 0, at: 1, credit: 0 };
+        assert!(!uc_step(&mut e, 7, None, 0, L * 5, &lim, true));
+        assert_eq!(e.at, 0);
+        let mut e = Stall { g1: 8, filled: true, acked: 0, at: 1, credit: 0 };
+        assert!(!uc_step(&mut e, 8, Some((0, 0)), 0, L * 5, &lim, true));
+        assert_eq!(e, Stall { g1: 9, filled: true, acked: 0, at: L * 5, credit: L });
+        // a slot's first connection has generation 0: a fresh record gets the starting credit too (60.78 T2: the
+        // prototype took the zeroed record for one in use, credit 0, and reset such connections at the first mark)
+        let mut e = Stall::default();
+        assert!(!uc_step(&mut e, 0, Some((0, 0)), 0, 1, &lim, true));
+        assert_eq!((e.g1, e.credit), (1, L));
+        assert_eq!(run_g0(&mut e, &lim), Some(L + 1));
         // the shared mark: E5's bit follows E1's marks, also with E1 off; E1's bit only with E1 on
         for (opts, bit) in [(OPT_UNREAD, ST_UNREAD), (OPT_TCPMEM, ST_TM_SHARE), (OPT_UNREAD | OPT_TCPMEM, ST_UNREAD | ST_TM_SHARE)] {
             let b = Bounds::new(opts, 1, TcpForm::Mem { max_pages: 1600 }, 4096, 131_072);
@@ -1450,6 +1637,28 @@ mod tests {
                 && !d[1].1.contains(|c| crate::cli::REDACTION_MARKS.contains(c)),
             "{d:?}"
         );
+    }
+
+    /// 60.78 bundle B2: --unread-close carries the relief wherever the host allows it (the Mem form, SO_BUF_LOCK); else
+    /// one start line says the relief is not in effect, and the reset part works
+    #[test]
+    fn unread_close_carries_the_relief() {
+        let mut w = Vec::new();
+        assert_eq!(relief_bit(true, Some(true), &mut w), OPT_RELIEF);
+        assert!(w.is_empty());
+        for (mem, lock, why) in [(false, Some(true), "tcp_mem"), (true, Some(false), "SO_BUF_LOCK"), (true, None, "SO_BUF_LOCK")] {
+            let mut w = Vec::new();
+            assert_eq!(relief_bit(mem, lock, &mut w), 0);
+            assert!(w.len() == 1 && w[0].starts_with("--unread-close: its relief") && w[0].contains(why), "{w:?}");
+            assert!(!w[0].contains(|c| crate::cli::REDACTION_MARKS.contains(c)));
+        }
+        // on this host: --unread-close alone sets OPT_RELIEF exactly when the host allows it
+        let (b, warn) = build(false, false, false, false, true, false, 1);
+        if let Some(b) = b.filter(|b| b.opts & OPT_UNREAD != 0) {
+            let host = matches!(b.tcp, TcpForm::Mem { .. }) && crate::net::buf_lock_supported() == Some(true);
+            assert_eq!(b.opts & OPT_RELIEF != 0, host, "{warn:?}");
+            assert_eq!(warn.iter().any(|w| w.contains("its relief")), !host, "{warn:?}");
+        }
     }
 
     // ---- E3

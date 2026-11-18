@@ -1,0 +1,34 @@
+6GET / HTTP/1.1
+Host: x
+UpgHost: x
+Upgrade: weradehost
+Sec-WebSocket-Key:$dGh	late					ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿet
+Connection: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBs
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebSocket-Version: 13
+
+‚‘7ú!=6û!=;û},*ÈÔ‚‘7ú!=6ø!û},=È7Ô‚‘7ú!=6ù!=7û},PG–DT•L‚’7ú!=6ù7!=ûq=Y†X13
+
+‚“7úz!6û!='ûqG=–DPR‚@t•L‚’7ú!=6ù7!=ûYqOX†9ÛLÛ[¿‚7ú!-6ÿ!=7ûš<_•RI‚³³Y†dXOÛLM[Ÿ‚7ú!=rsion: 12
+
+‚“7ú<!6û!='ûq=R‚@PG–DT•L‚’6ú!=6ù7!=ûq=Y†XOÛLM[Ÿ‚7ú=6ÿ!=7ûš<_•RI‚³³³³³³³³³2	.0³³³³³³³³³³³³³
+Connection:=ù6û=q=on: 13
+
+‚“7ú!<6Û!='ûq=R‚@PG–DV•L‚’7ú!7!=ù6û=q=Y†dXOÛLM[Ÿ‚7ú!=rsio‚: 13
+
+‚“’7ú!=6ù7ßÈKû[Ÿ‚7ú!=6ÿ!=7û_<š•RI‚³³³³³³³³³³³³³³³³³³³³³³³³³³
+Cownecti9n:=ù6û=q=on :13ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ								t: x
+Upgrade: w: dGh								÷ó				t: x
+Upgroey:,dGHost: x
+Upgrade: webwwwwwwwwwwwww
+UpgHost: x
+Upgrade:· werade
+Sec-WebSocket-Key: dGh														t: x
+Upgrade: w: dGh														t: x
+Upgroey: dGH
+
+‚“7ú!<6Û!='ûq=R‚ost: x
+Upgrade: websocket

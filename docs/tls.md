@@ -62,7 +62,7 @@ See [kernel features](#kernel-features) for which kernel supports what.
 ## Kernel features
 
 finalwisp checks the kernel at startup; there is nothing to configure. Plain `ws://`, splice, TCP Fast Open,
-keepalive and the cgroup v1 and v2 memory budget work on every kernel listed here.
+keepalive and the cgroup v1 and v2 memory budget worked on every tested kernel, 4.18 to 6.8 (see the last note below).
 
 | kernel | `wss://` (kTLS) | TLS 1.3 | ChaCha20 | TLS 1.3 key update | example systems |
 |---|---|---|---|---|---|
@@ -80,4 +80,7 @@ keepalive and the cgroup v1 and v2 memory budget work on every kernel listed her
 - Without key update support, a client's TLS 1.3 KeyUpdate closes its connection.
 - `--tcpmem-adapt` needs 5.15 or later. The bandwidth caps (`--download-rate`, `--upload-rate-per-stream`) need 4.13
   or later.
-- Kernels older than 5.15 are not tested.
+- Tested (version 1.3.3, in VMs with 2 CPUs): Rocky 8 (4.18, cgroup v1), Ubuntu 20.04 (5.4, cgroup v1), Debian 11
+  (5.10), Ubuntu 22.04 (5.15), Debian 12 (6.1) and Ubuntu 24.04 (6.8). `wss://` with kTLS (TLS 1.3, AES-GCM) worked on
+  all of them except Debian 11, where the start stops with the reason. Not tested: kernels before 4.18, 6.14 and later,
+  Amazon Linux 2023, ChaCha20 and TLS 1.3 key updates.

@@ -309,48 +309,6 @@ pub fn uncap_bufs(fd: RawFd, saved: (i32, i32)) {
 
 const SO_BUF_LOCK: i32 = 72; // asm-generic/socket.h (not in every libc version)
 
-/// 60.47 SOCK_RCVBUF_LOCK in SO_BUF_LOCK's bit mask (include/net/sock.h; SOCK_SNDBUF_LOCK = 1)
-pub const RCVBUF_LOCK: i32 = 2;
-
-fn getsockopt_int(fd: RawFd, level: i32, opt: i32) -> Option<i32> {
-    let mut v: libc::c_int = 0;
-    let mut len = size_of::<libc::c_int>() as libc::socklen_t;
-    (unsafe { libc::getsockopt(fd, level, opt, &mut v as *mut _ as *mut _, &mut len) } == 0).then_some(v)
-}
-
-/// 60.47 (Linux 5.15+) the socket's buffer lock bits (SO_BUF_LOCK: SOCK_SNDBUF_LOCK | SOCK_RCVBUF_LOCK); None = error
-pub fn buf_lock(fd: RawFd) -> Option<i32> {
-    getsockopt_int(fd, libc::SOL_SOCKET, SO_BUF_LOCK)
-}
-
-/// 60.47 set the lock bits (no size change: a locked receive buffer keeps its size, autotuning stops growing it)
-pub fn set_buf_lock(fd: RawFd, bits: i32) -> bool {
-    setsockopt_int(fd, libc::SOL_SOCKET, SO_BUF_LOCK, bits)
-}
-
-/// 60.47 SO_RCVBUF as the kernel reports it (doubled); None = error
-pub fn rcvbuf(fd: RawFd) -> Option<i32> {
-    getsockopt_int(fd, libc::SOL_SOCKET, libc::SO_RCVBUF)
-}
-
-/// 60.47 2 x net.core.rmem_max as the kernel applies it: SO_RCVBUF on a throwaway socket is clamped to it, so a huge
-/// request reads back that limit (works where the net sysctls are hidden, e.g. containers). None = the probe failed
-pub fn rcvbuf_limit() -> Option<u64> {
-    let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0) };
-    if fd < 0 {
-        return None;
-    }
-    let v = (setsockopt_int(fd, libc::SOL_SOCKET, libc::SO_RCVBUF, i32::MAX / 2)).then(|| rcvbuf(fd)).flatten();
-    unsafe { libc::close(fd) };
-    v.filter(|&v| v > 0).map(|v| v as u64)
-}
-
-/// 60.47 SO_RCVBUF (`kernel` = the reported, doubled size wanted; clamped to 2 x net.core.rmem_max; also sets
-/// SOCK_RCVBUF_LOCK)
-pub fn set_rcvbuf(fd: RawFd, kernel: i32) -> bool {
-    setsockopt_int(fd, libc::SOL_SOCKET, libc::SO_RCVBUF, kernel / 2)
-}
-
 /// 80.01 F2 startup probe: does this kernel have SO_BUF_LOCK (Linux 5.15+; not in RHEL 9)? Sets it to 0 on
 /// a throwaway socket (no buffer is locked there, so no effect). Some(false) = ENOPROTOOPT: sockets capped
 /// under memory pressure stay capped (`uncap_bufs`); None = the probe itself failed. Log only, no behaviour change.
@@ -1987,8 +1945,13 @@ mod tests {
     #[test]
     fn dns_pool_coalesces_identical_names() {
         // 60.58 with the queue in arrival order and with --dns-share
-        dns_pool_coalesces_identical_names_with(false);
-        dns_pool_coalesces_identical_names_with(true);
+        // 60.74 4.5: the three requests must meet inside the 300 ms answer delay, the answer inside the 2 s window:
+        // judged with the host lag below 300 ms
+        for share in [false, true] {
+            crate::testlag::judged("dns_pool_coalesces_identical_names", std::time::Duration::from_millis(300), 5, |_| {
+                dns_pool_coalesces_identical_names_with(share)
+            });
+        }
     }
     fn dns_pool_coalesces_identical_names_with(share: bool) {
         use std::net::UdpSocket;
@@ -2206,17 +2169,35 @@ mod tests {
     }
     #[test]
     fn udp_icmp_refusal_is_soft_and_socket_survives() {
-        // 20.16: a connected UDP socket to a closed port gets ECONNREFUSED once (ICMP), then works
-        let port = std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port(); // now closed
-        let addr: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
-        let fd = udp_connect(&addr).unwrap();
+        // 20.16: a connected UDP socket to a closed port gets ECONNREFUSED once (ICMP), then works. 60.74 4.5: the
+        // closed port is free for anyone until it is bound again (seen: a parallel suite took it, EADDRINUSE); then
+        // the case starts over with a new port
+        let (fd, peer) = (0..20)
+            .find_map(|_| {
+                let port = std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port(); // now closed
+                let addr: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
+                let fd = udp_connect(&addr).unwrap();
+                assert_eq!(unsafe { libc::send(fd, b"x".as_ptr() as *const _, 1, libc::MSG_DONTWAIT) }, 1);
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                let mut buf = [0u8; 16];
+                let n = unsafe { libc::recv(fd, buf.as_mut_ptr() as *mut _, 16, libc::MSG_DONTWAIT) };
+                let e = errno();
+                // (the bind first: a port taken before the probe gives no ICMP either)
+                match std::net::UdpSocket::bind(addr) {
+                    Ok(peer) => {
+                        assert!(n < 0 && e == libc::ECONNREFUSED && udp_soft_error(e));
+                        Some((fd, peer))
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                        unsafe { libc::close(fd) };
+                        None
+                    }
+                    Err(e) => panic!("bind {addr}: {e}"),
+                }
+            })
+            .expect("20 closed ports were all taken again before the rebind");
         let send = |b: &[u8]| unsafe { libc::send(fd, b.as_ptr() as *const _, b.len(), libc::MSG_DONTWAIT) };
-        assert_eq!(send(b"x"), 1);
-        std::thread::sleep(std::time::Duration::from_millis(50));
         let mut buf = [0u8; 16];
-        let n = unsafe { libc::recv(fd, buf.as_mut_ptr() as *mut _, 16, libc::MSG_DONTWAIT) };
-        assert!(n < 0 && errno() == libc::ECONNREFUSED && udp_soft_error(errno()));
-        let peer = std::net::UdpSocket::bind(addr).unwrap();
         assert_eq!(send(b"hi"), 2);
         let (k, from) = peer.recv_from(&mut buf).unwrap();
         assert_eq!(&buf[..k], b"hi");
@@ -2286,8 +2267,12 @@ mod tests {
     #[test]
     fn own_dns_early_answer_reaches_every_waiter_once() {
         // 60.58 with the queue in arrival order and with --dns-share
-        own_dns_early_answer_reaches_every_waiter_once_with(false);
-        own_dns_early_answer_reaches_every_waiter_once_with(true);
+        // 60.74 4.5: the early answer and the join must come before the 1 s deadline: judged with the host lag below 200 ms
+        for share in [false, true] {
+            crate::testlag::judged("own_dns_early_answer_reaches_every_waiter_once", std::time::Duration::from_millis(200), 5, |_| {
+                own_dns_early_answer_reaches_every_waiter_once_with(share)
+            });
+        }
     }
     fn own_dns_early_answer_reaches_every_waiter_once_with(share: bool) {
         // 70.10: A answered at once, AAAA never: every waiter gets one early answer (a joiner after it was sent gets it on
@@ -2324,25 +2309,32 @@ mod tests {
             let (conn, key) = who(t);
             tx.send(DnsReq { host: "v4.test".into(), token: t, inbox: ib.clone(), at: Instant::now(), conn, key }).unwrap();
         };
+        // (each wait ends at its answer: an inbox is read until it holds one, 10 s at most)
+        let first = |ib: &Arc<Inbox>| {
+            let end = Instant::now() + Duration::from_secs(10);
+            loop {
+                let got = ib.drain().0;
+                if !got.is_empty() || Instant::now() >= end {
+                    return got;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
         let t0 = Instant::now();
         send(1, &a);
-        std::thread::sleep(Duration::from_millis(300));
-        let early_a = a.drain().0;
+        let early_a = first(&a);
         send(2, &b); // joins after the early answer went out
-        std::thread::sleep(Duration::from_millis(100));
-        let early_b = b.drain().0;
+        let early_b = first(&b);
         let ip: IpAddr = "192.0.2.1".parse().unwrap();
         for (e, t) in [(&early_a, 1), (&early_b, 2)] {
             assert_eq!(e.iter().map(|r| (r.token, r.more, r.addrs.clone())).collect::<Vec<_>>(), [(t, true, vec![ip])]);
         }
         let mut fin = Vec::new();
-        for _ in 0..100 {
+        let end = Instant::now() + Duration::from_secs(10);
+        while fin.len() < 2 && Instant::now() < end {
             fin.extend(a.drain().0);
             fin.extend(b.drain().0);
-            if fin.len() >= 2 {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(20));
+            std::thread::sleep(Duration::from_millis(5));
         }
         assert!(t0.elapsed() >= Duration::from_millis(900), "the final answer waits for AAAA: {:?}", t0.elapsed());
         fin.sort_by_key(|r| r.token);
@@ -2356,10 +2348,15 @@ mod tests {
     #[test]
     fn own_dns_lookup_stops_when_every_waiter_cancelled() {
         // 60.58 with the queue in arrival order and with --dns-share
-        own_dns_lookup_stops_when_every_waiter_cancelled_with(false);
-        own_dns_lookup_stops_when_every_waiter_cancelled_with(true);
+        // 60.74 4.5: the cancels must reach the lookup before its first window ends (1 s): judged with the host lag below
+        // 300 ms; the bound on the early end adds the measured lag
+        for share in [false, true] {
+            crate::testlag::judged("own_dns_lookup_stops_when_every_waiter_cancelled", std::time::Duration::from_millis(300), 5, |lag| {
+                own_dns_lookup_stops_when_every_waiter_cancelled_with(share, lag)
+            });
+        }
     }
-    fn own_dns_lookup_stops_when_every_waiter_cancelled_with(share: bool) {
+    fn own_dns_lookup_stops_when_every_waiter_cancelled_with(share: bool, lag: &crate::testlag::Lag) {
         // 70.09: two silent servers, window 1 s x 2 tries: a lookup runs 2 s unless its waiters cancel
         use std::time::{Duration, Instant};
         let silent: Vec<_> = (0..2).map(|_| std::net::UdpSocket::bind("127.0.0.1:0").unwrap()).collect();
@@ -2376,13 +2373,10 @@ mod tests {
             tx.send(DnsReq { host: host.into(), token: t, inbox: ib.clone(), at: Instant::now(), conn, key }).unwrap();
         };
         let wait = |ib: &Arc<Inbox>, n: usize| {
-            let mut got = Vec::new();
-            for _ in 0..200 {
+            let (mut got, end) = (Vec::new(), Instant::now() + Duration::from_secs(10));
+            while got.len() < n && Instant::now() < end {
                 got.extend(ib.drain().0);
-                if got.len() >= n {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(20));
+                std::thread::sleep(Duration::from_millis(5));
             }
             got
         };
@@ -2404,7 +2398,7 @@ mod tests {
         a.dns_live.lock().unwrap().remove(&3);
         b.dns_live.lock().unwrap().remove(&4);
         let (ga, gb) = (wait(&a, 1), wait(&b, 1));
-        assert!(t0.elapsed() < Duration::from_millis(1500), "{:?}", t0.elapsed());
+        assert!(t0.elapsed() < lag.bound(Duration::from_millis(1500), 3), "{:?} (lag {:?})", t0.elapsed(), lag.max());
         assert_eq!((ga.len(), gb.len(), ga[0].nx || gb[0].nx), (1, 1, false));
     }
     #[test]
@@ -3089,6 +3083,11 @@ mod tests {
     /// thread coming back and no request arriving (the free thread wakes for it).
     #[test]
     fn dns_pool_reserve_end_to_end() {
+        // 60.74 4.5: the schedule (a lookup is slow after 1 s, b1 at 1.15 s, expiry at 2 s) holds with the host lag below
+        // 100 ms; the bound on the expiry adds the measured lag
+        crate::testlag::judged("dns_pool_reserve_end_to_end", std::time::Duration::from_millis(100), 5, dns_pool_reserve_end_to_end_run);
+    }
+    fn dns_pool_reserve_end_to_end_run(lag: &crate::testlag::Lag) {
         let (mut srv, own) = HandDns::new();
         let st = test_stats();
         let sched = DnsSched { stats: st.clone(), expire: std::time::Duration::from_secs(2), share: true, reserve: true };
@@ -3120,7 +3119,11 @@ mod tests {
         // a5 was asked at 0 s and expires at 2 s; A's other lookups run until 6 s
         assert_eq!(finals(&a, 2), [(1, 1), (5, 0)]);
         let took = t0.elapsed();
-        assert!(took >= std::time::Duration::from_millis(1900) && took < std::time::Duration::from_millis(3500), "{took:?}");
+        assert!(
+            took >= std::time::Duration::from_millis(1900) && took < lag.bound(std::time::Duration::from_millis(3500), 3),
+            "{took:?} (lag {:?})",
+            lag.max()
+        );
         assert_eq!((st[0].dns_expired.get(), st[1].dns_expired.get()), (1, 0));
         // These lookups were asked at 0 s and the resolver's first attempt ends at 2 s (timeout:2), which is now: an
         // answer can cross the retry and be lost. So answer until all are in (the latest query of each name).
@@ -3260,9 +3263,24 @@ mod tests {
             self.sock.send_to(&r, from).unwrap();
         }
     }
-    /// The final answers in `ib` once it holds `n` (or after 5 s): (token, addresses) sorted
+    /// `srv` answers `name` until `ib` holds the final answer of `token` (10 s at most): an answer that crossed a retry
+    /// of the resolver (a new query id) is lost, the next one answers the retry
+    fn answer_until(srv: &mut HandDns, name: &str, ib: &Arc<Inbox>, token: u64) {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            srv.answer(name);
+            let t = std::time::Instant::now();
+            while t.elapsed() < std::time::Duration::from_millis(200) {
+                if ib.q.lock().unwrap().iter().any(|r| !r.more && r.token == token) || std::time::Instant::now() >= end {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+        }
+    }
+    /// The final answers in `ib` once it holds `n` (or after 30 s; it returns at the event): (token, addresses) sorted
     fn finals(ib: &Arc<Inbox>, n: usize) -> Vec<(u64, usize)> {
-        let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(30);
         let get = || ib.q.lock().unwrap().iter().filter(|r| !r.more).map(|r| (r.token, r.addrs.len())).collect::<Vec<_>>();
         while get().len() < n && std::time::Instant::now() < end {
             std::thread::sleep(std::time::Duration::from_millis(5));
@@ -3278,7 +3296,16 @@ mod tests {
     /// final answer, and the wait is counted for its worker.
     #[test]
     fn dns_pool_share_end_to_end() {
+        // 60.74 4.5: the order of the waits (B's lookup waits while A's run; A's third at least half as long) is set by
+        // the test's steps, a few ms apart: judged with the host lag below 20 ms
         for share in [false, true] {
+            crate::testlag::judged("dns_pool_share_end_to_end", std::time::Duration::from_millis(20), 8, |_| {
+                dns_pool_share_end_to_end_with(share)
+            });
+        }
+    }
+    fn dns_pool_share_end_to_end_with(share: bool) {
+        {
             let (mut srv, own) = HandDns::new();
             let mode = pool_mode(share);
             let st = mode.stats.clone();
@@ -3317,7 +3344,17 @@ mod tests {
     /// without a query, in arrival order and with --dns-share; the lookup that runs is not touched.
     #[test]
     fn dns_pool_expires_queued_requests() {
+        // 60.74 4.5: e1 must run before e2 / e3 expire (300 ms) and its answer must not cross a retry of the resolver
+        // (2 s window): judged with the host lag below 250 ms; the answers are sent until they are in (a retry that
+        // crossed one gets the next)
         for share in [false, true] {
+            crate::testlag::judged("dns_pool_expires_queued_requests", std::time::Duration::from_millis(250), 5, |_| {
+                dns_pool_expires_queued_requests_with(share)
+            });
+        }
+    }
+    fn dns_pool_expires_queued_requests_with(share: bool) {
+        {
             let (mut srv, own) = HandDns::new();
             let st = test_stats();
             let sched = DnsSched { stats: st.clone(), expire: std::time::Duration::from_millis(300), share, reserve: false };
@@ -3332,7 +3369,7 @@ mod tests {
             send("e2.test", 2, &a, (0, 1, 1), K1);
             send("e3.test", 3, &b, (1, 1, 1), K2);
             std::thread::sleep(std::time::Duration::from_millis(400));
-            srv.answer("e1");
+            answer_until(&mut srv, "e1", &a, 1);
             assert_eq!((finals(&a, 2), finals(&b, 1)), (vec![(1, 1), (2, 0)], vec![(3, 0)]), "share {share}");
             assert!(a.q.lock().unwrap().iter().chain(b.q.lock().unwrap().iter()).all(|r| !r.nx), "a failure, not a cacheable NXDOMAIN");
             assert_eq!(srv.next(150), None, "no query for an expired request");
@@ -3341,7 +3378,7 @@ mod tests {
             // the pool still works: a new request runs
             send("e4.test", 4, &b, (1, 1, 1), K2);
             assert_eq!(srv.next(3000).as_deref(), Some("e4"));
-            srv.answer("e4");
+            answer_until(&mut srv, "e4", &b, 4);
             assert_eq!(finals(&b, 2), [(3, 0), (4, 1)]);
         }
     }
@@ -3350,6 +3387,13 @@ mod tests {
     /// exactly one final answer with --dns-share (joins at admission and at the pick, picks from every tier).
     #[test]
     fn dns_pool_share_answers_every_request_once() {
+        // 60.74 4.5: every answer inside the 2 s window of its query: judged with the host lag below 1 s (the wait for the
+        // 3000 answers ends at the event, 30 s at most)
+        crate::testlag::judged("dns_pool_share_answers_every_request_once", std::time::Duration::from_secs(1), 5, |_| {
+            dns_pool_share_answers_every_request_once_run()
+        });
+    }
+    fn dns_pool_share_answers_every_request_once_run() {
         let sock = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
         let addr = sock.local_addr().unwrap();
         std::thread::spawn(move || {

@@ -3,7 +3,7 @@
 use super::super::*;
 use super::fd::{client_with, closed_with, connect, drain, fd_cfg, fds, pump, rig, until, until_eq, wisp};
 use crate::bounds::{
-    self as bd, Bounds, TcpForm, Unread, OPT_DEAD, OPT_PORT, OPT_TCPMEM, OPT_UNREAD, ST_PT_BUSY, ST_PT_SHORT, ST_TM_SHARE,
+    self as bd, Bounds, TcpForm, Unread, OPT_DEAD, OPT_PORT, OPT_RELIEF, OPT_TCPMEM, OPT_UNREAD, ST_PT_BUSY, ST_PT_SHORT, ST_TM_SHARE,
 };
 use std::io::{Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
@@ -40,8 +40,14 @@ fn bd_rig(xff: bool, block: u32, g: Arc<Bounds>) -> (Worker, u16, mpsc::Receiver
 
 /// ... and this connect timeout
 fn bd_rig_t(xff: bool, block: u32, g: Arc<Bounds>, connect_timeout: Duration) -> (Worker, u16, mpsc::Receiver<DnsReq>) {
+    bd_rig_cfg(xff, block, g, |c| c.connect_timeout = connect_timeout)
+}
+
+/// ... and the configuration changed by `f`
+fn bd_rig_cfg(xff: bool, block: u32, g: Arc<Bounds>, f: impl FnOnce(&mut Config)) -> (Worker, u16, mpsc::Receiver<DnsReq>) {
     let mut cfg = fd_cfg();
-    cfg.connect_timeout = connect_timeout;
+    cfg.connect_timeout = Duration::from_secs(10);
+    f(&mut cfg);
     cfg.want_peer = true;
     let lo = crate::policy::Cidr::parse("127.0.0.0/8").unwrap();
     if xff {
@@ -1100,6 +1106,11 @@ fn dest_failfast_never_refuses_a_client_alone() {
 /// target that answers the second or the third SYN is at this point) the destination is no suspect; with 4 it is
 #[test]
 fn dest_failfast_waits_for_four_syns() {
+    // 60.74 4.5: each check falls between two SYNs of the kernel (1 s apart): judged with the host lag
+    // below 300 ms
+    crate::testlag::judged("dest_failfast_waits_for_four_syns", Duration::from_millis(300), 5, |_| dest_failfast_waits_for_four_syns_run());
+}
+fn dest_failfast_waits_for_four_syns_run() {
     let (mut w, port, _rx) = df_rig(false, false, Duration::from_secs(10));
     let dead = Dead::new();
     let (mut a, _) = client_with(&mut w, port, &hello(BIG, false));
@@ -1189,12 +1200,14 @@ fn dest_failfast_asks_a_bounded_number_of_sockets() {
     let (mut a, _) = client_with(&mut w, port, &hello(BIG, false));
     let (_b, _) = client_with(&mut w, port, &hello(SMALL, false));
     let n = bd::DF_ASK_MAX + 4;
-    w.df_set(0, 9); // (every socket is old enough, none has 9 SYNs)
     hang(&mut w, &mut a, 1, n, dead.port);
-    // (the worker counts by itself too while connects are in flight: the sockets asked are read over one count)
+    w.df_set(0, 9); // (every socket is old enough, none has 9 SYNs; set after the connects are in flight: before, the
+                    // worker's own counts would take the destination for failing and refuse above DF_FAIL_FLY)
+                    // (the worker counts by itself too while connects are in flight: the sockets asked are read over one count)
     let before = w.df_asked();
     w.bd_count(metrics::now_ms());
-    assert_eq!((w.df_asked() - before, df_state(&w)), (bd::DF_ASK_MAX as u64, (0, 0, 0)), "{n} connecting sockets");
+    // (no suspect; hold mode: the address has more than half of DF_FAIL_FLY in flight to a failing destination)
+    assert_eq!((w.df_asked() - before, df_state(&w)), (bd::DF_ASK_MAX as u64, (0, 0, bounds::HOLD_BOUNDS)), "{n} connecting sockets");
     w.df_set(0, 1);
     let before = w.df_asked();
     w.bd_count(metrics::now_ms());
@@ -1453,6 +1466,13 @@ fn dest_failfast_blames_no_address_for_the_silence_of_another() {
 /// (the open probe cleared it)
 #[test]
 fn dest_failfast_a_probe_that_opens_at_another_address_is_no_answer() {
+    // 60.74 4.5: the suspect and the probe run on the kernel's SYN clock: judged with the host lag below
+    // 500 ms
+    crate::testlag::judged("dest_failfast_a_probe_that_opens_at_another_address_is_no_answer", Duration::from_millis(500), 5, |_| {
+        dest_failfast_a_probe_that_opens_at_another_address_is_no_answer_run()
+    });
+}
+fn dest_failfast_a_probe_that_opens_at_another_address_is_no_answer_run() {
     let (mut w, port, rx) = df_rig(false, true, Duration::from_secs(10));
     let dead = Dead::new();
     let Ok(_l2) = TcpListener::bind(("127.0.0.2", dead.port)) else { return eprintln!("127.0.0.2:{} is taken: skipped", dead.port) };
@@ -1530,29 +1550,190 @@ fn dest_failfast_page_load_from_a_host_that_answers_the_third_syn() {
     assert_eq!(page_load(3, 30), (0, 60, 0), "streams that keep coming for 6 s");
 }
 
-/// ... the fifth SYN (4 s): the host is a suspect from the fourth SYN (3 s) until it answers. The 10 late streams
-/// are all on their way by then: none refused. A page that keeps asking for 8 s loses the streams of that second,
-/// but for the probe.
+/// ... the fifth SYN (4 s): 60.78 bundle B1 its connects have 4 SYNs from 3 s but are not ripe (DF_RIPE_MS before the
+/// deadline: 7.5 s), so it is never a suspect; its 30 + 40 streams stay below DF_FAIL_FLY in flight: none refused, also
+/// for a page that keeps asking for 8 s. (The rule before: a suspect from 3 s until it answered, 1 to 6 refused.)
 #[test]
 fn dest_failfast_page_load_from_a_host_that_answers_the_fifth_syn() {
-    assert_eq!(page_load(5, 10), (0, 40, 1));
-    let (refused, open, most) = page_load(5, 40);
-    eprintln!("page load, fifth SYN, 30 + 40 streams over 8 s: {refused} refused, {open} open");
-    assert!((1..=6).contains(&refused) && open as u64 == 70 - refused && most == 1, "{refused} refused, {open} open, {most}");
+    // 60.74 4.5: the host answers at 3.7 s, counted every 250 ms, and the late streams come one per 200 ms:
+    // judged with the host lag below 150 ms
+    crate::testlag::judged("dest_failfast_page_load_from_a_host_that_answers_the_fifth_syn", Duration::from_millis(150), 5, |_| {
+        dest_failfast_page_load_from_a_host_that_answers_the_fifth_syn_run()
+    });
+}
+fn dest_failfast_page_load_from_a_host_that_answers_the_fifth_syn_run() {
+    assert_eq!(page_load(5, 10), (0, 40, 0));
+    assert_eq!(page_load(5, 40), (0, 70, 0), "30 + 40 streams over 8 s");
+}
+
+/// E3 60.78 bundle B1 only connects near their deadline (ripe: the last DF_RIPE_MS) make a suspect, however many SYNs
+/// they sent. A connect timeout of 4 s, ripe in its last 1.5 s (from 2.5 s of age), dead at 2 SYNs: two destinations
+/// with 8 connects each that have sent 2 SYNs by 1.5 s: no suspect (the rule before: a suspect). One answers at 2 s:
+/// all its streams open and it is never a suspect; the other is one once its connects are ripe.
+#[test]
+fn dest_failfast_takes_only_ripe_connects_for_dead() {
+    crate::testlag::judged("dest_failfast_takes_only_ripe_connects_for_dead", Duration::from_millis(300), 5, |_| {
+        dest_failfast_takes_only_ripe_connects_for_dead_run()
+    });
+}
+fn dest_failfast_takes_only_ripe_connects_for_dead_run() {
+    let (mut w, port, _rx) = df_rig(false, true, Duration::from_secs(4));
+    w.df_ripe(1500);
+    let (dead, mut late) = (Dead::new(), Dead::new());
+    let (mut a, _) = client_with(&mut w, port, &hello(BIG, false));
+    let (_b, _) = client_with(&mut w, port, &hello(SMALL, false));
+    let t0 = Instant::now();
+    hang(&mut w, &mut a, 1, 8, dead.port);
+    hang(&mut w, &mut a, 20, 8, late.port);
+    let at = |w: &mut Worker, ms: u64| until_s(w, 8, "the time", |_| t0.elapsed() >= Duration::from_millis(ms));
+    at(&mut w, 1500);
+    let syns = |w: &Worker| -> Vec<u8> {
+        w.targets.slots.iter().filter_map(|s| s.1.as_ref()).flat_map(|t| t.conn.iter()).map(|fd| bd::syns_sent(*fd).unwrap()).collect()
+    };
+    assert!(syns(&w).iter().all(|n| *n >= 2), "{:?}", syns(&w));
+    w.bd_count(metrics::now_ms());
+    assert_eq!(df_state(&w), (0, 0, 0), "2 SYNs each, not ripe: no suspect");
+    at(&mut w, 2000);
+    late.revive();
+    until_s(&mut w, 8, "the late host's streams open", |w| open_streams(w) == 8);
+    at(&mut w, 2700);
+    w.bd_count(metrics::now_ms());
+    assert_eq!((df_state(&w), open_streams(&w), w.connecting.len()), ((1, 0, bounds::HOLD_BOUNDS), 8, 8), "ripe: a suspect");
+    end(w);
+}
+
+/// E3 60.78 bundle B1 many distinct destinations that do not answer: one client address may have DF_FAIL_FLY connects
+/// in flight that are old (DF_AGE_MS without an answer) or go to failing destinations, on a worker. Over it, its next
+/// connect to a failing destination is refused with 0x43 at once, and so is one to a destination without an open
+/// stream on the worker (it could be the next one that does not answer); another address's is not, nor one of it to a
+/// destination with an open stream. A destination that answers leaves the failing ones and gives the address room.
+#[test]
+fn dest_failfast_bounds_one_address_on_many_failing_destinations() {
+    let (mut w, port, _rx) = df_rig(false, false, Duration::from_secs(10));
+    w.df_ripe(1); // (no suspect in this test: no connect is ripe)
+    let mut dests: Vec<Dead> = (0..4).map(|_| Dead::new()).collect();
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let (mut a, _) = client_with(&mut w, port, &hello(BIG, false));
+    let (mut b, _) = client_with(&mut w, port, &hello(SMALL, false));
+    let per = bd::DF_FAIL_FLY / 4;
+    for (i, d) in dests.iter().enumerate() {
+        hang(&mut w, &mut a, 1 + i as u32 * per, per, d.port);
+    }
+    w.bd_count(metrics::now_ms());
+    assert_eq!((w.df_fail(BIG), df_state(&w)), ((0, 0), (0, 0, 0)), "young: none failing");
+    std::thread::sleep(Duration::from_millis(1050));
+    w.bd_count(metrics::now_ms());
+    w.bd_count(metrics::now_ms()); // (the second count keeps the destinations that answer: none yet)
+    assert_eq!((w.df_fail(BIG), w.df_fail(SMALL).1, df_state(&w)), ((4, bd::DF_FAIL_FLY), 0, (0, 0, bounds::HOLD_BOUNDS)));
+    let refused = |w: &Worker| w.stats.refuse_dest_dead.get();
+    let (mut got, flying) = (Vec::new(), w.connecting.len());
+    a.write_all(&connect(500, false, dests[0].port)).unwrap();
+    until_s(&mut w, 8, "refused at once", |w| refused(w) == 1);
+    assert!(wire(&mut w, &mut a, &mut got, 500, 0x43), "CLOSE 0x43");
+    assert_eq!((w.connecting.len(), w.stats.connect_timeout.get()), (flying, 0));
+    // another address: its own budget
+    b.write_all(&connect(1, false, dests[0].port)).unwrap();
+    until_s(&mut w, 8, "the other address's connect is in flight", |w| w.connecting.len() == flying + 1);
+    // over its budget, a destination without an open stream: refused too
+    let lp = l.local_addr().unwrap().port();
+    a.write_all(&connect(501, false, lp)).unwrap();
+    until_s(&mut w, 8, "refused: no open stream to it", |w| refused(w) == 2);
+    assert!(wire(&mut w, &mut a, &mut got, 501, 0x43));
+    // the other address opens one there; from the next count the first address may connect to it
+    let open = open_streams(&w);
+    let _t = streams(&mut w, &mut b, 2, 1, &l);
+    w.bd_count(metrics::now_ms());
+    let _t2 = streams(&mut w, &mut a, 600, 1, &l);
+    assert_eq!((open_streams(&w), refused(&w)), (open + 2, 2));
+    // the first destination answers: it is not failing any more, and the address has room for `per` connects
+    dests[0].revive();
+    until_s(&mut w, 8, "its streams open", |w| open_streams(w) == open + 2 + per as usize + 1);
+    w.bd_count(metrics::now_ms());
+    assert_eq!(w.df_fail(BIG), (3, bd::DF_FAIL_FLY - per));
+    let flying = w.connecting.len();
+    a.write_all(&connect(700, false, dests[1].port)).unwrap();
+    until_s(&mut w, 8, "in flight", |w| w.connecting.len() == flying + 1);
+    assert_eq!((refused(&w), w.stats.dest_dead.get()), (2, 0));
+    end(w);
+}
+
+/// E3 60.78 bundle B1 an address with connects that got no answer: its young connects to destinations without an
+/// open target count too (between two counts and at the count), so a scan cannot start a new 64 at every count; an
+/// address without such a connect is not counted for them however many it makes
+#[test]
+fn dest_failfast_counts_young_connects_only_for_an_address_with_old_ones() {
+    let (mut w, port, _rx) = df_rig(false, false, Duration::from_secs(10));
+    w.df_ripe(1);
+    let (old_n, young_n) = (bd::DF_FAIL_FLY as usize / 2, bd::DF_FAIL_FLY as usize / 2 + 8);
+    let dests: Vec<Dead> = (0..old_n + young_n).map(|_| Dead::new()).collect();
+    let (mut a, _) = client_with(&mut w, port, &hello(BIG, false));
+    let (mut b, _) = client_with(&mut w, port, &hello(SMALL, false));
+    for (i, d) in dests[..old_n].iter().enumerate() {
+        hang(&mut w, &mut a, 1 + i as u32, 1, d.port);
+    }
+    std::thread::sleep(Duration::from_millis(1050));
+    w.bd_count(metrics::now_ms());
+    w.bd_count(metrics::now_ms());
+    assert_eq!((w.df_fail(BIG), df_state(&w).2), ((old_n, old_n as u32), bounds::HOLD_BOUNDS), "half the budget: hold mode");
+    // the other address: many young connects to destinations without an open target, none counted or refused
+    let flying = w.connecting.len();
+    for (i, d) in dests[old_n..].iter().cycle().take(bd::DF_FAIL_FLY as usize + 6).enumerate() {
+        b.write_all(&connect(100 + i as u32, false, d.port)).unwrap();
+    }
+    until_s(&mut w, 8, "all in flight", |w| w.connecting.len() == flying + bd::DF_FAIL_FLY as usize + 6);
+    assert_eq!((w.stats.refuse_dest_dead.get(), w.df_fail(SMALL).1), (0, 0));
+    // the first address: young connects to new destinations count from its old ones on
+    for (i, d) in dests[old_n..].iter().enumerate() {
+        a.write_all(&connect(500 + i as u32, false, d.port)).unwrap();
+    }
+    until_s(&mut w, 8, "the ones above the budget refused", |w| {
+        w.stats.refuse_dest_dead.get() == (old_n + young_n) as u64 - bd::DF_FAIL_FLY as u64
+    });
+    w.bd_count(metrics::now_ms());
+    assert_eq!(w.df_fail(BIG).1, bd::DF_FAIL_FLY, "the young ones still count at the count");
+    end(w);
+}
+
+/// E3 60.78 bundle B1 an address that never asks for the same destination twice (a scan of ports or hosts that do not
+/// answer): its old connects count, so the budget holds as well; another address is not refused
+#[test]
+fn dest_failfast_bounds_one_address_on_destinations_it_asks_once() {
+    let (mut w, port, _rx) = df_rig(false, false, Duration::from_secs(10));
+    w.df_ripe(1);
+    let n = bd::DF_FAIL_FLY as usize;
+    let dests: Vec<Dead> = (0..n + 1).map(|_| Dead::new()).collect();
+    let (mut a, _) = client_with(&mut w, port, &hello(BIG, false));
+    let (mut b, _) = client_with(&mut w, port, &hello(SMALL, false));
+    for (i, d) in dests[..n].iter().enumerate() {
+        hang(&mut w, &mut a, 1 + i as u32, 1, d.port);
+    }
+    std::thread::sleep(Duration::from_millis(1050));
+    w.bd_count(metrics::now_ms());
+    w.bd_count(metrics::now_ms());
+    assert_eq!((w.df_fail(BIG), df_state(&w)), ((n, bd::DF_FAIL_FLY), (0, 0, bounds::HOLD_BOUNDS)));
+    let mut got = Vec::new();
+    a.write_all(&connect(500, false, dests[n].port)).unwrap();
+    until_s(&mut w, 8, "a new destination: refused", |w| w.stats.refuse_dest_dead.get() == 1);
+    assert!(wire(&mut w, &mut a, &mut got, 500, 0x43));
+    let flying = w.connecting.len();
+    b.write_all(&connect(1, false, dests[n].port)).unwrap();
+    until_s(&mut w, 8, "the other address's connect is in flight", |w| w.connecting.len() == flying + 1);
+    end(w);
 }
 
 /// E5: a worker with --unread-close (the stall limit shortened to UC_TEST_MS) on a host whose tcp_mem maximum is 1600
 /// pages, and one client of a public address whose downloads are parked (6 streams); returned once the client's
 /// receive window is 0
 fn uc_rig() -> (Worker, Arc<Bounds>, TcpStream, Vec<TcpStream>, TcpListener) {
-    uc_rig_with(UC_TEST_MS, Some(8192))
+    uc_rig_with(UC_TEST_MS, Some(8192), UC_TEST_M0)
 }
 
-/// ... with the stall limit `limit_ms` and the client's receive buffer `rcvbuf` (uc_client)
-fn uc_rig_with(limit_ms: u64, rcvbuf: Option<i32>) -> (Worker, Arc<Bounds>, TcpStream, Vec<TcpStream>, TcpListener) {
+/// ... with the starting credit `limit_ms` (the cap: 10 x it, or bounds::UC_CAP_MS at the real start), the client's
+/// receive buffer `rcvbuf` (uc_client) and one full stream of `m0` bytes (0: this host's)
+fn uc_rig_with(limit_ms: u64, rcvbuf: Option<i32>, m0: u64) -> (Worker, Arc<Bounds>, TcpStream, Vec<TcpStream>, TcpListener) {
     let g = Arc::new(Bounds::new(OPT_UNREAD, 1, TcpForm::Mem { max_pages: 1600 }, 4096, 131_072));
     let (mut w, port, _rx) = bd_rig(false, 4, g.clone());
-    w.uc_set(limit_ms);
+    w.uc_set(limit_ms, if limit_ms == bd::UC_STALL_MS { bd::UC_CAP_MS } else { 10 * limit_ms }, m0);
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
     let (mut c, ci) = uc_client(&mut w, port, rcvbuf);
     let mut t = streams(&mut w, &mut c, 1, 6, &l);
@@ -1563,8 +1744,10 @@ fn uc_rig_with(limit_ms: u64, rcvbuf: Option<i32>) -> (Worker, Arc<Bounds>, TcpS
     (w, g, c, t, l)
 }
 
-/// E5 the tests' stall limit (bounds::UC_STALL_MS is 600 s) and sweep period (the worker's is 2 s)
+/// E5 the tests' starting credit (bounds::UC_STALL_MS is 600 s), sweep period (the worker's is 2 s), and one full
+/// stream (far above what the rig's connection holds: its credit is used at the rate of time)
 const UC_TEST_MS: u64 = 4_000;
+const UC_TEST_M0: u64 = 1 << 40;
 const UC_SWEEP_MS: u64 = 500;
 
 /// E5 a client of the address BIG as on a real network: it announces an MSS of 1448 (loopback's 64 KiB MSS would let
@@ -1611,9 +1794,23 @@ fn uc_run(w: &mut Worker, c: &mut TcpStream, t: &mut [TcpStream], ms: u64, read:
 
 /// ... with a sweep every `sweep_ms`
 fn uc_run_at(w: &mut Worker, c: &mut TcpStream, t: &mut [TcpStream], ms: u64, sweep_ms: u64, read: impl Fn(u64) -> u64) -> Option<u64> {
+    uc_run_sweeps(w, c, t, ms, sweep_ms, read).map(|(at, _)| at)
+}
+
+/// ... and the time of every sweep up to the reset (the last one is the sweep that reset): the `now` it gave the rule,
+/// ms after the start (the clock the stall limit is judged on, read after the loop turn)
+fn uc_run_sweeps(
+    w: &mut Worker,
+    c: &mut TcpStream,
+    t: &mut [TcpStream],
+    ms: u64,
+    sweep_ms: u64,
+    read: impl Fn(u64) -> u64,
+) -> Option<(u64, Vec<u64>)> {
     let chunk = [7u8; 16384];
     let mut buf = vec![0u8; 1 << 16];
-    let (before, start, mut taken, mut swept) = (w.stats.close_unread.get(), Instant::now(), 0u64, 0u64);
+    let (before, start, mut taken, mut swept, mut sweeps) = (w.stats.close_unread.get(), Instant::now(), 0u64, 0u64, Vec::new());
+    let start_ms = metrics::now_ms();
     loop {
         let el = start.elapsed().as_millis() as u64;
         if el >= ms {
@@ -1633,10 +1830,11 @@ fn uc_run_at(w: &mut Worker, c: &mut TcpStream, t: &mut [TcpStream], ms: u64, sw
         if el >= swept + sweep_ms {
             swept = el;
             let now = metrics::now_ms();
+            sweeps.push(now.saturating_sub(start_ms));
             w.bd_count(now);
             w.bd_unread(now);
             if w.stats.close_unread.get() > before {
-                return Some(el);
+                return Some((el, sweeps));
             }
         }
     }
@@ -1647,11 +1845,19 @@ fn uc_run_at(w: &mut Worker, c: &mut TcpStream, t: &mut [TcpStream], ms: u64, sw
 /// that does not read with the mark set: reset after the limit, not before.
 #[test]
 fn uc_resets_a_client_that_does_not_read() {
+    // 60.74 4.5: the sweeps are counted (a loop turn under load is late, the rule acts per sweep); the times keep
+    // their bounds plus the measured host lag
+    let lag = crate::testlag::Lag::start();
     let (mut w, g, mut c, mut t, _l) = uc_rig();
     assert_eq!(uc_run(&mut w, &mut c, &mut t, 2 * UC_TEST_MS, |_| 0), None, "no mark: never");
     g.set_state(bd::ST_UNREAD);
-    let at = uc_run(&mut w, &mut c, &mut t, UC_TEST_MS, |_| 0);
-    assert!(at.is_some_and(|ms| ms <= UC_SWEEP_MS + 100), "at the first sweep with the mark: {at:?}");
+    lag.reset();
+    let at = uc_run_sweeps(&mut w, &mut c, &mut t, UC_TEST_MS, UC_SWEEP_MS, |_| 0);
+    assert!(
+        at.as_ref().is_some_and(|(ms, s)| s.len() == 1 && *ms <= lag.bound(Duration::from_millis(UC_SWEEP_MS + 100), 2).as_millis() as u64),
+        "at the first sweep with the mark: {at:?} (lag {:?})",
+        lag.max()
+    );
     assert_eq!(w.stats.close_unread.get(), 1);
     pump(&mut w, 5);
     assert_eq!(open_streams(&w), 0, "every stream of the connection is closed");
@@ -1669,8 +1875,18 @@ fn uc_resets_a_client_that_does_not_read() {
     end(w);
     let (mut w, g, mut c, mut t, _l) = uc_rig();
     g.set_state(bd::ST_UNREAD);
-    let at = uc_run(&mut w, &mut c, &mut t, 2 * UC_TEST_MS, |_| 0);
-    assert!(at.is_some_and(|ms| (UC_TEST_MS..=UC_TEST_MS + 2 * UC_SWEEP_MS + 100).contains(&ms)), "after the limit: {at:?}");
+    lag.reset();
+    // after the limit, and at the first sweep that can see it: the stall is noted by the first or second sweep, so the
+    // sweep before the reset is less than the limit after the second sweep (on time: the old bound limit + 2 sweeps)
+    let at = uc_run_sweeps(&mut w, &mut c, &mut t, 2 * UC_TEST_MS, UC_SWEEP_MS, |_| 0);
+    assert!(
+        at.as_ref().is_some_and(|(ms, s)| s[s.len() - 1] >= UC_TEST_MS
+            && s.len() >= 3
+            && s[s.len() - 2] < s[1] + UC_TEST_MS
+            && *ms <= lag.bound(Duration::from_millis(UC_TEST_MS + 2 * UC_SWEEP_MS + 100), 4).as_millis() as u64),
+        "after the limit: {at:?} (lag {:?})",
+        lag.max()
+    );
     end(w);
 }
 
@@ -1687,6 +1903,39 @@ fn uc_keeps_a_client_that_pauses_and_reads() {
     end(w);
 }
 
+/// E5 a client that pauses for 3/4 of its credit, reads for a while, and pauses again for 3/4: the bytes it took bought
+/// the credit back (kept); one that takes 4 KiB between the pauses is reset in the second (60.78 T2: v1.3.3
+/// gave every pause a fresh limit, so a trickler was kept for ever)
+#[test]
+fn uc_credit_comes_back_only_with_bytes_taken() {
+    let (mut w, g, mut c, mut t, _l) = uc_rig();
+    g.set_state(bd::ST_UNREAD);
+    let p = UC_TEST_MS / 4 * 3;
+    let read = |ms: u64| if (p..p + 1000).contains(&ms) { u64::MAX } else { 0 };
+    let first = uc_run(&mut w, &mut c, &mut t, p + 1000, read);
+    assert_eq!(first, None);
+    // (uc_run's byte count starts at 0 again: nothing more is read)
+    assert_eq!(uc_run(&mut w, &mut c, &mut t, p, |_| 0), None, "the bytes it took bought the credit back");
+    end(w);
+    let (mut w, g, mut c, mut t, _l) = uc_rig();
+    g.set_state(bd::ST_UNREAD);
+    assert_eq!(uc_run(&mut w, &mut c, &mut t, p, |_| 0), None);
+    let at = uc_run(&mut w, &mut c, &mut t, 2 * UC_TEST_MS, |_| 4096);
+    assert!(at.is_some_and(|ms| ms <= UC_TEST_MS / 4 + 3 * UC_SWEEP_MS), "reset in the second pause: {at:?}");
+    end(w);
+}
+
+/// E5 a connection that holds far more of the host's TCP memory than one full stream (here: m0 = 4 KiB) uses its
+/// credit up that much faster: reset within a few sweeps under the mark, long before the starting credit
+#[test]
+fn uc_a_connection_that_holds_more_uses_its_credit_faster() {
+    let (mut w, g, mut c, mut t, _l) = uc_rig_with(UC_TEST_MS, Some(8192), 4096);
+    g.set_state(bd::ST_UNREAD);
+    let at = uc_run(&mut w, &mut c, &mut t, 2 * UC_TEST_MS, |_| 0);
+    assert!(at.is_some_and(|ms| ms <= 3 * UC_SWEEP_MS + 100), "{at:?}");
+    end(w);
+}
+
 /// E5 at the real times (bounds::UC_STALL_MS = 600 s, a sweep every 2 s) with the kernel's default client buffer
 /// (autotuned), under the mark, for UC_REAL_MS (1.5 limits): a reader of 2 KiB per second, one that pauses 15 s and then
 /// reads 2 KiB per second, and one that first reads 5 MiB at 1 MiB/s (its buffer grows) and then 2 KiB per second, are
@@ -1697,7 +1946,7 @@ const UC_REAL_MS: u64 = 900_000;
 #[test]
 #[ignore]
 fn uc_real_keeps_a_reader_of_2_kib_per_s() {
-    let (mut w, g, mut c, mut t, _l) = uc_rig_with(bd::UC_STALL_MS, None);
+    let (mut w, g, mut c, mut t, _l) = uc_rig_with(bd::UC_STALL_MS, None, 0);
     g.set_state(bd::ST_UNREAD);
     assert_eq!(uc_run_at(&mut w, &mut c, &mut t, UC_REAL_MS, 2_000, |ms| ms * 2048 / 1000), None);
     end(w);
@@ -1706,7 +1955,7 @@ fn uc_real_keeps_a_reader_of_2_kib_per_s() {
 #[test]
 #[ignore]
 fn uc_real_keeps_a_reader_after_a_pause_of_15_s() {
-    let (mut w, g, mut c, mut t, _l) = uc_rig_with(bd::UC_STALL_MS, None);
+    let (mut w, g, mut c, mut t, _l) = uc_rig_with(bd::UC_STALL_MS, None, 0);
     g.set_state(bd::ST_UNREAD);
     assert_eq!(uc_run_at(&mut w, &mut c, &mut t, UC_REAL_MS, 2_000, |ms| ms.saturating_sub(15_000) * 2048 / 1000), None);
     end(w);
@@ -1715,9 +1964,432 @@ fn uc_real_keeps_a_reader_after_a_pause_of_15_s() {
 #[test]
 #[ignore]
 fn uc_real_keeps_a_reader_of_2_kib_per_s_after_a_fast_start() {
-    let (mut w, g, mut c, mut t, _l) = uc_rig_with(bd::UC_STALL_MS, None);
+    let (mut w, g, mut c, mut t, _l) = uc_rig_with(bd::UC_STALL_MS, None, 0);
     g.set_state(bd::ST_UNREAD);
     let read = |ms: u64| if ms < 5_000 { ms * 1024 } else { (5 << 20) + (ms - 5_000) * 2048 / 1000 };
     assert_eq!(uc_run_at(&mut w, &mut c, &mut t, UC_REAL_MS, 2_000, read), None);
+    end(w);
+}
+
+// ---- 60.78 G70 --unread-close's relief
+
+/// G70: --unread-close (with its relief) on a host of 1600 pages with 100 TCP sockets allocated: the share is 64 KiB,
+/// so a parked target socket whose memory is above 32 KiB is read out (its buffer then: 2 x 16 KiB). One client of
+/// a public address that does not read (8 KiB receive buffer) with one stream (sid 1); `f` changes the configuration.
+fn rl_rig(f: impl FnOnce(&mut Config)) -> (Worker, Arc<Bounds>, TcpStream, u32, TcpStream) {
+    let g = Arc::new(Bounds::new(OPT_UNREAD | OPT_RELIEF, 1, TcpForm::Mem { max_pages: 1600 }, 4096, 131_072));
+    g.set_socks(100);
+    assert_eq!(g.share_bytes(), Some(64 << 10));
+    let (mut w, port, _rx) = bd_rig_cfg(false, 4, g.clone(), f);
+    w.rl_set_cap(64 << 20);
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    // the destination sends segments of 1448 bytes, as on a real network (loopback's 64 KiB MSS does not fit the small
+    // buffer relief sets, and the sender would wait for zero-window probes)
+    let mss: libc::c_int = 1448;
+    assert_eq!(unsafe { libc::setsockopt(l.as_raw_fd(), libc::IPPROTO_TCP, libc::TCP_MAXSEG, &mss as *const _ as *const _, 4) }, 0);
+    let (mut c, ci) = uc_client(&mut w, port, Some(8192));
+    let t = streams(&mut w, &mut c, 1, 1, &l).pop().unwrap();
+    c.set_nonblocking(true).unwrap();
+    (w, g, c, ci, t)
+}
+
+/// the test's byte at offset `i` of the download: a sequence that shows a lost, repeated or moved byte
+fn rl_byte(i: u64) -> u8 {
+    (i % 251) as u8
+}
+
+/// the target sends the sequence on from `sent` until its socket takes no more, or `upto` bytes in all
+fn rl_feed(t: &mut TcpStream, sent: &mut u64, upto: u64) {
+    while *sent < upto {
+        let n = (upto - *sent).min(16384) as usize;
+        let b: Vec<u8> = (*sent..*sent + n as u64).map(rl_byte).collect();
+        match t.write(&b) {
+            Ok(k) if k > 0 => *sent += k as u64,
+            _ => return,
+        }
+    }
+}
+
+/// the one target's slot, and the bytes in its socket's receive queue (our side)
+fn rl_ti(w: &Worker) -> u32 {
+    w.targets.slots.iter().position(|s| s.1.is_some()).unwrap() as u32
+}
+fn rl_q(w: &mut Worker) -> u64 {
+    let ti = rl_ti(w);
+    bd::queued(w.targets.at(ti).fd, libc::FIONREAD)
+}
+
+/// What the client got of stream 1: the DATA bytes (checked against the sequence as they come) and the CLOSE reason
+#[derive(Default)]
+struct RlRead {
+    buf: Vec<u8>,
+    upgraded: bool,
+    got: u64,
+    closed: Option<u8>,
+}
+
+impl RlRead {
+    /// reads what the client socket has and checks every DATA byte of stream 1 against the sequence
+    fn read(&mut self, c: &mut TcpStream) {
+        let mut b = vec![0u8; 1 << 16];
+        while let Ok(n) = c.read(&mut b) {
+            if n == 0 {
+                break;
+            }
+            self.buf.extend_from_slice(&b[..n]);
+        }
+        if !self.upgraded {
+            // (the 101 response first: uc_client never read it)
+            let Some(at) = self.buf.windows(4).position(|x| x == b"\r\n\r\n") else { return };
+            self.buf.drain(..at + 4);
+            self.upgraded = true;
+        }
+        loop {
+            if self.buf.len() < 2 {
+                return;
+            }
+            let (hl, plen) = match self.buf[1] & 0x7f {
+                126 if self.buf.len() >= 4 => (4, u16::from_be_bytes([self.buf[2], self.buf[3]]) as usize),
+                126 => return,
+                127 if self.buf.len() >= 10 => (10, u64::from_be_bytes(self.buf[2..10].try_into().unwrap()) as usize),
+                127 => return, // (a splice frame: its length takes 8 bytes)
+                n => (2, n as usize),
+            };
+            if self.buf.len() < hl + plen {
+                return;
+            }
+            let p: Vec<u8> = self.buf[hl..hl + plen].to_vec();
+            self.buf.drain(..hl + plen);
+            if p.len() < 5 || u32::from_le_bytes([p[1], p[2], p[3], p[4]]) != 1 {
+                continue;
+            }
+            match p[0] {
+                2 => {
+                    for (k, &x) in p[5..].iter().enumerate() {
+                        let at = self.got + k as u64;
+                        assert_eq!(x, rl_byte(at), "stream 1, byte {at}: lost, repeated or out of order");
+                    }
+                    assert!(self.closed.is_none(), "DATA after CLOSE");
+                    self.got += (p.len() - 5) as u64;
+                }
+                4 => self.closed = Some(p[5]),
+                _ => {}
+            }
+        }
+    }
+}
+
+/// one sweep's steps of section E (bd_count, then bd_unread: E5's step, then the relief)
+fn rl_sweep(w: &mut Worker) {
+    let now = metrics::now_ms();
+    w.bd_count(now);
+    w.bd_unread(now);
+}
+
+/// the receive memory of the one target's socket (SO_MEMINFO's rmem_alloc: what relief compares with the share)
+fn rl_mem(w: &mut Worker) -> u64 {
+    let ti = rl_ti(w);
+    let mut m = [0u32; 9];
+    let mut len = 36u32;
+    assert_eq!(unsafe { libc::getsockopt(w.targets.at(ti).fd, libc::SOL_SOCKET, 55, m.as_mut_ptr() as *mut _, &mut len) }, 0);
+    m[0] as u64
+}
+
+/// the target sends and the client does not read: until the stream is parked and its socket's memory is above `n`
+fn rl_fill(w: &mut Worker, t: &mut TcpStream, sent: &mut u64, n: u64) {
+    // (still so after a pump without new bytes: a stream parked behind its own splice with the client's output below
+    // out_high is resumed at the next flush and reads on; it parks for good only at out_high)
+    loop {
+        let mut last;
+        let end_at = Instant::now() + Duration::from_secs(20);
+        let mut moved = (*sent, Instant::now());
+        while {
+            rl_feed(t, sent, u64::MAX);
+            last = (unread(w), rl_mem(w), *sent);
+            !(last.0 == 1 && last.1 > n)
+        } {
+            if *sent != moved.0 {
+                moved = (*sent, Instant::now());
+            } else if moved.1.elapsed() > Duration::from_millis(300) {
+                // the destination waits in zero-window probes (backoff: up to seconds) after our socket's window was
+                // 0 and the worker read it down without a window update (seen on a loaded host); a peek runs the
+                // kernel's tcp_cleanup_rbuf, which sends one. (Not relief's doing: before any sweep.)
+                let ti = rl_ti(w);
+                let mut b = 0u8;
+                unsafe { libc::recv(w.targets.at(ti).fd, &mut b as *mut u8 as *mut _, 1, libc::MSG_PEEK | libc::MSG_DONTWAIT) };
+                moved.1 = Instant::now();
+            }
+            if Instant::now() >= end_at {
+                let ti = rl_ti(w);
+                let tfd = w.targets.at(ti).fd;
+                let mut info = [0u8; 232];
+                let mut len = info.len() as libc::socklen_t;
+                unsafe { libc::getsockopt(tfd, libc::IPPROTO_TCP, libc::TCP_INFO, info.as_mut_ptr() as *mut _, &mut len) };
+                let rcv_space = u32::from_ne_bytes(info[120..124].try_into().unwrap());
+                let rcv_ssthresh = u32::from_ne_bytes(info[64..68].try_into().unwrap());
+                let (ci, capped, bulk) = (w.targets.at(ti).client, w.targets.at(ti).capped, w.targets.at(ti).bulk);
+                let mut di = [0u8; 232];
+                let mut dl = di.len() as libc::socklen_t;
+                unsafe { libc::getsockopt(t.as_raw_fd(), libc::IPPROTO_TCP, libc::TCP_INFO, di.as_mut_ptr() as *mut _, &mut dl) };
+                eprintln!(
+                    "dest: probes {} backoff {} unsent(outq) {} rto {}",
+                    di[3],
+                    di[4],
+                    bd::queued(t.as_raw_fd(), libc::TIOCOUTQ),
+                    u32::from_ne_bytes(di[8..12].try_into().unwrap())
+                );
+                panic!(
+                    "not parked above half the share: (parked, memory, sent) {last:?}; lock/rcvbuf {:?} sock_cap {} capped {} pend {} rcv_space {rcv_space} rcv_ssthresh {rcv_ssthresh} bulk {}",
+                    rl_lock_rcv(tfd), w.st.sock_cap, capped, w.clients.at(ci).out_pending(), bulk
+                );
+            }
+            pump(w, 5);
+        }
+        pump(w, 20);
+        if unread(w) == 1 && rl_mem(w) > n {
+            return;
+        }
+    }
+}
+
+/// SO_BUF_LOCK's bits and SO_RCVBUF of a socket
+fn rl_lock_rcv(fd: RawFd) -> (i32, i32) {
+    let get = |opt| {
+        let (mut v, mut len) = (0i32, 4u32);
+        assert_eq!(unsafe { libc::getsockopt(fd, libc::SOL_SOCKET, opt, &mut v as *mut _ as *mut _, &mut len) }, 0);
+        v
+    };
+    (get(72), get(libc::SO_RCVBUF))
+}
+
+/// G70 relief end to end, for both lanes (`prio`: the bulk lane, with splice; else obuf only): no mark, nothing moves;
+/// with the mark the parked socket is read out under the lock and a 32 KiB buffer; the client then reads
+/// every byte the target sent, in order (relief bytes between what was queued before them and what the next read
+/// takes); reading again under the pressure keeps the lock and the small buffer, the end of the pressure lifts it.
+/// `warm`: the stream's next read takes the splice path (Target::bulk set, as tests.rs splice_length_steps does; the
+/// queues are empty): the target parks with bytes in the splice pipe that the client socket did not take, and relief's
+/// bytes must go out after them.
+fn rl_order(prio: bool, warm: bool) {
+    rl_order_with(prio, warm, false)
+}
+
+/// ... `short`: the stream's last read was short (Target::bulk false) while its earlier frames wait in the bulk lane:
+/// the lane is still the bulk lane (bulk_end), and the next read must stay behind relief's frames (bulk_end moves)
+fn rl_order_with(prio: bool, warm: bool, short: bool) {
+    let (mut w, g, mut c, ci, mut t) = rl_rig(|cfg| cfg.prio = prio);
+    let mut sent = 0u64;
+    let mut rd = RlRead::default();
+    if warm {
+        let ti = rl_ti(&w);
+        w.targets.at(ti).bulk = true;
+    }
+    rl_fill(&mut w, &mut t, &mut sent, 32 << 10);
+    if short {
+        let ti = rl_ti(&w);
+        let c = w.targets.at(ti).client;
+        let (bs, be) = (w.clients.at(c).bulk_sent, w.targets.at(ti).bulk_end);
+        assert!(be > bs, "the case: frames of the stream wait in the bulk lane");
+        w.targets.at(ti).bulk = false;
+    }
+    rl_sweep(&mut w);
+    assert_eq!((w.stats.relief_streams.get(), w.stats.relief_bytes.get()), (0, 0), "no mark: nothing");
+    g.set_state(bd::ST_UNREAD);
+    let (q, ti) = (rl_q(&mut w), rl_ti(&w));
+    let saved = rl_lock_rcv(w.targets.at(ti).fd).1;
+    let (pipe, lane) = (w.clients.at(ci).splice_pending, w.clients.at(ci).bulk.len() - w.clients.at(ci).bhead);
+    eprintln!("prio {prio} warm {warm}: {q} bytes queued at relief, {pipe} in the splice pipe, {lane} in the bulk lane");
+    assert!(!warm || pipe > 0, "the case: bytes in the splice pipe at relief");
+    rl_sweep(&mut w);
+    assert_eq!(w.stats.relief_streams.get(), 1);
+    assert!(w.stats.relief_bytes.get() >= q, "all that was queued: {} of {q}", w.stats.relief_bytes.get());
+    let left = rl_q(&mut w);
+    assert!(left <= 32 << 10, "read down under its new buffer: {left}");
+    let fd = w.targets.at(ti).fd;
+    assert_eq!(rl_lock_rcv(fd), (2, 32 << 10), "locked, buffer 2 x 16 KiB");
+    assert!(w.rl_held(ti));
+    rl_sweep(&mut w);
+    assert_eq!(w.stats.relief_streams.get(), 1, "under the lock it holds no more: no second relief");
+    let total = sent + (4 << 20);
+    until(&mut w, "the client has every byte", |_| {
+        rd.read(&mut c);
+        rl_feed(&mut t, &mut sent, total);
+        rd.got == total
+    });
+    rl_sweep(&mut w);
+    assert!(w.rl_held(ti), "read again under the pressure: still locked");
+    assert_eq!(rl_lock_rcv(fd), (2, 32 << 10));
+    g.set_state(0);
+    rl_sweep(&mut w);
+    assert!(!w.rl_held(ti), "the pressure is over: lifted");
+    // the size from before as rl_lift sets it: SO_RCVBUF of half of it, which the kernel clamps to net.core.rmem_max and
+    // doubles (a buffer that autotuning grew past 2 x rmem_max comes back at that bound: CI's default rmem_max 212992).
+    // The expected size is measured the same way on a socket of its own (rmem_max may not be readable in a container)
+    let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let half: libc::c_int = saved / 2;
+    // SAFETY: setsockopt reads one c_int from `half`
+    let r = unsafe { libc::setsockopt(probe.as_raw_fd(), libc::SOL_SOCKET, libc::SO_RCVBUF, &half as *const _ as *const _, 4) };
+    assert_eq!(r, 0);
+    let back = rl_lock_rcv(probe.as_raw_fd()).1;
+    assert_eq!(rl_lock_rcv(fd), (0, back), "the size from before (its half doubled, rmem_max clamp), the lock bit clear");
+    end(w);
+}
+
+#[test]
+fn rl_keeps_the_order_bulk_lane() {
+    rl_order(true, false);
+}
+
+#[test]
+fn rl_keeps_the_order_obuf() {
+    rl_order(false, false);
+}
+
+#[test]
+fn rl_keeps_the_order_lane_after_a_short_read() {
+    rl_order_with(true, false, true);
+}
+
+#[test]
+fn rl_keeps_the_order_behind_a_splice() {
+    rl_order(true, true);
+    rl_order(false, true);
+}
+
+/// G70 the target ends while relief bytes are queued: FIN, then (second case) a reset. Relief reads only what is
+/// queued, so the end stays for read_target: the client gets every byte, then the stream's CLOSE.
+fn rl_end(reset: bool) {
+    let (mut w, g, mut c, _ci, mut t) = rl_rig(|_| {});
+    let mut sent = 0u64;
+    rl_fill(&mut w, &mut t, &mut sent, 32 << 10);
+    // what reached our side (a reset drops what the destination had not sent yet)
+    let ti = rl_ti(&w);
+    let mut info = [0u8; 232];
+    let mut len = info.len() as libc::socklen_t;
+    let fd = w.targets.at(ti).fd;
+    assert_eq!(unsafe { libc::getsockopt(fd, libc::IPPROTO_TCP, libc::TCP_INFO, info.as_mut_ptr() as *mut _, &mut len) }, 0);
+    let arrived = u64::from_ne_bytes(info[128..136].try_into().unwrap());
+    if reset {
+        let l = libc::linger { l_onoff: 1, l_linger: 0 };
+        assert_eq!(unsafe { libc::setsockopt(t.as_raw_fd(), libc::SOL_SOCKET, libc::SO_LINGER, &l as *const _ as *const _, 8) }, 0);
+        drop(t);
+    } else {
+        t.shutdown(std::net::Shutdown::Write).unwrap();
+    }
+    pump(&mut w, 20);
+    g.set_state(bd::ST_UNREAD);
+    rl_sweep(&mut w);
+    assert_eq!(w.stats.relief_streams.get(), 1);
+    let mut rd = RlRead::default();
+    until(&mut w, "the client has the stream's CLOSE", |_| {
+        rd.read(&mut c);
+        rd.closed.is_some()
+    });
+    eprintln!("reset {reset}: {} of {sent} bytes, CLOSE {:#x}", rd.got, rd.closed.unwrap());
+    assert_eq!(rd.got, if reset { arrived } else { sent }, "every byte that reached us, before the CLOSE");
+    let want = if reset { net::data_reason(libc::ECONNRESET) } else { CLOSE_VOLUNTARY };
+    assert_eq!(rd.closed, Some(want), "the end's reason (a reset is not reported as a FIN)");
+    end(w);
+}
+
+#[test]
+fn rl_a_fin_waits_behind_the_relief_bytes() {
+    rl_end(false);
+}
+
+#[test]
+fn rl_a_reset_waits_behind_the_relief_bytes() {
+    rl_end(true);
+}
+
+/// G70 the cap: a socket whose bytes would pass it is left as it is and counted; a socket locked by someone else
+/// (a cap of the memory budget, or another lock holder) is left alone; a closed target's entry goes at the next sweep
+#[test]
+fn rl_cap_foreign_lock_and_close() {
+    let (mut w, g, mut c, _ci, mut t) = rl_rig(|_| {});
+    let mut sent = 0u64;
+    rl_fill(&mut w, &mut t, &mut sent, 32 << 10);
+    g.set_state(bd::ST_UNREAD);
+    w.rl_set_cap(1000);
+    rl_sweep(&mut w);
+    assert_eq!((w.stats.relief_streams.get(), w.stats.relief_capped.get()), (0, 1), "over the cap: counted, left");
+    let ti = rl_ti(&w);
+    let fd = w.targets.at(ti).fd;
+    assert_eq!(rl_lock_rcv(fd).0, 0, "not locked");
+    w.rl_set_cap(64 << 20);
+    let v = 2i32;
+    assert_eq!(unsafe { libc::setsockopt(fd, libc::SOL_SOCKET, 72, &v as *const _ as *const _, 4) }, 0);
+    rl_sweep(&mut w);
+    assert_eq!(w.stats.relief_streams.get(), 0, "someone else's lock: left alone");
+    let v = 0i32;
+    assert_eq!(unsafe { libc::setsockopt(fd, libc::SOL_SOCKET, 72, &v as *const _ as *const _, 4) }, 0);
+    rl_sweep(&mut w);
+    assert_eq!(w.stats.relief_streams.get(), 1);
+    assert!(w.rl_held(ti));
+    c.write_all(&wisp(0x04, 1, &[0x02])).unwrap(); // the client closes the stream
+    until(&mut w, "the stream is closed", |w| open_streams(w) == 0);
+    rl_sweep(&mut w);
+    assert!(!w.rl_held(ti), "a closed target's entry goes");
+    end(w);
+}
+
+/// G70 the pressure ends while the stream is still parked: the lift at the next sweep gives back the size from before
+/// and clears the lock bit; a size someone else set since is left as it is
+#[test]
+fn rl_lifts_when_the_pressure_ends() {
+    let (mut w, g, _c, _ci, mut t) = rl_rig(|_| {});
+    let mut sent = 0u64;
+    rl_fill(&mut w, &mut t, &mut sent, 32 << 10);
+    let ti = rl_ti(&w);
+    let fd = w.targets.at(ti).fd;
+    let saved = rl_lock_rcv(fd).1;
+    g.set_state(bd::ST_UNREAD);
+    rl_sweep(&mut w);
+    assert!(w.rl_held(ti) && rl_lock_rcv(fd).0 == 2);
+    g.set_state(0);
+    rl_sweep(&mut w);
+    assert!(w.targets.at(ti).blocked, "still parked");
+    assert!(!w.rl_held(ti));
+    assert_eq!(rl_lock_rcv(fd), (0, saved & !1), "lock bit clear, the size from before");
+    assert_eq!(w.stats.relief_streams.get(), 1);
+    end(w);
+    // a size set by someone else since (a cap of the memory budget and its uncap) is left as it is
+    let (mut w, g, _c, _ci, mut t) = rl_rig(|_| {});
+    let mut sent = 0u64;
+    rl_fill(&mut w, &mut t, &mut sent, 32 << 10);
+    let ti = rl_ti(&w);
+    let fd = w.targets.at(ti).fd;
+    g.set_state(bd::ST_UNREAD);
+    rl_sweep(&mut w);
+    assert!(w.rl_held(ti));
+    let v = 6000i32;
+    assert_eq!(unsafe { libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_RCVBUF, &v as *const _ as *const _, 4) }, 0);
+    g.set_state(0);
+    rl_sweep(&mut w);
+    assert!(!w.rl_held(ti));
+    assert_eq!(rl_lock_rcv(fd), (2, 12000), "not ours: left");
+    end(w);
+}
+
+/// G70 someone clears our lock bit while the pressure lasts (a caps episode's uncap, or another holder's lift): the next
+/// sweep sets it again; after the pressure the lift still gives back the size from before
+#[test]
+fn rl_takes_the_lock_again_under_the_pressure() {
+    let (mut w, g, _c, _ci, mut t) = rl_rig(|_| {});
+    let mut sent = 0u64;
+    rl_fill(&mut w, &mut t, &mut sent, 32 << 10);
+    let ti = rl_ti(&w);
+    let fd = w.targets.at(ti).fd;
+    let saved = rl_lock_rcv(fd).1;
+    g.set_state(bd::ST_UNREAD);
+    rl_sweep(&mut w);
+    assert_eq!(rl_lock_rcv(fd), (2, 32 << 10));
+    let v = 0i32;
+    assert_eq!(unsafe { libc::setsockopt(fd, libc::SOL_SOCKET, 72, &v as *const _ as *const _, 4) }, 0);
+    rl_sweep(&mut w);
+    assert_eq!(rl_lock_rcv(fd), (2, 32 << 10), "locked again");
+    assert_eq!(w.stats.relief_streams.get(), 1, "no second read-down");
+    g.set_state(0);
+    rl_sweep(&mut w);
+    assert_eq!(rl_lock_rcv(fd), (0, saved & !1));
     end(w);
 }

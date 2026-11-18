@@ -187,7 +187,7 @@
     "--stall-ping-ms",
     "1"
    ],
-   "note": "UNOFFICIAL, for fun: WispX-Rust (github.com/Redgale/WispX-Rust @17c9855, an epoxy-server fork), serving v1/v2 to wbench; same config as 'epoxy'. Binary built in an the build host container (ref/wispx-rust/epoxy-server, md5 fb860a75)"
+   "note": "UNOFFICIAL, for fun: WispX-Rust (github.com/Redgale/WispX-Rust @17c9855, an epoxy-server fork), serving v1/v2 to wbench; same config as 'epoxy'. Binary: 17c9855 rebuilt 2026-11-16 as its README says (cargo +stable build --release --locked -p epoxy-server, rustc 1.98.1; md5 084b31e8; an earlier build was md5 fb860a75)"
   },
   "wispx-nodelay": {
    "cmd": "{root}/ref/wispx-rust/epoxy-server {dir}/wispx-nodelay-{port}.toml",
@@ -201,12 +201,20 @@
    "note": "UNOFFICIAL: 'wispx' with v2_close_delay_ms = 0 (its 2 ms CLOSE hold for old native wisp-mux clients off)"
   },
   "holywisp": {
+   "cmd": "{root}/ref/holywisp-179dbfd/build/release/holywisp --host 127.0.0.1 --port {port} --allow-loopback on --allow-private on --allow-direct-ip on --flood-protection off --connections-limit-per-ip 0 --connection-window-s 0 --reputation off --log-level error",
+   "extra": [
+    "--stall-ping-ms",
+    "1"
+   ],
+   "note": "UNOFFICIAL: holyWisp (github.com/Fracital/holyWisp, C) upstream 179dbfd (2026-11-16), built with `make release` in ref/holywisp-179dbfd (a fresh git clone); its flood limits, per-IP connection rate and reputation are on by default and would throttle a loopback benchmark (all streams to one target from one IP), so they are off here, like the other servers' (they have none on)"
+  },
+  "holywisp-1758e6a": {
    "cmd": "{root}/ref/holywisp-1758e6a/build/release/holywisp --host 127.0.0.1 --port {port} --allow-loopback on --allow-private on --allow-direct-ip on --flood-protection off --connections-limit-per-ip 0 --connection-window-s 0 --reputation off --log-level error",
    "extra": [
     "--stall-ping-ms",
     "1"
    ],
-   "note": "UNOFFICIAL: holyWisp (github.com/Fracital/holyWisp, C) upstream 1758e6a (2026-11-13), built with `make release` in ref/holywisp-1758e6a (a git worktree of ref/holywisp); its flood limits, per-IP connection rate and reputation are on by default and would throttle a loopback benchmark (all streams to one target from one IP), so they are off here, like the other servers' (they have none on)"
+   "note": "UNOFFICIAL: the holyWisp build of 60.71 (1758e6a, ref/holywisp-1758e6a); same flags as 'holywisp'"
   },
   "holywisp-cb2510a": {
    "cmd": "{root}/ref/holywisp/build/release/holywisp --host 127.0.0.1 --port {port} --allow-loopback on --allow-private on --allow-direct-ip on --flood-protection off --connections-limit-per-ip 0 --connection-window-s 0 --reputation off --log-level error",

@@ -1,0 +1,21 @@
+ 
+#listen 127.0.0.1:9100
+listen-unix /t12K
+metrics-listen 127.0.0.1:9
+upload-rate-per-stream 512K
+log-level debug
+log-conns
+metrics-listen 126.0.0.1:9100
+listen-unix /tmp/fw.so
+upload-rate-per-stream 50000k
+motd //md
+mem-budget 0000000000000000000002k
+motd >>>>jbtream http://s5F:2>>>>>>>>>>>>>>>>>>>>>>>jj==UU2UUper-stream 512K
+log-level debug
+log-conns
+metrics-listen 126.0.0.1:9100
+listen-unix /tmp/fw.so
+upload-rate-per-stream 50000k
+motd //md
+mem-budget 0000000000000000000002k
+motd >>>>jbtream http://s0F:2>>>>>>>>>>>>>>>>>>>>>>>jj==UUUUU

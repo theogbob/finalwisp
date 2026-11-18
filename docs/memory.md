@@ -60,12 +60,16 @@ Notes:
   socket buffer limits, echo with 100 streams still reaches it; `--buffer 32` (a smaller first upload window per stream)
   kept it out in most runs there. `--tcpmem-adapt` shrinks this server's socket buffers when the host gets close to it.
   Many downloads that wait on slow clients (one client with many streams, for example) keep the targets' data in this
-  server's target connections, up to `net.ipv4.tcp_rmem` max each. `--park-rcvlock` (off by default) stops those buffers
-  from growing while their streams wait. It catches a buffer before it grows only if the stream starts to wait early;
-  a buffer that has already grown keeps its size.
+  server's target connections, up to `net.ipv4.tcp_rmem` max each. While the host's TCP memory is short,
+  `--unread-close` (in the public preset) reads such a connection out into the server's memory once it holds more than
+  half of its share, and keeps its buffer small until the pressure ends
+  ([relief](configuration.md#relief-of-waiting-downloads)).
   See [small hosts and many slow downloads](#small-hosts-and-many-slow-downloads) for the trade-offs.
 - finalwisp's virtual size (VSZ) is larger than its resident memory, because it reserves memory in 4 MiB chunks. Only
-  resident memory counts. If you set `ulimit -v`, size it from VSZ.
+  resident memory counts. Do not set `ulimit -v` below 1 GiB. On a host with 2 CPUs an idle server has a VSZ of about
+  1 GiB (21 threads). With `ulimit -v` at 1 GiB it ran a short mixed load on six kernels (4.18 to 6.8). At 512 MiB it
+  started, then stopped on a failed allocation during that load on five of the six. With more CPUs it has more threads:
+  size the limit from the VSZ of the idle server.
 - After a big burst, resident memory can stay higher for about 10 seconds while freed buffers are returned in small
   batches.
 
@@ -115,7 +119,7 @@ What helps, with the measured costs:
   host whose far clients come through a reverse proxy on the same host and that enters TCP memory pressure; leave
   splice on everywhere else.
 - **Adaptive splice** (on by default since 1.2.1; `--no-adaptive-splice` turns it off). Keeps splice on, but a far
-  client (round trip 10 ms or more when it connected) with more than 4 streams (busy or idle) whose socket is backed
+  client (shortest round trip 10 ms or more) with more than 4 streams (busy or idle) whose socket is backed
   up gets 64 KiB reads from its targets instead of 256 KiB. In the 100-stream case at 112 ms the download was 1.2-1.4x
   faster (1.66x with the built-in TLS) and the host left TCP memory pressure (0 of 16 runs instead of 9-13). On a
   lossy 20-30 ms path, 100 streams on one connection also kept the host out of pressure (0 of 16 runs instead of 13),

@@ -1,0 +1,23 @@
+ÿş# read 443,1000-2000
+no-dns-own
+dns-server ::%0048 â€€
+# rrrrrrrrrlrrrrrrrrrrrrrrrr rer2srver ::d 443,1000-2000
+no-dns-own
+dns-server ::%0048 â€€ã€€   
+#s0000000280 
+# rrrrrrrrrlrrrrrrrrrrrrrurr rer2srver ::%0048 â€€ã€€   
+#s-server ::%0ens%0048 â€€ã€€   
+#s-serveer ::%0048 â€€ã€€   
+#s0000000280 
+# rrrrrrrrrlrrrrrrrrrrrrrurr rer2srver ::%0048-own
+dns-server ::%0048 â€€ã€€   
+#s0000000280 
+# rrrrrrrrrlrrrrrrrrrrrrrrrr rer2srver ::d 443,1000-2000
+no-dns-own
+dns-server ::%0048 â€€ã€€   
+#s0000000280 
+# rrrrrrrrrlrrrrrrrrrrrrrurr rer2srver ::%0048 â€€ã€€   
+#s-server ::%0ens%0048 â€€ã€€   
+#s-serveer ::%0048 â€€ã€€   
+#s-server ::%0ens%004ÃÃÃÃÃÃÃÃÃÃÃÃÃÃÃÃÃÃÃ8 â€€ã€€   
+#s-server ::%0ens-servr

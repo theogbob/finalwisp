@@ -866,6 +866,10 @@ mod tests {
         /// the trial's connection and where it went (source, destination)
         trial: Option<(u64, usize, usize)>,
         factor: fn(&Conn, bool, u64) -> f64,
+        /// the trial's connection closes right after its move back (before census 4): its sent bytes stay counted
+        /// on the source, as Mig::closed_tx keeps them
+        close_at_back: bool,
+        notes: Vec<String>,
     }
 
     impl Model {
@@ -893,6 +897,8 @@ mod tests {
                 sent: Vec::new(),
                 trial: None,
                 factor,
+                close_at_back: false,
+                notes: Vec::new(),
             }
         }
         /// the moved connection is on the destination now
@@ -961,12 +967,16 @@ mod tests {
                 }
             }
             if bits & M_BACK != 0 && !self.mute.contains(&(w, M_BACK)) {
-                let id = self.trial.map(|t| t.0).filter(|&id| self.on(id) == w);
+                let id = self.trial.map(|t| t.0).filter(|&id| self.conns.iter().any(|c| c.id == id && c.w == w));
                 self.out[w] = match id {
                     None => (seq, R_GONE, 0),
                     Some(_) if self.on_back != R_MOVED => (seq, self.on_back, 0),
                     Some(id) => {
                         self.shift(id, to);
+                        if self.close_at_back {
+                            let i = self.conns.iter().position(|c| c.id == id).unwrap();
+                            self.rx[to] += self.conns.remove(i).tx;
+                        }
                         (seq, R_MOVED, 0)
                     }
                 };
@@ -988,6 +998,9 @@ mod tests {
         fn cancel(&mut self, w: usize) -> bool {
             self.sent.push((w, 0, 0, 0));
             !self.taken
+        }
+        fn note(&mut self, line: std::fmt::Arguments) {
+            self.notes.push(line.to_string());
         }
     }
 
@@ -1530,6 +1543,46 @@ mod tests {
         // the trials reach the verdict: kept ones, and ones that measured nothing
         assert!(kept > 0 && seen.get("Keep").is_some_and(|&n| n > 0), "a keep: {seen:?}");
         assert!(["NoMeasure", "Noisy"].iter().any(|k| seen.get(*k).is_some_and(|&n| n > 0)), "no measurement: {seen:?}");
+    }
+
+    /// 60.74 4.4 test gap (a): the worker that received a kept connection is not a source for PIN (10 s), the
+    /// source of the trial only for PAUSE. After the keep the destination becomes the busiest thread with two
+    /// connections: no trial starts from it before PIN has passed, and one does after.
+    #[test]
+    fn a_kept_destination_is_pinned_for_pin_not_pause() {
+        let mut io = Model::new(3, &[(0, 1000.0), (0, 1000.0), (1, 1000.0), (2, 1000.0)], churn);
+        let mut r = Rule::new(3, io.now);
+        let mut t = 0;
+        while r.kept == 0 {
+            run(&mut r, &mut io, &SH, 1);
+            t += 1;
+            assert!(t < 100, "no keep");
+        }
+        assert_eq!((io.on(101), r.st, io.bits(M_MOVE)), (1, St::Idle, 1));
+        let kept_at = io.now;
+        // worker 1 now bound (two connections), worker 2 idle, worker 0 at a middle share (not a source)
+        let sh = [600, 990, 20];
+        let moves_from_1 = |io: &Model| io.sent.iter().filter(|x| x.0 == 1 && x.1 & M_MOVE != 0).count();
+        while io.now + TICK < kept_at + PIN {
+            run(&mut r, &mut io, &sh, 1);
+            assert_eq!(moves_from_1(&io), 0, "a trial from the kept connection's worker {:?} after the keep", io.now - kept_at);
+        }
+        run(&mut r, &mut io, &sh, 30);
+        assert_eq!(moves_from_1(&io), 1, "after PIN it is a source again");
+    }
+
+    /// 60.74 4.4 test gap (b): the moved connection must be on the source in census 4 (the start of A2). One that
+    /// closed at its move back is not judged (A2 would miss it): the trial is dropped, no verdict, the source rests
+    /// PAUSE (not the backoff of a judged trial).
+    #[test]
+    fn a_connection_gone_from_the_source_in_a2_is_not_judged() {
+        let (mut r, mut io) = model(churn);
+        io.close_at_back = true;
+        run(&mut r, &mut io, &SH, 30);
+        assert_eq!((r.kept, r.back, r.dropped, r.last), (0, 0, 1, None), "notes {:?}", io.notes);
+        assert!(io.notes.iter().any(|l| l.ends_with("dropped: the connection is not on the source in A2")), "{:?}", io.notes);
+        assert!(!io.notes.iter().any(|l| l.contains("verdict=")), "{:?}", io.notes);
+        assert_eq!(io.bits(M_BACK), 1, "only the move back");
     }
 
     #[test]

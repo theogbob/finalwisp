@@ -9,7 +9,7 @@ import itertools, os, socket, ssl, struct, sys, time, base64
 # case sees the same globals as in a full run). The cases of a shard: the longest case first, each to the shard
 # that has the fewest seconds so far. A new case needs its seconds here.
 CASE_SECS = {1: 0.1, 2: 0.1, 3: 0.1, 4: 0.1, 5: 0.3, 6: 0.8, 7: 0.1, 8: 1.3, 9: 2.1, 10: 1.1,
-             11: 1.4, 12: 1.2, 13: 4.6, 14: 4.6, 15: 1.6, 16: 40.1, 17: 14.1, 18: 3.1, 19: 1.6, 20: 0.1}  # each case alone on --threads 2 (16: 69 s with --no-prio), for the balance only
+             11: 1.4, 12: 1.2, 13: 4.6, 14: 4.6, 15: 1.6, 16: 40.1, 17: 14.1, 18: 3.1, 19: 1.6, 20: 0.1, 21: 0.5}  # each case alone on --threads 2 (16: 69 s with --no-prio), for the balance only
 WST_CASES = os.environ.get("WST_CASES")
 if WST_CASES is not None and "_shard_text" not in globals():
     import re
@@ -817,6 +817,41 @@ s.sendall(frame(0x2, b"\x04\x00\x00\x00\x00\x04"))
 data, closed = read_all(s)
 ok(b"\x88\x02\x03\xe8" in rest + data and b"\x88\x02\x03\xea" not in rest + data and closed,
    "v2 client CLOSE(0) during the handshake -> WS close 1000")
+
+# 21. 60.78 lingering close: the client is still sending when the server closes (a bad frame behind 3000 pings, junk
+#     behind it) and reads late through a small window: every pong, then the Close 1002, then a clean EOF (with --tls
+#     after our close_notify), never a reset (before: close() found the junk unread and reset, the queued pongs lost)
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8192)  # before connect (client_sock), so the window stays small
+s.settimeout(3); s.connect(("127.0.0.1", PORT))
+if TLS:  # no ragged-EOF suppression: a FIN without our close_notify, or a reset, is an error here
+    s = _ctx.wrap_socket(s, server_hostname="localhost", suppress_ragged_eofs=False)
+s.sendall(b"GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+          b"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n")
+N21 = 3000
+s.settimeout(10)
+got, how = b"", "eof"
+try:  # (one unread byte is enough for the old reset; 16 KiB leaves room for small buffers)
+    s.sendall(frame(0x9, b"z" * 120) * N21 + frame(0x2, b"\x02\x01\x00\x00\x00hi", mask=False) + b"\x33" * (16 << 10))
+    while True:
+        d = s.recv(65536)
+        if not d: break
+        got += d
+except ConnectionResetError:
+    how = "reset"
+except (OSError, ssl.SSLError) as e:
+    how = repr(e)
+s.close()
+head, _, ws21 = got.partition(b"\r\n\r\n")
+f21 = []; i = 0
+while i + 2 <= len(ws21):
+    n, h = ws21[i + 1] & 0x7f, 2
+    if n == 126: n, h = struct.unpack(">H", ws21[i + 2:i + 4])[0], 4
+    if i + h + n > len(ws21): break
+    f21.append((ws21[i] & 0x0f, ws21[i + h:i + h + n])); i += h + n
+pongs = sum(1 for op, p in f21 if op == 0xa and p == b"z" * 120)
+ok(head.startswith(b"HTTP/1.1 101") and how == "eof" and pongs == N21 and f21[-1:] == [(0x8, b"\x03\xea")] and i == len(ws21),
+   f"still sending at the server's close: {pongs} of {N21} pongs, then Close 1002, then {how} (60.78 lingering close)")
 
 #@ all
 if WST_CASES is not None:  # a shard has no next case that would find a server that its last case killed

@@ -1,0 +1,32 @@
+
+dns-server ::%10
+buffer 0001120 
+# 000000000001r 10$ *#
+ dns-server ::%10
+buffer 0001120 
+#  --block-host
+# 000000000000000000r 10$ *#
+ dns-server :00000000000000000r 10$ *#
+ dns-server ::%10
+buffer 0001120 
+#  --block-host
+# 000000000000r 10$ *#
+ dns-server ::%10
+buffer 0001120 
+#    
+# 000r 10$ *#
+xxxxxxxxxxxxxxxxxxxxx dns-server ::%12
+buffer 0001120 
+#    
+# 
+#$-:%1$0
+buffer 0001120 
+#  ::%10
+buffer 0001060 
+# 0::%10
+buffer 0001120 
+#) --block-host
+# 000000000000r 10$ *#
+ dns-server ::%10
+buffer 0001120 buffer 000112   
+#$-[dns-___0

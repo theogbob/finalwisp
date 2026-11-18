@@ -145,6 +145,7 @@ fuzz_target!(|data: &[u8]| {
     match cli::parse_args(args.clone(), 4) {
         Ok(o) => {
             assert!(o.connect_timeout <= cli::MAX_CONNECT_TIMEOUT);
+            assert!(o.port != 0); // 60.78 G45: refused
             assert!(o.drain_timeout <= cli::MAX_DRAIN_TIMEOUT && o.metrics_interval <= cli::MAX_METRICS_INTERVAL);
             assert!(o.dns_servers.len() <= finalwisp_fuzz::dns::MAX_SERVERS);
             let certs = args.iter().filter(|a| *a == "--tls-cert").count();

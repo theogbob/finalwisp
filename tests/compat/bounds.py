@@ -6,8 +6,9 @@ Cases:
 - off: no guard thread, no row in --show-config; the counters are in the metrics line.
 - on (--tcpmem-share --port-share --dest-failfast --net-watch): the guard thread runs, --show-config has the rows of
   the four parts; 200 streams of one address beside another client open and echo, and nothing is refused.
-- E3 end to end. A destination whose accept queue is full drops every SYN. 10 connects of one address hang. After the
-  4th SYN of each (3 s) and the worker's sweep it is a suspect (gauge dest_dead 1, one warning that names it). New
+- E3 end to end. A destination whose accept queue is full drops every SYN. 10 connects of one address hang, 10 more 3 s
+  later (--connect-timeout 12). When the first 10 are near their deadline (the last 2.5 s: 60.78 bundle B1) and have
+  sent 4 SYNs, at the worker's sweep it is a suspect (gauge dest_dead 1, one warning that names it). New
   streams to it get CLOSE 0x43 within a second, except one probe per second (refuse_dest_dead moves, connect_timeout
   does not); a stream to another destination opens. The destination answers again: the suspect goes and a new stream
   to it opens.
@@ -195,13 +196,22 @@ ok(all(metric(p, k) == 0 for k in REFUSALS), "on: nothing refused")
 for sid in range(1, 201):
     a.send(4, sid, b"\x02")
 
-# --- E3: a destination that does not answer
+a.close(); b.close()
+stop(p)
+
+# --- E3: a destination that does not answer. 60.78 bundle B1: a suspect needs connects in the last 2.5 s of
+# --connect-timeout (12 here: from 9.5 s); the second wave keeps the destination in flight after the first times out
+p = start(*ON, "--connect-timeout", "12")
+a, b = Wisp(A), Wisp(B)
 dead = Dead()
 t0 = time.time()
 for sid in range(300, 310):
     a.connect(sid, dead.port)
-ok(until(p, "dest_dead", 1, 12), f"E3: 10 connects without an answer: the destination is a suspect ({time.time() - t0:.1f} s after the connects)")
-ok(time.time() - t0 >= 2.9, "E3: not before the 4th SYN (3 s)")
+time.sleep(3)
+for sid in range(310, 320):
+    a.connect(sid, dead.port)
+ok(until(p, "dest_dead", 1, 14), f"E3: 10 connects without an answer: the destination is a suspect ({time.time() - t0:.1f} s after the connects)")
+ok(time.time() - t0 >= 9.4, "E3: not before the connects are near their deadline (9.5 s)")
 ok(f"127.0.0.1:{dead.port} does not answer" in srvlog(p), "E3: one warning names the destination")
 time.sleep(1.1)  # (a probe second is over: the first of the next streams is the probe)
 t1 = time.time()
@@ -215,7 +225,8 @@ ok(sorted(got, key=str) == [0x43, 0x43, None] and time.time() - t1 < 3, f"E3: of
 ok(other == 0x43, "E3: the other address is refused too")
 a.connect(330)
 ok(a.echo(330), "E3: a stream to another destination opens")
-ok(metric(p, "refuse_dest_dead") == 3 and metric(p, "connect_timeout") == 0, "E3: refuse_dest_dead 3, no connect timeout")
+# (the hung connects time out at 12 s: connect_timeout counts them, never a refused stream)
+ok(metric(p, "refuse_dest_dead") == 3 and metric(p, "connect_timeout") in (0, 10, 20), "E3: refuse_dest_dead 3, no refused stream counted as a connect timeout")
 ok("refused with 0x43 at once" in srvlog(p), "E3: the refusal's warning")
 dead.revive()
 ok(until(p, "dest_dead", 0, 15), "E3: the destination answers again: no suspect")
@@ -226,17 +237,20 @@ a.close(); b.close()
 stop(p)
 
 # --- E3: a destination that was dead and then refuses
-p = start(*ON)
+p = start(*ON, "--connect-timeout", "12")
 a, b = Wisp(A), Wisp(B)
 dead = Dead()
 for sid in range(1, 11):
     a.connect(sid, dead.port)
-ok(until(p, "dest_dead", 1, 12), "E3 refusing: a suspect first")
+time.sleep(3)
+for sid in range(11, 21):
+    a.connect(sid, dead.port)
+ok(until(p, "dest_dead", 1, 14), "E3 refusing: a suspect first")
 dead.refuse()
-ok(until(p, "dest_dead", 0, 15), "E3 refusing: the connects in flight are refused, none is left: no suspect")
+ok(until(p, "dest_dead", 0, 15), "E3 refusing: the connects in flight end (refused or timed out), none is left: no suspect")
 n = metric(p, "refuse_dest_dead")
-a.connect(20, dead.port)
-ok(a.reason(20, 3) == 0x44, "E3 refusing: a new stream gets the kernel's answer, CLOSE 0x44")
+a.connect(30, dead.port)
+ok(a.reason(30, 3) == 0x44, "E3 refusing: a new stream gets the kernel's answer, CLOSE 0x44")
 ok(metric(p, "refuse_dest_dead") == n, "E3 refusing: not counted as refused")
 a.close(); b.close()
 stop(p)

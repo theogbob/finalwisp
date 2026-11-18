@@ -93,7 +93,7 @@ fn moves_every_turn(variant: u8) {
     let mut cfg = fd_cfg();
     cfg.connect_timeout = Duration::from_secs(30);
     match variant {
-        1 => (cfg.credit_v2, cfg.credit_pace, cfg.adaptive_splice, cfg.park_rcvlock) = (true, true, true, 1 << 16),
+        1 => (cfg.credit_v2, cfg.credit_pace, cfg.adaptive_splice) = (true, true, true),
         2 => {
             (cfg.splice, cfg.prio, cfg.log_conns, cfg.log_streams, cfg.want_peer) = (false, false, true, true, true);
             cfg.upload_rate = Some((1 << 30, 1 << 30));
@@ -275,7 +275,7 @@ fn a_connection_that_moves_every_turn_loses_nothing() {
     moves_every_turn(0);
 }
 #[test]
-fn a_connection_that_moves_every_turn_loses_nothing_credit_v2_pace_rcvlock() {
+fn a_connection_that_moves_every_turn_loses_nothing_credit_v2_pace() {
     moves_every_turn(1);
 }
 #[test]
@@ -710,9 +710,9 @@ fn a_connection_handed_back_and_forth_every_turn_still_makes_progress() {
     let (mut target, mut got, mut pos, mut down, mut up) = (None::<TcpStream>, Vec::new(), 0usize, Vec::new(), Vec::new());
     let (mut sent, mut buf) = (0usize, [0u8; 4096]);
     let (mut between, mut steps) = (0u32, 0u32);
-    // (a guard against a hang, not a time limit: it ends when the bytes are back; under a loaded host the suite's
-    // other tests can starve it for seconds)
-    let end_at = Instant::now() + Duration::from_secs(60);
+    // (a guard against a hang, not a time limit: it ends when the bytes are back. 60.74 4.5: it fails only when no
+    // byte moved either way for 30 s; under a loaded host the suite's other tests can starve it for seconds)
+    let mut last = (0usize, 0usize, Instant::now());
     while down.len() < 64 * 200 {
         for i in 0..2 {
             pump(&mut ws[i], 1);
@@ -747,7 +747,10 @@ fn a_connection_handed_back_and_forth_every_turn_still_makes_progress() {
                 down.extend_from_slice(body);
             }
         });
-        assert!(Instant::now() < end_at, "no progress: up {} down {} of {}", up.len(), down.len(), 64 * 200);
+        if (up.len(), down.len()) != (last.0, last.1) {
+            last = (up.len(), down.len(), Instant::now());
+        }
+        assert!(last.2.elapsed() < Duration::from_secs(30), "no progress for 30 s: up {} down {} of {}", up.len(), down.len(), 64 * 200);
     }
     assert!(up == down && (0..200).all(|k| down[k * 64..(k + 1) * 64].iter().all(|&b| b == k as u8)), "bytes or order");
     let moves = ws[0].stats.moved_conns.get() + ws[1].stats.moved_conns.get();

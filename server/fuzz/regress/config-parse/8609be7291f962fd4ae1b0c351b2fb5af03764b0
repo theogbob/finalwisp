@@ -1,0 +1,18 @@
+
+dns-server ::%10
+buffe 22400/9 
+r 0001120 
+# 000000000000r 10$ *#
+ dns-server ::%10
+buffer 0001120 
+#  --block-host
+# 000000000000000000r 10$ *#
+ dns-server ::%10
+buffer 0001120 
+#_ --block-host
+# 000000000000 r10$ *#
+ dns-server ::%10
+buffer 0001120 
+#    
+# 000r fer 000112   
+#$--dns-___0

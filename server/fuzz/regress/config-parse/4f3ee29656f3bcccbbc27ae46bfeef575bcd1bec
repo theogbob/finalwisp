@@ -1,0 +1,25 @@
+ÿþ#%all f126aQs-per-conn 64
+allow-host example.aple.auth
+cert-auth-key /tmp/e hello world
+mem-budget 512G
+tcpmem-adapt
+metrics-interval 1 
+max-conns 1
+cert-auth-key .tmp/ed.phello h
+cert-auth-key /tmp/e helauth-key /tmp/e hello world
+mem-budget 512G
+tcpmem-adapt
+metrics-interval 1 
+max-conns 1
+cert-auth-key .tmp/ed.phello h
+cert-auth-key /tmp/e helbuzeq //a
+tle y /tlkey y /tl$ey //a //
+tls
+tls-key--allow-host /a
+tls-key y-adapt
+metrics-interval 
+max-conns 1
+cert-auth-key .tmp/ed.phello h
+cert-auth-key /tmp/e heal 0uth-key .tmp/ed.pub	
+motd  h
+cert-auth-key /tmp/e hello wor100

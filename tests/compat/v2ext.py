@@ -2,6 +2,7 @@
 # Starts its own finalwisp servers and a TCP echo target; raw sockets + openssl CLI (ed25519 signing).
 # usage: python3 v2ext.py BIN BASEPORT     (uses BASEPORT .. BASEPORT+9)
 import base64, hashlib, os, socket, statistics, struct, subprocess, sys, tempfile, threading, time
+from hostlag import judged  # 60.78 T1: the brute-force p99 is judged on a run whose host lag stayed low
 
 BIN, BASE = sys.argv[1], int(sys.argv[2])
 P_AUTH, P_KEY, P_BOTH, P_NONE, P_MOTD, P_NOUDP, ECHO = BASE, BASE + 1, BASE + 2, BASE + 3, BASE + 4, BASE + 5, BASE + 9
@@ -257,40 +258,58 @@ expect_open(key_handshake(P_BOTH, "b"), "both: second key file")
 expect_close(handshake(P_BOTH, rec(2, pw("alice", "nope"))), 0xc0, "both: wrong password")
 
 # ---- 7. brute force does not block the event loop; timing
+# 60.78 T1 (80.03 4a: p99 >= 50 ms in 2 of 10 gates at full CPU load): p99 over about 100 pings is the second largest
+# ping, so two host stalls of 50 ms in half a second fail it, whatever the server does. The case is judged only on a run
+# whose host lag (hostlag.py: the client's own scheduling, which a blocked server event loop does not change) stayed at
+# or below 20 ms; a failing run above that runs again (at most 4 runs, the last one counts). Each run sends new guesses.
 N, THREADS = 1500, 16
-lat, stop = [], threading.Event()
-def legit():
-    w = handshake(P_AUTH, rec(2, pw("alice", "s3cret"))); w.msg()
-    w.wisp(0x01, 1, b"\x01" + struct.pack("<H", ECHO) + b"127.0.0.1")
-    while not stop.is_set():
-        t = time.perf_counter(); w.wisp(0x02, 1, b"x")
-        m = w.msg()
-        if not m: break
-        lat.append(time.perf_counter() - t); time.sleep(0.005)
-def brute(n, out):
-    for i in range(n):
-        w = handshake(P_AUTH, rec(2, pw("alice", f"guess{i}")))
-        out.append(w.msg() == (2, close0(0xc0))); w.s.close()
-lt = threading.Thread(target=legit); lt.start(); time.sleep(0.2)
-res = []; t0 = time.perf_counter()
-ts = [threading.Thread(target=brute, args=(N // THREADS, res)) for _ in range(THREADS)]
-[t.start() for t in ts]; [t.join() for t in ts]
-dt = time.perf_counter() - t0; stop.set(); lt.join()
-lat.sort()
-p99 = lat[int(len(lat) * 0.99)] * 1e3 if lat else 1e9
-print(f"     brute force: {len(res)} wrong guesses in {dt:.2f}s ({len(res)/dt:.0f}/s), legit echo p50 {lat[len(lat)//2]*1e3:.2f} ms p99 {p99:.2f} ms over {len(lat)} pings")
-ok(all(res) and len(res) == N // THREADS * THREADS, "brute force: every guess rejected with 0xc0")
-ok(p99 < 50, "brute force: an authenticated stream keeps answering (p99 < 50 ms)")
+all_rejected = []
+def brute_force_case(lag, run):
+    lat, stop = [], threading.Event()
+    def legit():
+        w = handshake(P_AUTH, rec(2, pw("alice", "s3cret"))); w.msg()
+        w.wisp(0x01, 1, b"\x01" + struct.pack("<H", ECHO) + b"127.0.0.1")
+        while not stop.is_set():
+            t = time.perf_counter(); w.wisp(0x02, 1, b"x")
+            m = w.msg()
+            if not m: break
+            lat.append(time.perf_counter() - t); time.sleep(0.005)
+    def brute(n, out):
+        for i in range(n):
+            w = handshake(P_AUTH, rec(2, pw("alice", f"guess{run}-{i}")))
+            out.append(w.msg() == (2, close0(0xc0))); w.s.close()
+    lt = threading.Thread(target=legit); lt.start(); time.sleep(0.2)
+    res = []; t0 = time.perf_counter()
+    ts = [threading.Thread(target=brute, args=(N // THREADS, res)) for _ in range(THREADS)]
+    [t.start() for t in ts]; [t.join() for t in ts]
+    dt = time.perf_counter() - t0; stop.set(); lt.join()
+    lat.sort()
+    p99 = lat[int(len(lat) * 0.99)] * 1e3 if lat else 1e9
+    print(f"     brute force (run {run}): {len(res)} wrong guesses in {dt:.2f}s ({len(res)/dt:.0f}/s), legit echo p50 {lat[len(lat)//2]*1e3 if lat else 0:.2f} ms p99 {p99:.2f} ms over {len(lat)} pings")
+    all_rejected.append(all(res) and len(res) == N // THREADS * THREADS)
+    return p99 < 50, f"brute force: an authenticated stream keeps answering (p99 < 50 ms; {p99:.2f} ms)"
+cond, msg = judged("v2ext brute force p99", 0.020, 4, brute_force_case)
+ok(all(all_rejected), f"brute force: every guess rejected with 0xc0 ({len(all_rejected)} run(s))")
+ok(cond, msg)
 
-def timed(user, pwd, n=300):
-    out = []
-    for _ in range(n):
-        w = WS(P_AUTH); w.msg()
-        p = info(rec(2, pw(user, pwd)))
-        t = time.perf_counter(); w.send(p); w.msg(); out.append(time.perf_counter() - t); w.s.close()
-    return statistics.median(out) * 1e6
-for _ in range(2): timed("alice", "x", 50)  # warm up
-a = timed("alice", "s3cret"); b = timed("alice", "s3cres"); c = timed("zzzzz", "s3cret"); d = timed("alice", "x" * 200)
+def one_handshake(user, pwd):
+    w = WS(P_AUTH); w.msg()
+    p = info(rec(2, pw(user, pwd)))
+    t = time.perf_counter(); w.send(p); w.msg(); dt = time.perf_counter() - t; w.s.close()
+    return dt
+def timed_all(cases, n=300):
+    """the median handshake (us) of each case, the cases interleaved (each round runs every case once, in a rotating
+    order). 60.78 T1: four series one after another saw different host load (seen: a spread of 977 us under CPU load,
+    3 us typical), so the load is now spread over all four alike"""
+    out = [[] for _ in cases]
+    for r in range(n):
+        for k in range(len(cases)):
+            j = (r + k) % len(cases)
+            out[j].append(one_handshake(*cases[j]))
+    return [statistics.median(o) * 1e6 for o in out]
+CASES = [("alice", "s3cret"), ("alice", "s3cres"), ("zzzzz", "s3cret"), ("alice", "x" * 200)]
+timed_all(CASES, 25)  # warm up
+a, b, c, d = timed_all(CASES)
 print(f"     handshake medians (us): right {a:.0f}, wrong last byte {b:.0f}, unknown user {c:.0f}, long password {d:.0f}")
 ok(max(a, b, c, d) - min(a, b, c, d) < 100, "timing: medians within 100 us (loopback noise; compare is constant-time by construction)")
 

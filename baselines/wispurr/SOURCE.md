@@ -1,6 +1,7 @@
 # wispurr baseline (formerly "mrrowisp")
 Source: https://github.com/sylvieisnton/wispurr. Benches use the LATEST upstream commit (owner, 2026-11-15): check
 `git -C ref/wispurr fetch` before a bench round and rebuild when upstream moved.
+Checked 2026-11-16 15:45Z (60.78 G02): main is still 0e0fdb1 (tags v4.2.1-v4.2.3 are older); no rebuild.
 - `wispurr` = **0e0fdb1** (2026-11-14, "fix: fix random crashing"; LICENSE now AGPL-3.0 text from 36de32e). md5 f6ecb5f1 (go 1.26.8).
 - `wispurr-2afbad2` = 2afbad2 (2026-10-19), the build of every result before 2026-11-15. Its Go core `wisp/` is
   byte-identical to the last mrrowisp module (soap-phia/mrrowisp v0.0.0-20260916003350-55bb4b286ddf); main.go only adds --host. md5 475a4d46.

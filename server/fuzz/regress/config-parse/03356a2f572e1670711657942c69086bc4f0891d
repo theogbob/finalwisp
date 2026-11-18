@@ -1,0 +1,61 @@
+buffer 15 
+#   
+#$ 
+ 
+log-streams    
+#  
+#$ 
+ 
+log-streams   
+#$ 
+ 
+#   
+#$ 
+ 
+log-streams   
+#$ 
+ 
+#$s00   
+log-streams    
+#  
+#$ 
+ 
+log-streams   
+#$ 
+ 
+#   
+#$ 
+ 
+log-streams   
+#$ 
+ 
+#$s01  
+# 
+#$ 
+     
+buffer 15 
+#   
+#$ 
+ 
+log-streams   
+#$ 
+ 
+#$s00 "
+#$ 
+buffer 8
+# 
+#$ 
+     
+buffer 15 
+#   
+#
+buffer 15 
+#   
+#$ 
+ 
+log-streams   
+#$ 
+ 
+#$s00 "
+#$     
+ #

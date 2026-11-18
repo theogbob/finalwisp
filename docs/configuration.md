@@ -36,8 +36,8 @@ Before the topics: [how options are read](#how-options-are-read), the [config fi
   off. `--no-fd-admission`, `--no-conn-share` and `--no-dns-share` turn `--fd-admission`, `--conn-share` and
   `--dns-share` off again: of the two, the later one wins. `--no-dns-reserve` and `--no-dns-own` do the same for
   `--dns-reserve` and `--dns-own`; so do `--no-tcpmem-share`, `--no-port-share`, `--no-dest-failfast` and
-  `--no-net-watch` for the four guards, `--no-stream-share` and `--no-stream-pool` for the two stream limits, and
-  `--no-unread-close` for `--unread-close`.)
+  `--no-net-watch` for the four guards, `--no-stream-share` and `--no-stream-pool` for the two stream limits,
+  and `--no-unread-close` for `--unread-close`.)
 - Options come from up to three places: a [preset](#presets), a [config file](#config-file) and the command line. The
   preset is read first, then the command line from left to right, with the config file at the place where `--config`
   stands. The later one wins.
@@ -62,7 +62,7 @@ Before the topics: [how options are read](#how-options-are-read), the [config fi
 | `--print-preset` | `NAME` |  | Print the preset's settings on stdout and exit with status 0. See [presets](#presets). |
 | `--show-config` |  |  | Check the options, print every setting in effect with the layer that set it and what this host allows, then exit. Nothing is started. |
 | `--help` | `[TOPIC]` |  | Print a short overview and exit with status 0. With a topic (the section names of this page, or `all`): the options of that topic. Short form: `-h`. |
-| `--version` |  |  | Print the version (`finalwisp 1.3.3`) and exit. Short form: `-V`. |
+| `--version` |  |  | Print the version (`finalwisp 1.4.0`) and exit. Short form: `-V`. |
 
 ## Config file
 
@@ -149,6 +149,7 @@ What `public` sets:
 | `dns-own` | on | `--no-dns-own` |
 | `dns-reserve` | on | `--no-dns-reserve` |
 | `tcpmem-share` | on | `--no-tcpmem-share` |
+| `unread-close` | on | `--no-unread-close` |
 | `port-share` | on | `--no-port-share` |
 | `dest-failfast` | on | `--no-dest-failfast` |
 | `net-watch` | on | `--no-net-watch` |
@@ -175,11 +176,11 @@ effect, and names the layer when another one overrides it. Every other setting t
 under the layer that decides it (`config file` or `command line`). Here the file's `max-streams-per-conn 256` replaced
 the preset's 1024:
 
-<!-- sample: real output of the merged 1.3.0 build on a terminal (2026-11-11, a 15-thread machine; the file stood in /tmp for the run) -->
+<!-- sample: real output of finalwisp 1.4.0 (md5 2fce78f4) on a terminal (2026-11-17, a 15-thread machine; the file stood in /tmp for the run); printed by bench/tools/startsample.py -->
 ```text
 $ finalwisp --config /etc/finalwisp.conf
 finalwisp listening on ws://127.0.0.1:6001/
-  version      1.3.0
+  version      1.4.0
   threads      15
   memory       up to 31410 MiB (half of this machine's memory)
   open files   up to 524288
@@ -187,7 +188,8 @@ finalwisp listening on ws://127.0.0.1:6001/
   TLS          off
   preset       public: block-smtp on, max-streams-per-conn 256 (config file),
                fd-admission on, conn-share on, dns-own on, dns-reserve on,
-               tcpmem-share on, port-share on, dest-failfast on, net-watch on
+               tcpmem-share on, unread-close on, port-share on,
+               dest-failfast on, net-watch on, stream-share on, stream-pool on
   config file  /etc/finalwisp.conf: trusted-proxy 127.0.0.1, metrics-listen 9100
   metrics      http://127.0.0.1:9100/metrics
 ```
@@ -214,7 +216,7 @@ A plain `finalwisp` uses no preset: its `preset` line says `none`.
 | option | value | default | what it does |
 |---|---|---|---|
 | `--host` | `H` | `127.0.0.1` | Address to listen on. An IP address, not a name. Use `0.0.0.0` or `::` for direct clients; keep `127.0.0.1` behind a reverse proxy on the same host. |
-| `--port` | `P` | `6001` | TCP port to listen on (0-65535; do not use 0). |
+| `--port` | `P` | `6001` | TCP port to listen on (1-65535). |
 | `--threads` | `N` | number of CPUs | Event loop threads. Lower it to leave cores to other services. `0` counts as 1. |
 | `--listen-unix` | `PATH` | off | A second listener on a Unix socket, next to the TCP one. Plain `ws://` only. Meant for a reverse proxy on the same host. Clients on it are trusted to send the client-IP header, like `--trusted-proxy`. |
 | `--unix-mode` | `OCTAL` | `660` | Permissions of the Unix socket file. Whoever may write the file may connect. Needs `--listen-unix`. |
@@ -293,7 +295,7 @@ limits that you choose.
 | `--no-net-watch` |  |  | Turns `--net-watch` off again. Of the two, the later one wins. |
 | `--stream-share` |  | off | When file descriptors run short, a connection that holds many streams gets no new ones, while connections with fewer go on. The `public` preset sets it. `--no-stream-share` turns it off again. [Details](#--stream-share). |
 | `--no-stream-share` |  |  | Turns `--stream-share` off again. Of the two, the later one wins. |
-| `--unread-close` |  | off | While the host's TCP memory is short, reset a connection whose client stopped reading its downloads. Off unless asked for: the `public` preset does not set it. `--no-unread-close` turns it off again. [Details](#--unread-close). |
+| `--unread-close` |  | off | While the host's TCP memory is short, reset a connection whose client stopped reading its downloads, and read a waiting download's target socket out into its client's own queue when it holds more than half of a socket's share, so that the kernel does not drop what the destination sends. The `public` preset sets it. `--no-unread-close` turns it off again. [Details](#--unread-close). |
 | `--no-unread-close` |  |  | Turns `--unread-close` off again. Of the two, the later one wins. |
 
 Rates are bytes per second of TCP payload. In network units: `1M` is about 8.4 Mbit/s, `10M` about 84 Mbit/s,
@@ -440,12 +442,12 @@ last rule acts. On a kernel without the socket option the first rule is off; `--
 ### `--dest-failfast`
 
 A connect to a destination that does not answer holds a socket until `--connect-timeout` (10 seconds), and the
-kernel sends a SYN packet for it again and again in that time. Many streams to one dead destination hold many sockets
+kernel sends a SYN packet for it again and again in that time. Many streams to dead destinations hold many sockets
 and send many packets for nothing.
 
 With `--dest-failfast` a worker thread takes a destination (target address and port) for dead when 8 or more of its
-connects to it have each got no answer to 4 SYNs (about 3 seconds on a current kernel) and no stream to it has opened
-since the last count. Until it answers:
+connects to it are in the last 2.5 seconds of `--connect-timeout` (7.5 seconds old at the default), have each got no
+answer to 4 SYNs, and no stream to it has opened since the last count. Until it answers:
 
 - A new stream to it is refused at once with CLOSE `0x43`, the reason it would get at the connect timeout. Counter:
   `refuse_dest_dead`.
@@ -455,7 +457,18 @@ since the last count. Until it answers:
   dead destination starts refusing, new streams to it may still be answered `0x43` (no answer) and not `0x44`
   (refused): in a test, 22 of 137 streams.
 
-A target that answers the second or the third SYN is never taken for dead. Only while another client is connected: a
+Before that, a destination is failing from the first count that sees a connect to it 3 seconds old with no answer,
+until a stream to it opens (and is seen at a count) or for 30 seconds. One client address may have 64 connects in
+flight per worker thread that got no answer for 3 seconds or go to failing destinations (once it has one such
+connect, its newer connects to destinations with no open stream count too). Above that, its new
+connects to a failing destination, and to a destination with no open stream on that worker thread, are refused the
+same way, until some of its connects end. This bounds one address that asks for many dead destinations, also when it
+never asks for the same one twice.
+
+A target that answers by 7.5 seconds (the 5th SYN of a current kernel at 4 seconds, the 4th of the older schedule at
+7 seconds) is never taken for dead. A page of 70 streams from a host that answers only the fifth SYN lost no stream
+in 30 loads (it has at most about 50 connects in flight, under the 64); with the rule before 1.4.0, 14 of the 30
+loads lost 1 to 6 streams. Only while another client is connected: a
 client that is alone on the server is never refused. A name with more addresses goes on with the next one. Streams
 that are already connecting go on until `--connect-timeout`. Never applies to addresses that are not public
 (loopback, private, link-local, carrier-grade NAT `100.64.0.0/10` and the other reserved ranges), to
@@ -464,19 +477,29 @@ that are already connecting go on until `--connect-timeout`. Never applies to ad
 The cost is at a restart of the destination: streams that arrive between two probes are refused, also when the
 destination has just come back. In a test with a destination that was down for 12 seconds and came back, 60 of 270
 streams were refused at once; without the option 59 of them would have connected after a wait of up to 7 seconds. The
-first answer came at the same time with and without it. A host that answers only the fifth SYN (after 4 seconds)
-can lose a few streams of a large page: 1 of 70 in a test.
+first answer came at the same time with and without it.
+In a test (one VM, 8 worker threads, the public preset, one client address) at 300 streams per second to one dead
+destination every address was refused after 8 seconds (4 seconds with the rule before 1.4.0), and the server held at
+most 1,006 file descriptors (1,064 before); at 2,000 per second at most 3,260 (4,160 before). With 1,000 dead
+destinations (250 hosts, 4 ports each) it held 250 to 600 file descriptors over the last 15 seconds of each step at
+300, 1,000 and 2,000 streams per second (3,079 to 4,158 before, where only `--max-streams-per-conn` stopped it). The
+first 3 seconds of a burst still go through: at most 1,083 file descriptors at 300 per second, 2,659 at 1,000. Another
+client was not slowed down in any of these runs (request p99 0.3 ms, no error)..
 
-It covers TCP streams only, and it is not in effect with `--upstream` (every connect goes to the proxy). It does not
-cover connects to many dead destinations with fewer than 8 at a time to each one. The gauge `dest_dead` is the
-number of destinations that are taken for dead now.
+It covers TCP streams only, and it is not in effect with `--upstream` (every connect goes to the proxy). The budget
+is per address and worker thread: many addresses that each stay under it are not refused before a destination is
+taken for dead; with N addresses and T worker threads up to N x 64 x T connects can wait for one dead destination
+until 7.5 seconds (with 8 threads and 10 addresses: 5,120), where the rule before 1.4.0 took it for dead from about 3
+seconds. A destination that opens and closes its streams between two counts can stay failing for up to 30 seconds.
+The gauge `dest_dead` is the number of destinations that are taken for dead now.
 
 ### `--net-watch`
 
 Two kinds of traffic use the host's packet rate out, and the host has no limit for it that finalwisp could read:
 
 - Connects to many destinations that do not answer. The kernel sends the SYN packet of each one again and again
-  until `--connect-timeout`. `--dest-failfast` stops this for one destination, not for many.
+  until `--connect-timeout`. `--dest-failfast` bounds this per client address (64 connects in flight per worker
+  thread that get no answer), not for many addresses.
 - UDP datagrams. finalwisp has no limit on datagrams per second.
 
 `--net-watch` refuses nothing. It adds three values to the metrics:
@@ -521,19 +544,24 @@ is no warning and no gauge. finalwisp changes no setting of the table.
 short, or many clients that each hold a few, keep that memory for as long as they stay connected and do not read.
 `--unread-close` acts on those connections.
 
-While the host's TCP memory is short, the server resets a connection when both of these are true at each of its
-checks (every 2 seconds) for 600 seconds (10 minutes):
+While the host's TCP memory is short, the server resets a connection whose stall time is used up. A connection is in
+a stall when both of these are true at two of its checks (every 2 seconds) in a row:
 
 - The connection holds a download that waits for its client: the server has stopped reading the target because the
   client's output is full (the same count as `--tcpmem-share`).
 - The client's receive window is 0 and the client took no data: its own socket buffer is full. A connection that is
   slow because of the network, or because the host has no memory to send, has a window above 0 and is not counted.
 
+Each connection starts with 600 seconds (10 minutes) of stall time. The time between two such checks uses it up. Data
+the client takes adds 1 second per 512 bytes, up to 3600 seconds (1 hour); the first data the server sees on the
+connection (what filled the client's buffer) adds 1 second per 4 KiB. A connection that holds more of the host's TCP
+memory than one stream can (the third value of `net.ipv4.tcp_rmem`, plus `--notsent-lowat`) uses its time up faster,
+by how much more it holds: its streams, not its client's buffer, decide what it costs the host.
+
 "Short" is the mark of `--tcpmem-share`: from 3/4 of the third value of `net.ipv4.tcp_mem` until below 11/16. In a
 container that cannot read `net.ipv4.tcp_mem`, it is the time while the kernel reports TCP memory pressure
-(`/proc/net/protocols`). The server reads `/proc/net/sockstat` for this, and changes no kernel setting. The 600
-seconds can start before the mark: a connection that has taken nothing for 600 seconds is reset at the first check
-after the mark is set.
+(`/proc/net/protocols`). The server reads `/proc/net/sockstat` for this, and changes no kernel setting. Stall time is
+used up also before the mark: a connection whose time is used up is reset at the first check after the mark is set.
 
 A reset (TCP RST) closes every stream of the connection and frees the kernel memory of all of them: the buffers of
 its target sockets and the data queued for the client. A CLOSE for each stream would not help, because a client that
@@ -543,33 +571,66 @@ does not read never gets it. Counter: `close_unread`. With `--log-conns`, the li
 longer short (`is at rest`), at most one such pair per 10 s; with `--tcpmem-share` on, its own lines name the same
 moments.
 
-Why 600 seconds: a Linux client whose buffer is full opens its window again only when much of the buffer is free,
-so a client that reads slowly takes no new data for minutes at a time, and the larger its buffer, the longer. In tests
-on one host (loopback, 10 minutes each), the longest time without new data was:
+Why time is bought with data: a Linux client whose buffer is full opens its window again only when much of the
+buffer is free, so a client that reads slowly takes no new data for minutes at a time, and the larger its buffer, the
+longer. In tests on one host (loopback, 10 minutes each), the longest time without new data was:
 
 | client's receive buffer | reads 2 KiB per second | reads 8 KiB per second |
 |---|---|---|
 | the kernel's default, grown by the kernel (to 0.4-0.8 MiB) | 168-187 s | 45 s |
 | 8 MiB | 315-346 s | 87 s |
 
+That time is paid for: each such wait drains at most 1.3 times the data the client took just before it, and the
+first one at most a tenth of what filled the buffer. So a reader that takes data at 1 KiB per second or more earns
+more time than it waits, whatever its buffer, and a client cannot get more time by announcing a large window: only
+data it takes counts.
+
 What it does to honest clients:
 
 - Nothing is reset while the host has TCP memory to spare, however long a client does not read.
-- A reader of 2 KiB per second or more with a buffer of up to 8 MiB stayed below the limit in these tests. A client
-  that reads slower, or has a larger buffer (a buffering media player can have one), can take no data for 600 seconds
-  and be reset while the host's TCP memory is short.
-- A client that paused and then read again within 10 minutes is kept, if its buffer then empties before the limit.
-- A client that paused for 10 minutes or more can be reset while the host's TCP memory is short. A phone app in the
-  background or a frozen browser tab can do this. Such a client gets an error and connects again.
+- A reader of 1 KiB per second or more earns its time back as it reads, also with a large buffer.
+- A client that pauses and then reads again gets its time back from what it reads.
+- A client that pauses for 10 minutes or more in all, without taking data in between, can be reset while the host's
+  TCP memory is short. A phone app in the background or a frozen browser tab can do this. Such a client gets an error
+  and connects again.
 - Unix-socket clients (`--listen-unix`) are never reset: they have no TCP receive window.
 
-What it does not cover: a client that reads a little now and then on purpose is a slow reader to the server, and
-still holds the memory of its downloads. A connection that does not read is reset only after 600 seconds, so the
-host can be short of TCP memory for that long. `--tcpmem-share` acts sooner, at new streams.
+What it does not cover: a client that takes 512 bytes per second on purpose is a slow reader to the server, and keeps
+the memory of its downloads. A connection that takes nothing is reset only after its 600 seconds (or up to 3600 if it
+first took data), so the host can be short of TCP memory for that long. `--tcpmem-share` acts sooner, at new streams.
 
-It needs Linux 5.4 or later (the receive window in `TCP_INFO`). On an older kernel, a start with the option logs that
-it is not in effect. It is off unless asked for: the public preset does not set it in this release (a later release
-may, once a rule that does not depend on the client's buffer is tested); `--no-unread-close` turns it off.
+It also relieves waiting downloads (below). It needs Linux 5.4 or later (the receive window in `TCP_INFO`); the relief
+needs Linux 5.15 or later and a readable `net.ipv4.tcp_mem`. On an older kernel, a start with the option logs which
+part is not in effect. The public preset sets it (since 1.4.0); `--no-unread-close` turns off both parts.
+
+#### Relief of waiting downloads
+
+While the host's TCP memory is short, the kernel gives a socket memory for new data only while the socket holds less
+than its share: the third value of `net.ipv4.tcp_mem` divided by the TCP sockets on the host. A download that waits
+for its client keeps its data in the target socket. Once that socket holds more than its share, the kernel drops
+everything the destination sends to it, also the next byte the socket waits for, so the destination never gets an
+acknowledgement and ends the connection after about 15 minutes (`net.ipv4.tcp_retries2`). The stream then ends with
+CLOSE 0x03, also for a client that reads, only slowly. This holds for every proxy that leaves unread bytes in the
+kernel; the resets above do not prevent it.
+
+So `--unread-close` also moves those bytes into the server. At each of its checks (every 2 seconds) while the host's
+TCP memory is short, a target socket of a waiting download whose memory (as the kernel counts it, with its overhead
+per packet) is above half of the share gets a receive buffer of half the share, and what it holds is read out. The
+bytes go to the end of its client's own queue, in order, so the client gets them as it reads. The socket keeps that
+small buffer while the host's TCP memory is short, also when the download reads again. Then it gets its old size back
+(at most twice `net.core.rmem_max`) and the kernel sizes it again. The socket's end (a FIN or a reset from the
+destination) stays queued behind the data, and the stream ends as it would have.
+
+The bytes then use the server's memory: at most a quarter of the memory budget (`--mem-budget`; each worker thread a
+quarter of its part; with `--mem-budget 0` nothing is moved). A socket whose bytes would pass that is left as it is,
+and so is one whose bytes would fill its client's queue to the point where the server stops reading that client.
+Connections that earned stall time go first. Counters: `relief_bytes` (bytes moved), `relief_streams` (sockets read
+out) and `relief_capped` (sockets left because of a cap, counted at every check that leaves one: a socket left for a
+minute counts about 30 times). It does nothing while a stage of the memory budget caps socket buffers.
+
+The quarter of the budget is a safety net, not a limit to size for. In our tests (90 minutes of held TCP memory
+pressure on two kernels), it was never reached: with a small budget, the memory budget's own stages came first and
+the relief stopped there, and otherwise the bytes moved stayed below it.
 
 <a id="destination-policy"></a>
 ## Destinations
@@ -707,7 +768,7 @@ Log formats and the metric names are in [logs and metrics](logs-metrics.md).
 
 `finalwisp --help memory` prints these options: memory budget, kernel TCP memory.
 
-The memory budget is on by default. `--tcpmem-adapt` and `--park-rcvlock` are off by default; credit pacing and adaptive
+The memory budget is on by default. `--tcpmem-adapt` is off by default; credit pacing and adaptive
 splice are on. [Memory](memory.md) explains when each one helps.
 
 | option | value | default | what it does |
@@ -715,7 +776,7 @@ splice are on. [Memory](memory.md) explains when each one helps.
 | `--mem-budget` | `BYTES` | automatic | The memory the server plans to stay under. Automatic means the cgroup memory limit, else half of the RAM. `0` turns the budget off, and with it the memory levels and the warning about kernel TCP memory pressure (see [runtime hints](logs-metrics.md#runtime-hints-and-warnings)). See [memory budget](memory.md#memory-budget). |
 | `--tcpmem-adapt` |  | off | When the host is near its kernel TCP memory limit (`net.ipv4.tcp_mem`), shrink the buffers of this server's sockets to remote peers. For a small VPS that runs out of TCP memory under many fast streams. [Details](#--tcpmem-adapt). |
 | `--no-credit-pace` |  | credit pace on | Turn off credit pacing. By default a stream gets no new upload credit while its download waits on the client (the client reads slower than the target answers), so echo-like traffic and other full-duplex bulk transfers cannot fill the kernel socket buffers faster than the client reads. [Details](#--no-credit-pace). |
-| `--park-rcvlock` |  | off | Stop the kernel from growing the receive buffer of a download stream's target connection while the stream waits on a slow client. Needs Linux 5.15 or later (the server refuses to start otherwise). [Details](#--park-rcvlock). |
+| `--park-rcvlock` |  | off | No effect since 1.4.0: `--unread-close` manages the receive buffers of waiting downloads. Still accepted (a start logs one line). [Details](#--park-rcvlock). |
 | `--no-adaptive-splice` |  | adaptive splice on | Turn off adaptive splice (on by default since 1.2.1; `--adaptive-splice` is still accepted). Adaptive splice reads less from the targets of a busy far client at a time. [Details](#--no-adaptive-splice). |
 | `--stream-pool` |  | off | Under memory pressure the worker threads share one stream limit of the same total instead of one limit each, so a busy thread is not refused while another has room. The `public` preset sets it. `--no-stream-pool` turns it off again. [Details](#--stream-pool). |
 | `--no-stream-pool` |  |  | Turns `--stream-pool` off again. Of the two, the later one wins. |
@@ -730,7 +791,10 @@ and of 400 streams that one connection asked for, 173 were refused. With `--stre
 the same total (454 there): one connection that asked for 340 streams got all of them, and with a second connection
 the server held 452 streams in all and refused the rest. The memory bound does not change. A thread takes streams
 from the shared count in small blocks and gives back what it does not use, so the open streams can fall short of the
-total by the blocks the other threads keep (at most 2 each).
+total by the blocks the other threads keep (at most 2 each). A WebSocket proxy (wsproxy) request takes its stream from the
+shared count before the server answers it: over the limit it gets `503 Service Unavailable` (counter
+`refuse_streams`), not an open connection whose stream is closed at once. When the server is out of file descriptors,
+a wsproxy request still gets its connection and then the close of its stream.
 
 ### `--tcpmem-adapt`
 
@@ -739,15 +803,11 @@ a warning at startup says why it is off otherwise, and so does `--show-config`.
 
 ### `--park-rcvlock`
 
-Without it, each waiting download can hold up to `net.ipv4.tcp_rmem` max (6-32 MiB) of the target's data in kernel
-memory, and many waiting downloads can push a small host into TCP memory pressure. The buffer keeps the size it has
-(it is never made smaller, so no data is dropped; one below 512 KiB is raised to 512 KiB or to twice
-`net.core.rmem_max`, whichever is smaller; finalwisp measures that limit with a test socket, so it also works in
-containers that hide the net sysctls) and grows again once the client catches up. Streams whose client sent data in
-the last 250 ms, or whose upload credit pacing holds, are not affected. It does nothing while the memory budget is
-below 256 MiB (the memory caps already limit these buffers there; `rcvlock_locks` stays 0). After a period of memory
-pressure, a target that the caps skipped can keep its lock until its stream next catches up, or until it closes. See
-[memory](memory.md#memory-budget) for when it helps.
+No effect since 1.4.0. It stopped the kernel from growing the receive buffer of a waiting download's target socket;
+`--unread-close` now manages these buffers while the host's TCP memory is short (see
+[relief of waiting downloads](#relief-of-waiting-downloads)). The option is still accepted on the command line and in
+a config file, so that old start commands start; a start with it logs one line. The counters `rcvlock_locks` and
+`rcvlock_errors` stay in the metrics output and are always 0.
 
 ### `--no-credit-pace`
 
@@ -761,7 +821,7 @@ not affected. Turn it off only to compare or roll back.
 
 ### `--no-adaptive-splice`
 
-When a client whose round trip was 10 ms or more at connect has more than 4 streams open (busy or idle) and its socket
+When a client whose shortest round trip is 10 ms or more has more than 4 streams open (busy or idle) and its socket
 is backed up, each zero-copy read from one of its targets takes at most 64 KiB instead of 256 KiB. This helps a small
 host that serves many slow downloads to far clients: with one client 112 ms away running 100 download streams on a
 2-core VPS, the download was 1.2-1.4x faster and the host stayed out of kernel TCP memory pressure (0 of 16 runs
@@ -769,8 +829,12 @@ instead of 9-12). Clients closer than 10 ms (same host, LAN), clients on `--list
 reverse proxy on the same host keep the 256 KiB reads, so it changes nothing for them: no gain and no cost. On a
 2-core VPS with clients on the same host, echo and download tests with 1 to 100 streams per client showed no
 difference with it on. Turn it off only to compare or roll back. Clients with 1-4 streams are not affected. It does
-nothing when splice is off (`--no-splice`, or a `--download-rate` cap). See [small
-hosts](memory.md#small-hosts-and-many-slow-downloads).
+nothing when splice is off (`--no-splice`, or a `--download-rate` cap). The round trip is read once per connection,
+the first time the other conditions hold, so a connection that never has more than 4 streams costs nothing. A
+connection that first meets them 4 to 4.5 minutes or more after it connected keeps the 256 KiB reads: by then the
+kernel's shortest round trip can include queueing delay (`net.ipv4.tcp_min_rtt_wlen`, 5 minutes by default, sets that
+window). The metrics line counts the connections it classed as `splice_far`, `splice_near` and `splice_old` (the late
+ones). See [small hosts](memory.md#small-hosts-and-many-slow-downloads).
 
 ### Rarely needed options
 
@@ -792,7 +856,7 @@ Leave these at the default unless a problem points at one of them.
 | `--graceful-close` |  | reset | Close a finished target connection with FIN instead of a TCP reset when the client closes the stream. The reset is much faster under connection churn and leaves no `TIME_WAIT` sockets behind. |
 | `--no-splice` |  | splice on | Copy downloads through user space instead of the kernel's zero-copy `splice`. A diagnostic switch: the one case where it may help is far clients behind a reverse proxy on the same small host. [Details](#--no-splice). |
 | `--balance` |  | off | Hand each new connection to the least busy thread instead of letting the kernel choose. Helps a few busy long-lived connections on big machines (4-11 % on 36-72 threads) and costs 1-7 % when many short connections come and go. |
-| `--auto-balance` |  | off | When one thread is fully busy with two or more busy connections while another thread is idle, move one of those connections to the idle thread for a trial of about 2.5 seconds: measure, move, measure, move back, measure. The move is kept only if the server as a whole carried more bytes or more packets with it than before and after it, and less of neither. When it helps: a host with many cores and many short connections (in one test, 9% more connections per second with 8 clients of 32 short streams each on 16 threads). On a host with two cores it finds nothing to move. On a host with up to 4 worker threads it checks less and less often while it finds nothing to do (every 5 seconds, doubling up to every 160 seconds); with more threads it keeps watching. No effect on light traffic or when every thread is busy. Not seen: a process on the same host that loses CPU without it showing in this server's traffic. Counted as `moved_conns`, `moved_back` and `moved_reset` (a connection the new thread could not take over, which is then closed); the metrics line also has `balance_naps` (pauses so far) and `balance_nap_s` (the current pause in seconds, 0: watching; always 0 with more than 4 threads). |
+| `--auto-balance` |  | off | When one thread is fully busy with two or more busy connections while another thread is idle, move one of those connections to the idle thread for a trial of about 2.5 seconds: measure, move, measure, move back, measure. The move is kept only if the server as a whole carried more bytes or more packets with it than before and after it, and less of neither. When it helps: a host with many cores and many short connections (in one test, 9% more connections per second with 8 clients of 32 short streams each on 16 threads). On a host with two cores it finds nothing to move. On a host with up to 4 worker threads it checks less and less often while it finds nothing to do (every 5 seconds, doubling up to every 160 seconds); with more threads it keeps watching. No effect on light traffic or when every thread is busy. Not seen: a process on the same host that loses CPU without it showing in this server's traffic. In a test on two hosts with a busy process pinned to a quarter of the server's CPUs, that process did about 0.1% less work with this option on, while the server carried 5% to 31% more connections per second than without it. Counted as `moved_conns`, `moved_back` and `moved_reset` (a connection the new thread could not take over, which is then closed); the metrics line also has `balance_naps` (pauses so far) and `balance_nap_s` (the current pause in seconds, 0: watching; always 0 with more than 4 threads). |
 | `--no-tfo` |  | TFO on | Do not use TCP Fast Open to targets. Try it if a middlebox drops SYN packets that carry data. |
 | `--no-keepalive` |  | on | Turn off dead-peer detection on clients and targets (TCP keepalive). With it on, an idle dead peer is closed after 3 to 4 minutes. |
 | `--no-credit-v2` |  | credit v2 on | Turn off the upload credit scheme that pings the client after a CONTINUE. A compatibility fallback; leave it on. |

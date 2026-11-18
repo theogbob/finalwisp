@@ -51,8 +51,9 @@ class Server:
             time.sleep(0.05)
         return needle in self.text()
 
-    def metric(self, name, secs=4):
-        """the value of `name` in the newest ev=metrics line that is newer than this call"""
+    def metric(self, name, secs=30):
+        """the value of `name` in the newest ev=metrics line that is newer than this call (an event wait: it ends at
+        the first such line, so the long deadline costs nothing on a quiet host; 60.74 4.5)"""
         n0 = len(self.lines("ev=metrics"))
         end = time.time() + secs
         while time.time() < end:
@@ -128,10 +129,12 @@ def ws_parse(buf):
     return out, buf
 
 
-def wisp_connects(port, targets, budget=10.0, quiet=1.5):
+def wisp_connects(port, targets, budget=10.0, quiet=1.5, done=None):
     """Wisp v1: open one TCP stream per (host, port) in `targets` (stream ids from 1) on one connection. Returns
     {stream id: close reason} for the streams the server closed, read until `quiet` s pass without a packet or the
-    total `budget` is used (probe rule: handles CLOSE, per-read timeout, total budget)."""
+    total `budget` is used (probe rule: handles CLOSE, per-read timeout, total budget). done(closes): the quiet gap
+    ends the read only once it is true (the event the case waits for: a loaded host can take more than `quiet` s to
+    answer 1030 CONNECTs; 60.74 4.5: C1 saw 0 of 6 refusals at load1 37 while the server counted 6)"""
     s, status, rest = upgrade(port)
     if " 101 " not in status + " ":
         s.close()
@@ -141,7 +144,7 @@ def wisp_connects(port, targets, budget=10.0, quiet=1.5):
     s.sendall(out)
     closes, buf, end, last = {}, rest, time.time() + budget, time.time()
     s.settimeout(0.2)
-    while time.time() < end and time.time() - last < quiet:
+    while time.time() < end and (time.time() - last < quiet or (done is not None and not done(closes))):
         try:
             d = s.recv(65536)
         except socket.timeout:
@@ -233,9 +236,9 @@ def group_b(a):
     conf_off3 = os.path.join(a.tmp, "off3.conf")
     P = "finalwisp: preset "
     # v1.3.0: the preset has ten settings (60.72: twelve); T = the four switches of 60.57 / 60.58, the four of 60.63 and
-    # the two stream limits of 60.72 with one layer (60.73's unread-close is not in it in v1.3.2)
-    SW = ("fd-admission", "conn-share", "dns-own", "dns-reserve", "tcpmem-share", "port-share", "dest-failfast", "net-watch", "stream-share",
-          "stream-pool")
+    # the two stream limits of 60.72 with one layer (60.78: and unread-close, in the preset since v1.4.0)
+    SW = ("fd-admission", "conn-share", "dns-own", "dns-reserve", "tcpmem-share", "unread-close", "port-share", "dest-failfast", "net-watch",
+          "stream-share", "stream-pool")
     open(conf_off3, "w").write("".join("no-%s\n" % k for k in SW))
     T = lambda layer, on="on": "".join(", %s %s (%s)" % (k, on, layer) for k in SW)
     off3 = ["--no-" + k for k in SW]
@@ -298,14 +301,18 @@ def group_c(a):
     ]
     for i, (name, args, want) in enumerate(cases):
         s = Server(a.bin, a.port + 20 + i, args + ["--allow-loopback", "--metrics-interval", "1"], os.path.join(a.logs, name.split()[0] + ".err"))
-        closes = wisp_connects(a.port + 20 + i, targets)
+        # the event: every CONNECT handled (the sink holds the n - want streams that opened, the want refusals came);
+        # then the quiet gap still catches a close too many
+        c0 = len(sink.conns)
+        closes = wisp_connects(a.port + 20 + i, targets, budget=60.0,
+                               done=lambda c, want=want, c0=c0: len(c) >= want and len(sink.conns) - c0 >= n - want)
         refused = sorted(k for k, v in (closes or {}).items() if v == 0x49)
         m = s.metric("refuse_limit")
         s.stop()
         ok = closes is not None and len(refused) == want and (want == 0 or refused == list(range(n - want + 1, n + 1))) and m == want \
             and len(closes) == want
         record(name, ok, streams_sent=n, closed_0x49=len(refused), first_refused=refused[:1], other_closes=len(closes or {}) - len(refused),
-               refuse_limit=m)
+               other_reasons=sorted({"0x%02x" % v for v in (closes or {}).values() if v != 0x49}), refuse_limit=m)
     sink.close()
     for i, (name, args, want48) in enumerate([
         ("C5 --preset public: CONNECT to port 25, 465, 587 gets 0x48", ["--preset", "public"], True),
@@ -313,7 +320,9 @@ def group_c(a):
         ("C7 --preset public --no-block-smtp: not refused by policy", ["--preset", "public", "--no-block-smtp"], False),
     ]):
         s = Server(a.bin, a.port + 30 + i, args + ["--allow-loopback", "--metrics-interval", "1"], os.path.join(a.logs, name.split()[0] + ".err"))
-        closes = wisp_connects(a.port + 30 + i, [("127.0.0.1", 25), ("127.0.0.1", 465), ("127.0.0.1", 587)], quiet=1.0)
+        # (C5 waits for its three refusals; in C6 / C7 a stream may stay open, so the quiet gap ends it as before)
+        closes = wisp_connects(a.port + 30 + i, [("127.0.0.1", 25), ("127.0.0.1", 465), ("127.0.0.1", 587)], quiet=1.0, budget=30.0,
+                               done=(lambda c: len(c) >= 3) if want48 else None)
         m = s.metric("refuse_policy")
         hint = s.lines("hint: mail ports 25, 465 and 587 are open")  # (60.60 wording)
         s.stop()
@@ -508,9 +517,9 @@ def group_e(a):
            stderr=p.stderr.decode("utf-8", "replace")[:300])
     # 60.60: at the default log level the start block's `preset` row says it (the image's CMD cannot carry --log-level debug)
     P = "  preset        "
-    # (v1.3.0: the four switches of 60.57 / 60.58 and the four of 60.63; 60.72: the two stream limits)
-    T = (", fd-admission on, conn-share on, dns-own on, dns-reserve on, tcpmem-share on, port-share on, dest-failfast on, net-watch on"
-         ", stream-share on, stream-pool on")
+    # (v1.3.0: the four switches of 60.57 / 60.58 and the four of 60.63; 60.72: the two stream limits; 60.78: unread-close)
+    T = (", fd-admission on, conn-share on, dns-own on, dns-reserve on, tcpmem-share on, unread-close on, port-share on, dest-failfast on"
+         ", net-watch on, stream-share on, stream-pool on")
     for name, extra, want, listen in [
         ("E3 docker run IMAGE", [], P + "public: block-smtp on, max-streams-per-conn 1024" + T, "0.0.0.0:6001"),
         ("E4 docker run IMAGE --host 0.0.0.0 --port 6001 --motd hi (arguments replace CMD, the preset stays)",

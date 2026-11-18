@@ -1,0 +1,51 @@
+ÿþallow-host t--block-host
+block-dest 22.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls-cert /eay /doc.test8--allowt t--block-host
+block-st 10.0.0.0/8
+tls-cert /aey /doc.test8--allow-dest 10.0..0/8
+tls-cert /aeytls-cert /aey 00oc.test8--allow-de.0.0/8
+tls-cert /aey 10.0.0.0/
+allow-dest 10.0.0.0/8
+tls-cert /aey /dok-hls-cert!/a›~ /d/8
+tls-cert /aey 10.0.0.0/
+allow-dest 10.0.0.0/8
+tls-cert /aow-destw-dntrol chare.0.0/8
+tls-cert /aey 10.0.0.0/
+allow-dest 10.0.0.0/8
+tls-cert /aey /dok-hls-cert!/aÿy /d/8
+tls-cert /aey 10.0.0.0/
+allow-dest 10.0.0.0/8
+tls-cert /aey /dtest8--all-dest 22.0.0.0/8
+
+block-dest 10.0.0.0/8
+tls0.0/8
+tls-cert /aey 10.0.0.0/
+allow-dest 10.0.0.0/8
+tls-cert /aey /dok-hls-cert!/a›~ /d/8
+tls-cert /aey 10.0.0.0/
+allow-dest 10.0.0.GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG0/8
+tls-cert /aow-destw-dntrol chare.0.0/8
+tls-cert /aey 10.0.0.0/
+aug
+log-conns
+metrics-listen 1
+listen-unix /tmp/fwtUUp/fswcfo.k lagser-sream 592K
+log-level debug
+log-conns
+metrics-listen 1
+listen-unix /tUUUUUUUUUUUUUUUUUUUUUUUUUrics-listls-cert /aey /doc.test8--allow-d?aey /doc.test8--allow-dest 10.0..0/8
+tls-cert /aeytls-cert /aey 00oc.testow-dest 10.0.0.GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG0/8
+tls-cert /aow-destw-dntrol chare.0.0/8
+tls-cert /aey 10.0.0.0/
+aug
+log-conns
+metrics-listen 1
+listen-unix /tmp/fwtUUp/fswcfo.k lagser-sream 592K
+log-level debug
+log-conns
+metrics-listen 1
+listen-unix /tUUUUUUUUUUUUUUUUUUUUUUUUUrics-listls-cert /aey /doc.test8--allow-d?aey /doc.test8--allow-dest 10.0..0/8
+tls-cert /aeytls-cert /aey 00oc.test8--allow-de.0.0/8
+tls-cert /aey 10.0.0.0/rt /aey ,ll/dok-o

@@ -105,7 +105,7 @@ pub struct Moved {
     peer: Option<clientip::Peer>,
     log: Option<connlog::ConnLog>,
     meter: Option<meter::Meter>,
-    far: bool,
+    far: u32, // 60.78 its adaptive-splice class or age stamp (worker/splicefar.rs)
     /// v1.3.1 K1: its keepalive idle time was spread already (Worker::ka_spread)
     ka: bool,
     streams: Vec<MovedT>,
@@ -140,7 +140,6 @@ struct MovedT {
     old: u64, // its token on the source (the client's parked lists name it)
     log: Option<streamlog::StreamLog>,
     pace: Option<pace::PaceSt>,
-    lock: Option<(rcvlock::LockSt, bool)>,
 }
 
 /// per worker, made at the first request (None: --auto-balance never acted here)
@@ -334,6 +333,8 @@ fn inventory(w: &Worker) {
         dns_tx: _,
         next_scan: _,
         next_sweep: _,
+        age_k: _,       // 60.78 (stamps are counted from one shared start: a moved stamp means the same)
+        age_pass_at: _, // 60.78
         ip_sweep: _,
         outbox: _,
         logline: _,
@@ -385,7 +386,6 @@ fn inventory(w: &Worker) {
         streamlog: _,
         meters: _,
         cpace_st: _,
-        rcvlock: _,
         splice_far: _,
         ka_spread: _, // v1.3.1 K1 (its socket keeps the idle time; the flag travels: Moved::ka)
         sfds: _,      // (published back at the source, noted again at the destination)
@@ -482,7 +482,6 @@ impl Worker {
             let old = tok(K_TARGET, ti, tg);
             let log = self.slog_out(ti);
             let pace = self.pace_out(ti, tg & 0x3fff_ffff);
-            let lock = self.rcvlock_out(ti, tg & 0x3fff_ffff);
             let t = self.targets.remove(ti).expect("60.64 a stream of the client");
             if t.fd >= 0 {
                 ep_del(self.ep, t.fd);
@@ -495,7 +494,7 @@ impl Worker {
             if let Some(s) = t.cv.as_ref() {
                 self.starve_pool += s.extra; // 20.30 (the destination takes them from its pool)
             }
-            streams.push(MovedT { t, old, log, pace, lock });
+            streams.push(MovedT { t, old, log, pace });
         }
         self.stats.streams.set((self.targets.slots.len() - self.targets.free.len()) as u64);
         if self.fd_mask & crate::fdgate::MARK_SHARE != 0 {
@@ -504,7 +503,7 @@ impl Worker {
         let peer = self.peers_of.get_mut(ci as usize).and_then(Option::take);
         let log = self.log_out(ci);
         let meter = self.meters.get_mut(ci as usize).map(std::mem::take);
-        let far = self.splice_far.get(ci as usize).copied().unwrap_or(false);
+        let far = self.splice_out(ci);
         let ka = self.ka_spread.get_mut(ci as usize).is_some_and(std::mem::take); // (as reap_dead: the slot is free)
         let mut c = self.clients.remove(ci).expect("60.64 the client");
         ep_del(self.ep, c.fd);
@@ -565,13 +564,7 @@ impl Worker {
             }
             self.meters[i] = mt;
         }
-        if self.cfg.adaptive_splice {
-            let i = ci as usize;
-            if self.splice_far.len() <= i {
-                self.splice_far.resize(i + 1, false);
-            }
-            self.splice_far[i] = far;
-        }
+        self.splice_in(ci, cg, far);
         if ka {
             let i = ci as usize;
             if self.ka_spread.len() <= i {
@@ -583,7 +576,7 @@ impl Worker {
         let mut regs: Vec<(RawFd, u64, u32)> = Vec::with_capacity(streams.len() + 1);
         regs.push((cfd, tok(K_CLIENT, ci, cg), EV_ALL));
         let mut parked: Vec<u64> = Vec::new();
-        for MovedT { mut t, old, log, pace, lock } in streams {
+        for MovedT { mut t, old, log, pace } in streams {
             (t.client, t.cgen, t.cidx) = (ci, cg, NOT_LISTED);
             (t.capped, t.moved) = (false, 0); // (this worker's caps: below, once the record is in its slot)
             if let Some(s) = t.cv.as_mut() {
@@ -611,9 +604,6 @@ impl Worker {
             self.slog_in(ti, log);
             if let Some(p) = pace {
                 self.pace_in(ti, tg & 0x3fff_ffff, p);
-            }
-            if let Some(l) = lock {
-                self.rcvlock_in(ti, tg & 0x3fff_ffff, l);
             }
             if state == TState::Connecting {
                 self.targets.at(ti).cidx = self.connecting.len();

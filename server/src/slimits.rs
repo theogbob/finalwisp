@@ -135,19 +135,20 @@ pub fn install(s: Slimits) {
     let _ = GLOBAL.set(s);
 }
 
-/// the server's state (None: both options off; the fuzz harness)
-#[cfg(not(test))]
+/// the server's state (None: both options off)
+#[cfg(not(any(test, fuzzing)))]
 #[inline]
 pub fn global() -> Option<&'static Slimits> {
     GLOBAL.get()
 }
 
-#[cfg(test)]
+#[cfg(any(test, fuzzing))]
 thread_local! {
-    /// tests: each test thread its own state (a worker test runs its workers on its own thread)
+    /// tests: each test thread its own state (a worker test runs its workers on its own thread); the fuzz harness: the
+    /// state of the variant whose input runs (its worker runs on the fuzzing thread)
     static TEST: std::cell::Cell<Option<&'static Slimits>> = const { std::cell::Cell::new(None) };
 }
-#[cfg(test)]
+#[cfg(any(test, fuzzing))]
 pub fn global() -> Option<&'static Slimits> {
     TEST.get()
 }
@@ -155,6 +156,11 @@ pub fn global() -> Option<&'static Slimits> {
 #[cfg(test)]
 pub fn set_test(s: Option<Slimits>) {
     TEST.set(s.map(|s| &*Box::leak(Box::new(s))));
+}
+/// the fuzz harness: the state of this thread's worker (one per config variant, made once)
+#[cfg(fuzzing)]
+pub fn set_ref(s: Option<&'static Slimits>) {
+    TEST.set(s);
 }
 
 #[cfg(test)]

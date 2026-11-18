@@ -76,16 +76,21 @@ pub fn record_len(h: &[u8]) -> Option<usize> {
     ((20..=23).contains(&h[0]) && h[1] == 3 && len <= MAX_RECORD).then_some(len)
 }
 
+/// The kernel cipher of a suite, by its IANA code (rustls::CipherSuite), not its Debug text: a renamed variant fails
+/// the build, a suite the kernel cannot offload is None (test: kernel_cipher_of_every_ring_suite)
 fn kernel_cipher(s: &SupportedCipherSuite) -> Option<u16> {
-    let name = format!("{:?}", s.suite());
-    if name.contains("AES_128_GCM") {
-        Some(TLS_CIPHER_AES_GCM_128)
-    } else if name.contains("AES_256_GCM") {
-        Some(TLS_CIPHER_AES_GCM_256)
-    } else if name.contains("CHACHA20_POLY1305") {
-        Some(TLS_CIPHER_CHACHA20_POLY1305)
-    } else {
-        None
+    use rustls::CipherSuite as C;
+    match s.suite() {
+        C::TLS13_AES_128_GCM_SHA256 | C::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 | C::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 => {
+            Some(TLS_CIPHER_AES_GCM_128)
+        }
+        C::TLS13_AES_256_GCM_SHA384 | C::TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 | C::TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 => {
+            Some(TLS_CIPHER_AES_GCM_256)
+        }
+        C::TLS13_CHACHA20_POLY1305_SHA256
+        | C::TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256
+        | C::TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256 => Some(TLS_CIPHER_CHACHA20_POLY1305),
+        _ => None,
     }
 }
 
@@ -642,6 +647,31 @@ mod tests {
             (cert.display().to_string(), key.display().to_string())
         })
         .clone()
+    }
+    /// 60.78 G17: every suite of the ring provider maps to its kernel cipher (the pick once matched the rustls Debug
+    /// text, so a rename in a rustls bump would have dropped every kTLS suite)
+    #[test]
+    fn kernel_cipher_of_every_ring_suite() {
+        use ring_provider::cipher_suite as s;
+        let want = [
+            (s::TLS13_AES_128_GCM_SHA256, TLS_CIPHER_AES_GCM_128),
+            (s::TLS13_AES_256_GCM_SHA384, TLS_CIPHER_AES_GCM_256),
+            (s::TLS13_CHACHA20_POLY1305_SHA256, TLS_CIPHER_CHACHA20_POLY1305),
+            (s::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, TLS_CIPHER_AES_GCM_128),
+            (s::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, TLS_CIPHER_AES_GCM_128),
+            (s::TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384, TLS_CIPHER_AES_GCM_256),
+            (s::TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384, TLS_CIPHER_AES_GCM_256),
+            (s::TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256, TLS_CIPHER_CHACHA20_POLY1305),
+            (s::TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256, TLS_CIPHER_CHACHA20_POLY1305),
+        ];
+        for (suite, cipher) in want {
+            assert_eq!(kernel_cipher(&suite), Some(cipher), "{:?}", suite.suite());
+        }
+        // every suite the provider offers (default and all) is in the table: a new one in a rustls bump fails here
+        let default = ring_provider::default_provider();
+        for suite in ring_provider::ALL_CIPHER_SUITES.iter().chain(default.cipher_suites.iter()) {
+            assert!(want.iter().any(|(w, _)| w.suite() == suite.suite()), "{:?} not in the table", suite.suite());
+        }
     }
     #[test]
     fn record_header() {

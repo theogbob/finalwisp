@@ -10,7 +10,9 @@
 # a refused first server, an IPv6 nameserver, cancellation (a closed stream stops the retries).
 # 60.18 #16 absolute names: a server under bwrap with a resolv.conf `search corp.internal` + `options ndots:5` asks
 # only the client's name (never wiki.corp.internal), so --block-host wiki.corp.internal cannot be bypassed with "wiki".
-import base64, os, socket, struct, subprocess, sys, threading, time
+import base64, os, re, socket, struct, subprocess, sys, threading, time
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hostlag import Lag, judged  # 60.74 4.5: bounds plus the measured host lag; deadline cases judged at low lag
 
 BIN, BASE = sys.argv[1], int(sys.argv[2])
 PRESET = ["--preset", "public"] if sys.argv[3:4] == ["preset"] else []
@@ -48,11 +50,12 @@ LOOP6 = socket.inet_pton(socket.AF_INET6, "::1")
 
 def answer(q, tcp):
     """-> list of (datagram, via_other_socket)"""
-    n, end = qname(q)
+    asked, end = qname(q)
+    n = re.sub(r"-r\d+(\.test)$", r"\1", asked)  # a run again of a case (judged) asks NAME-rN.test: answered as NAME.test
     qt = struct.unpack(">H", q[end:end + 2])[0]
     edns = struct.unpack(">H", q[10:12])[0] > 0
     with lock:
-        log.append((n, qt, "tcp" if tcp else "udp", edns))
+        log.append((asked, qt, "tcp" if tcp else "udp", edns))
     a = qt == 1
     good = reply(q, ans=[rr(P, 1, LOOP4)] if a else [])
     if n in ("ok.test", "okb.test", "wiki.corp.internal"): return [(good, False)]
@@ -208,6 +211,7 @@ def count(n):
     with lock:
         return sum(1 for x in log if x[0] == n)
 
+L = Lag()  # 60.74 4.5 (reset before each timed case)
 w = Wisp(P_A)
 sid = [0]
 def go(host, t=8.0, wsock=None, port=ECHO):
@@ -231,10 +235,12 @@ r, dt = go("nodata.test.")
 c1 = count("nodata.test")
 r2, _ = go("nodata.test.")
 ok(r == ("close", 0x42) and r2 == ("close", 0x42) and count("nodata.test") == c1, f"NODATA in both families: definitive, cached ({r})")
+L.reset()
 r, dt = go("servfail.test.")
 c1 = count("servfail.test")
 r2, _ = go("servfail.test.")
-ok(r == ("close", 0x42) and dt < 1.0 and count("servfail.test") > c1, f"SERVFAIL: CLOSE 0x42 at once ({dt*1000:.0f} ms), not cached (asked again)")
+ok(r == ("close", 0x42) and dt < L.bound(1.0, 4) and count("servfail.test") > c1,
+   f"SERVFAIL: CLOSE 0x42 at once ({dt*1000:.0f} ms, host lag {L.max()*1000:.0f} ms), not cached (asked again)")
 r, dt = go("garbage.test.")
 ok(r == ("data", b"ping"), f"garbage, wrong ID and wrong question ignored, then the real reply ({r})")
 r, dt = go("spoof.test.")
@@ -245,20 +251,29 @@ r, dt = go("formerr.test.")
 fe = [x[3] for x in log if x[0] == "formerr.test" and x[1] == 1]
 ok(r == ("data", b"ping") and fe[:2] == [True, False], f"FORMERR on EDNS -> resent without EDNS ({r}, edns per A query {fe})")
 # 70.10 RFC 8305 s3: a family that is never answered no longer holds the connect until the deadline (was 4 s, 70.09)
+# (a chain of 6 wakeups: client, worker, DNS thread, fake DNS, worker, echo target: the bounds add 6 x the host lag)
+L.reset()
 r, dt = go("v4only.test.", t=10)
-ok(r == ("data", b"ping") and dt < 0.5, f"AAAA never answered -> connects via A after the 50 ms resolution delay ({dt*1000:.0f} ms)")
+ok(r == ("data", b"ping") and dt < L.bound(0.5, 6),
+   f"AAAA never answered -> connects via A after the 50 ms resolution delay ({dt*1000:.0f} ms, host lag {L.max()*1000:.0f} ms)")
 if V6:
+    L.reset()
     r, dt = go("v6only.test.", t=10)
-    ok(r == ("data", b"ping") and dt < 0.5, f"A never answered -> connects via AAAA ::1 at once ({dt*1000:.0f} ms)")
-    with lock: n4 = accepts.get(("127.0.0.1", ECHO), 0); n6 = accepts.get(("::1", ECHO), 0)
-    r, dt = go("late6.test.", t=10)
-    time.sleep(0.6)  # the late AAAA (300 ms) must not start a second connection
-    with lock: d4 = accepts.get(("127.0.0.1", ECHO), 0) - n4; d6 = accepts.get(("::1", ECHO), 0) - n6
-    ok(r == ("data", b"ping") and dt < 0.25 and (d4, d6) == (1, 0),
-       f"AAAA 300 ms late: connected via A at {dt*1000:.0f} ms, one connection (v4 +{d4}, v6 +{d6})")
+    ok(r == ("data", b"ping") and dt < L.bound(0.5, 6), f"A never answered -> connects via AAAA ::1 at once ({dt*1000:.0f} ms, host lag {L.max()*1000:.0f} ms)")
+
+    def late6(lag, run):
+        with lock: n4 = accepts.get(("127.0.0.1", ECHO), 0); n6 = accepts.get(("::1", ECHO), 0)
+        r, dt = go(f"late6{'-r%d' % run if run > 1 else ''}.test.", t=10)
+        time.sleep(0.6)  # the late AAAA (300 ms) must not start a second connection
+        with lock: d4 = accepts.get(("127.0.0.1", ECHO), 0) - n4; d6 = accepts.get(("::1", ECHO), 0) - n6
+        return (r == ("data", b"ping") and dt < lag.bound(0.25, 6) and (d4, d6) == (1, 0),
+                f"AAAA 300 ms late: connected via A at {dt*1000:.0f} ms, one connection (v4 +{d4}, v6 +{d6})")
+    # (the A connect must be done before the AAAA comes 300 ms after it: judged with the lag at or below 40 ms)
+    ok(*judged("late6", 0.04, 5, late6))
     # the early address refuses (nothing on 127.0.0.1:ECHO6): the stream waits for the late AAAA and connects via ::1
+    L.reset()
     r, dt = go("late6b.test.", t=10, port=ECHO6)
-    ok(r == ("data", b"ping") and 0.25 <= dt < 1.5, f"A refused, AAAA 300 ms late: connected via ::1 at {dt*1000:.0f} ms")
+    ok(r == ("data", b"ping") and 0.25 <= dt < L.bound(1.5, 6), f"A refused, AAAA 300 ms late: connected via ::1 at {dt*1000:.0f} ms (host lag {L.max()*1000:.0f} ms)")
 # the early address times out (--connect-timeout 1) while the other family is due: CLOSE 0x43 once the lookup ends
 # at its deadline (4 s), not 0x42 and not a stall. Local blackhole: a listener with backlog 0 whose accept queue is
 # full (one connection never accepted) drops every further SYN (192.0.2.1 is not one everywhere: proxies answer it).
@@ -276,27 +291,41 @@ def resolv_opt(k, d):
     return d
 LOOKUP_DEADLINE = min(max(resolv_opt("timeout", 5), 1), 2) * min(max(resolv_opt("attempts", 2), 1), 3)
 wd = Wisp(P_D)
-r, dt = go("blackhole.test.", t=10, wsock=wd, port=BH)
-ok(r == ("close", 0x43) and LOOKUP_DEADLINE - 0.3 <= dt <= LOOKUP_DEADLINE + 1.5,
-   f"early address timed out, AAAA never answered: {r} at {dt:.1f} s (lookup deadline {LOOKUP_DEADLINE} s"
-   + ("; equals the connect timeout here, so parking is not visible" if LOOKUP_DEADLINE <= 1 else "") + ")")
+
+
+def blackhole(lag, run):
+    # (the A answer must come well inside the 1 s connect timeout: judged with the lag at or below 150 ms)
+    r, dt = go(f"blackhole{'-r%d' % run if run > 1 else ''}.test.", t=10, wsock=wd, port=BH)
+    return (r == ("close", 0x43) and LOOKUP_DEADLINE - 0.3 <= dt <= lag.bound(LOOKUP_DEADLINE + 1.5, 6),
+            f"early address timed out, AAAA never answered: {r} at {dt:.1f} s (lookup deadline {LOOKUP_DEADLINE} s"
+            + ("; equals the connect timeout here, so parking is not visible" if LOOKUP_DEADLINE <= 1 else "") + ")")
+ok(*judged("blackhole", 0.15, 5, blackhole))
 
 # timeout: resolv.conf window (timeout clamped to 1..2 s) x tries (1 server x attempts, at most 3)
+L.reset()
 r, dt = go("slow.test.", t=10)
 q = count("slow.test")
-ok(r == ("close", 0x42) and 0.9 <= dt <= 6.5 and q % 2 == 0, f"dead name: CLOSE 0x42 after the deadline ({dt:.1f} s, {q} queries)")
+ok(r == ("close", 0x42) and 0.9 <= dt <= L.bound(6.5, 6) and q % 2 == 0, f"dead name: CLOSE 0x42 after the deadline ({dt:.1f} s, {q} queries, host lag {L.max()*1000:.0f} ms)")
 # cancellation: close the stream while the lookup waits; no retry after the first window
-w2 = Wisp(P_A)
-w2.send(1, 1, struct.pack("<BH", 1, ECHO) + b"hang.test.")
-time.sleep(0.3)
-w2.send(4, 1, b"\x02")
-time.sleep(4.5)
-ok(count("hang.test") == 2, f"cancelled lookup: no retry after the close ({count('hang.test')} queries, 2 = first try only)")
-w2.s.close()
+
+
+def hang(lag, run):
+    # (the close at 0.3 s must reach the lookup before its first window ends, 1 s at least: judged with the lag at or
+    # below 150 ms)
+    nm = f"hang{'-r%d' % run if run > 1 else ''}.test"
+    w2 = Wisp(P_A)
+    w2.send(1, 1, struct.pack("<BH", 1, ECHO) + nm.encode() + b".")
+    time.sleep(0.3)
+    w2.send(4, 1, b"\x02")
+    time.sleep(4.5)
+    w2.s.close()
+    return count(nm) == 2, f"cancelled lookup: no retry after the close ({count(nm)} queries, 2 = first try only)"
+ok(*judged("hang", 0.15, 5, hang))
 # a refused first server: every family moves to the second at once
 wb = Wisp(P_B)
+L.reset()
 r, dt = go("ok.test.", wsock=wb)
-ok(r == ("data", b"ping") and dt < 0.5, f"first server refused (ICMP): second server answers ({dt*1000:.0f} ms)")
+ok(r == ("data", b"ping") and dt < L.bound(0.5, 6), f"first server refused (ICMP): second server answers ({dt*1000:.0f} ms, host lag {L.max()*1000:.0f} ms)")
 if V6:
     wc = Wisp(P_C)
     n0 = len(log)
@@ -325,6 +354,7 @@ else:
 # starts at once. Without it (plain --dns-own: arrival order) A's 17 names hold every thread until the first gives up
 # (4 s after its start), and B's name waits for that.
 wa, wb2 = Wisp(P_A), Wisp(P_A)
+L.reset()
 wa.send(1, 1, struct.pack("<BH", 1, ECHO) + b"dead0.test.")
 time.sleep(1.3)
 for i in range(1, 17):
@@ -332,7 +362,7 @@ for i in range(1, 17):
 time.sleep(0.2)
 r, dt = wb2.attempt(1, "okb.test.", t=9)
 if PRESET:
-    ok(r == ("data", b"ping") and dt < 1.0, f"preset (dns-reserve): another connection's name starts at once while a slow one holds its threads ({r}, {dt*1000:.0f} ms)")
+    ok(r == ("data", b"ping") and dt < 1.0 + 6 * L.max(), f"preset (dns-reserve): another connection's name starts at once while a slow one holds its threads ({r}, {dt*1000:.0f} ms)")
 else:
     ok(r == ("data", b"ping") and dt > 1.5, f"no reserve: another connection's name waits for a thread ({r}, {dt*1000:.0f} ms)")
 wa.s.close(); wb2.s.close()
