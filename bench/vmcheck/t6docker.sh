@@ -1,5 +1,5 @@
 #!/bin/bash
-# 60.78 G59 T6 (sb-robust): "IPv4 clients keep their address through a published port" (shown on v1.2.1 only) on
+# 60.78 G59 T6: "IPv4 clients keep their address through a published port" (shown on v1.2.1 only) on
 # the candidate's image, in ONE VM (root). contrib/docker/Dockerfile, context = DIR with finalwisp + BUILDINFO. A client
 # in a network namespace (veth 10.77.0.2 / fd77::2 -> the VM 10.77.0.1 / fd77::1) plays the remote host.
 # usage: t6docker.sh DIR (DIR/finalwisp, DIR/BUILDINFO, DIR/Dockerfile, DIR/wispa.py) -> DIR/out/t6.txt

@@ -983,7 +983,7 @@ pub fn detect(over: Option<u64>) -> (u64, Source) {
 /// block in place in the arena, a fresh one can fit free arena space, and past M_MMAP_MAX the arena is used).
 /// 70.03 16 KiB (was 1 MiB, 60.05 H7): a client's buffers (rbuf from 16 KiB up, obuf, bulk, pend) are then
 /// their own mappings, not in a per-thread arena where one small block allocated during a peak pins every
-/// freed buffer below it (free() only returns an arena's top). Measured (alloc-inv, REPORT-alloc.md): idle
+/// freed buffer below it (free() only returns an arena's top). Measured (70.03): idle
 /// 4.7 KiB/conn at 2 and 16 threads, 2000 and 10000 conns, also after a burst/close (1 MiB: 167-177);
 /// 1.5 MiB anon after a 100x10 burst (1 MiB: 22-46); echo 10x10 peak -3% (idle-echo peak +3-6%: a header
 /// page per block). Cost: one mmap + munmap per buffer
@@ -1224,13 +1224,13 @@ fn press_text(n: u64) -> String {
 /// the server never writes sysctls). Near the kernel's pressure threshold the sampler publishes TCP level 1
 /// (TCP_LEVEL; (b) after the benchmark: at memory level 0 the workers then apply the level-1 socket caps and
 /// (b2) the level-1 credit (cap_level/stage), through the same set_level path, so sizes are saved and restored once; queues, keep,
-/// streams stay level 0). Never above level 1 (parent 2026-10-27: kernel TCP pressure is not OOM; level 2
+/// streams stay level 0). Never above level 1 (20.31 decision, 2026-10-27: kernel TCP pressure is not OOM; level 2
 /// would refuse streams).
 pub struct TcpAdapt {
     /// net.ipv4.tcp_mem (pages): no pressure below [0], pressure from [1], hard limit [2]
     pub mem: [u64; 3],
     /// 20.31 guard (a): our own cgroup v2 memory.stat (its `sock` line = our socket memory, TCP and UDP). Required:
-    /// without it the adaptation is off (parent 2026-10-27: capping us when our share is unknown can cost us for
+    /// without it the adaptation is off (20.31 decision, 2026-10-27: capping us when our share is unknown can cost us for
     /// someone else's pressure)
     pub own_stat: PathBuf,
 }
@@ -1846,7 +1846,7 @@ pub(crate) mod tests {
         let long = TCP_DWELL_DOWN;
         assert_eq!(tcp_next(0, 899, Some(1000), &t, long), 0);
         assert_eq!(tcp_next(0, 900, Some(1000), &t, long), 1);
-        assert_eq!(tcp_next(0, 2000, None, &t, long), 0, "share unknown: no caps (parent 2026-10-27)");
+        assert_eq!(tcp_next(0, 2000, None, &t, long), 0, "share unknown: no caps (20.31)");
         assert_eq!(tcp_next(0, 2000, Some(249), &t, long), 0, "someone else's pressure: no caps");
         assert_eq!(tcp_next(0, 900, Some(250), &t, long), 1);
         assert_eq!(tcp_next(1, 760, Some(0), &t, long), 1, "the share is not checked once capped");

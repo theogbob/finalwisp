@@ -1,8 +1,8 @@
 #!/bin/bash
-# 60.78 G05 24 h soak driver (sb-robust), v1.4.0 candidate. usage: run2.sh NAME MINUTES FW
+# 60.78 G05 24 h soak driver, v1.4.0 candidate. usage: [FW_SOAK_DIR=DIR] run2.sh NAME MINUTES FW
 # lane B adds --unread-close; smapsmon.py writes the anonymous mappings of both servers every 600 s.
 ulimit -n $(ulimit -Hn)
-cd /home/maintainer/fw-sbr
+cd "${FW_SOAK_DIR:-$HOME/fw-soak}" || exit 1  # the soak checkout (default ~/fw-soak)
 N=$1; M=$2; FW=$3
 mkdir -p runs
 END=$(( $(date +%s) + M*60 + 120 ))

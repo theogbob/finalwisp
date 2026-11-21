@@ -49,7 +49,7 @@ impl Worker {
     /// not count it as starvation, which would grow the window, review r1 P2), PACE_GO = grant
     pub(super) fn pace_hold(&mut self, ti: u32) -> u8 {
         let tg = self.targets.gen(ti) & 0x3fff_ffff; // the token's 30 bits, as pace_resume gets them (untok)
-        let blocked = self.targets.at(ti).blocked;
+        let blocked = self.targets.at(ti).blocked != Park::Run; // 20.35 (Released: held until its resume reads)
         let i = ti as usize;
         if self.cpace_st.len() <= i {
             self.cpace_st.resize(i + 1, PaceSt::default());
@@ -74,7 +74,7 @@ impl Worker {
     /// out_high, or its read budget ran out), re-decide its held grant
     pub(super) fn pace_resume(&mut self, ti: u32, tg: u32) {
         let Some(t) = self.targets.get(ti, tg) else { return };
-        if t.blocked {
+        if t.blocked != Park::Run {
             return; // (parked again: after_write would hold it again anyway; this skips the call)
         }
         let Some(s) = self.cpace_st.get_mut(ti as usize) else { return };

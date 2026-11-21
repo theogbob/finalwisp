@@ -1,5 +1,5 @@
 #!/bin/bash
-# 60.78 G10 + G59 (sb-robust): every check of the two rows in ONE ephemeral VM, in order. usage: g10g59.sh DIR
+# 60.78 G10 + G59: every check of the two rows in ONE ephemeral VM, in order. usage: g10g59.sh DIR
 # DIR: finalwisp (candidate), finalwisp130 (v1.3.0, the keepalive control), the scripts of bench/vmcheck, ka-nft.sh,
 # keepalive_dead.py, Dockerfile, BUILDINFO. Output: DIR/out/.
 set -u

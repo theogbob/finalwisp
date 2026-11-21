@@ -412,7 +412,7 @@ impl Worker {
         let mut cands = Vec::new();
         for (ti, s) in self.targets.slots.iter().enumerate() {
             let Some(t) = s.1.as_ref() else { continue };
-            if !t.blocked || t.udp || t.state != TState::Open || t.fd < 0 {
+            if t.blocked == Park::Run || t.udp || t.state != TState::Open || t.fd < 0 {
                 continue;
             }
             let c = self.clients.slots.get(t.client as usize).and_then(|c| c.1.as_ref());
@@ -612,7 +612,7 @@ impl Worker {
         b.seen_ok = track;
         for (ti, s) in self.targets.slots.iter().enumerate() {
             let Some(t) = s.1.as_ref() else { continue };
-            if (tcpmem || uc) && t.blocked && !t.udp {
+            if (tcpmem || uc) && t.blocked != Park::Run && !t.udp {
                 if let Some(n) = b.by_client.get_mut(t.client as usize) {
                     *n += 1;
                     unread += 1;

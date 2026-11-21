@@ -60,7 +60,7 @@ def link_up():
     sh("tc", "qdisc", "add", "dev", "vfwb", "root", "netem", "delay", "20ms", "rate", f"{a.srv_rate:g}mbit" if a.srv_rate else "1gbit",
        "limit", "10000")
     if a.main_rate:
-        # parent 2026-10-27: equal main throughput off vs on. The main target's replies (source port a.port + 1, fwb -> host:
+        # 20.31 (2026-10-27): equal main throughput off vs on. The main target's replies (source port a.port + 1, fwb -> host:
         # download data, echo replies) get their own HTB class capped at --main-rate; the side rr and everything else
         # keep 1 Gbit. 20 ms netem under each class.
         tcf = ["ip", "netns", "exec", "fwb", "tc"]

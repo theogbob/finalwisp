@@ -80,8 +80,35 @@ fn tls_err(e: rustls::Error) -> io::Error {
 }
 
 impl Sock {
-    pub async fn connect(host: &str, port: u16, tls: Option<&Arc<ClientConfig>>) -> io::Result<Sock> {
-        let tcp = TcpStream::connect((host, port)).await?;
+    /// `local`: 80.04 --src-port: bind this local port first (SO_REUSEADDR) and close with a RST (zero linger).
+    pub async fn connect(host: &str, port: u16, tls: Option<&Arc<ClientConfig>>, local: Option<u16>) -> io::Result<Sock> {
+        let tcp = match local {
+            None => TcpStream::connect((host, port)).await?,
+            Some(lp) => {
+                // every resolved address in turn, as TcpStream::connect does; a fresh socket of its family each time
+                let mut last = io::Error::new(ErrorKind::NotFound, "no address");
+                let mut got = None;
+                for addr in tokio::net::lookup_host((host, port)).await? {
+                    let (s, any) = if addr.is_ipv4() {
+                        (tokio::net::TcpSocket::new_v4()?, std::net::IpAddr::from(std::net::Ipv4Addr::UNSPECIFIED))
+                    } else {
+                        (tokio::net::TcpSocket::new_v6()?, std::net::IpAddr::from(std::net::Ipv6Addr::UNSPECIFIED))
+                    };
+                    s.set_reuseaddr(true)?;
+                    s.bind(std::net::SocketAddr::new(any, lp)).map_err(|e| io::Error::new(e.kind(), format!("bind local port {lp}: {e}")))?;
+                    match s.connect(addr).await {
+                        Ok(t) => {
+                            got = Some(t);
+                            break;
+                        }
+                        Err(e) => last = e,
+                    }
+                }
+                let t = got.ok_or(last)?;
+                t.set_zero_linger()?;
+                t
+            }
+        };
         tcp.set_nodelay(true)?;
         let tls = match tls {
             Some(cfg) => {

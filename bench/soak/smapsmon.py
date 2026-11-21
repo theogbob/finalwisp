@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""60.78 G05 attribution (sb-robust): every EVERY s, the anonymous mappings of a soak server from /proc/PID/smaps, so a
+"""60.78 G05 attribution: every EVERY s, the anonymous mappings of a soak server from /proc/PID/smaps, so a
 step in anon memory can be named (which mapping grew: glibc arena, pool chunk, thread stack, [heap]).
 usage: smapsmon.py RUNDIR OUT.jsonl [--server A,B] [--every 600] [--until EPOCH]
 The PID is the newest server_start of each server in RUNDIR/events.jsonl (written by soak.py), so a restart is

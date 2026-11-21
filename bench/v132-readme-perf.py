@@ -7,9 +7,9 @@ usage: python3 bench/v132-readme-perf.py [--bench docs/benchmarks.md]           
 Rules (as 30.19's ranges.py): per machine the MAIN value table only (on the VPSes the 10 x 2 bulk rows; the dropped
 10 x 10 rows are not used). A multiplier is the page's ratio table entry of the cell, so the README and the page say
 the same numbers; it is checked against finalwisp / other of the value cells (1.5 %: both are rounded). It counts only
-where both value cells are valid: a value above 0, no "(P n/3)" (kernel TCP memory pressure), no "err" (parent,
+where both value cells are valid: a value above 0, no "(P n/3)" (kernel TCP memory pressure), no "err" (60.76,
 2026-11-15: also when the cell moved data, so no multiplier rests on a run where a server failed), no crash mark.
-epoxy-server = the "tokio-websockets 0.12.3" column. Range ends are rounded down, never up (parent, 2026-11-15):
+epoxy-server = the "tokio-websockets 0.12.3" column. Range ends are rounded down, never up (60.76, 2026-11-15):
 below 2 with two decimals, from 2 on with one. The memory bullets use the same four columns (a server whose runs
 crashed is not compared, as on the page).
 """
@@ -75,7 +75,7 @@ def load(path):
 
 
 def fmt_x(x):
-    """rounded DOWN, never up (parent, 2026-11-15): below 2 with two decimals (1.051 -> 1.05), from 2 on with one
+    """rounded DOWN, never up (60.76, 2026-11-15): below 2 with two decimals (1.051 -> 1.05), from 2 on with one
     (4.19 -> 4.1, 15.19 -> 15.1); the page's ratio tables have two decimals, so a README end never says more"""
     x = round(x, 9)  # a quotient such as 1.3 / 1.0 must not floor to 1.29
     return f"{math.floor(x * 100) / 100:.2f}" if x < 2 else f"{math.floor(x * 10) / 10:.1f}"

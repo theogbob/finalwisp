@@ -64,6 +64,7 @@ pub(super) fn rig(cfg: Config, limit: u32, block: u32) -> (Worker, u16, mpsc::Re
 /// One loop turn, as Worker::run (without the level check and the idle sweep)
 pub(super) fn pump(w: &mut Worker, ms: i32) {
     let mut evs = [libc::epoll_event { events: 0, u64: 0 }; 64];
+    let ms = if w.gate.live != 0 { w.gate_timeout(ms) } else { ms }; // 20.34 (as run)
     let n = unsafe { libc::epoll_wait(w.ep, evs.as_mut_ptr(), 64, ms) };
     w.now = Instant::now();
     for ev in &evs[..n.max(0) as usize] {
@@ -74,6 +75,9 @@ pub(super) fn pump(w: &mut Worker, ms: i32) {
         w.resume(t);
     }
     w.run_deferred();
+    if w.gate.live != 0 {
+        w.gate_expire(); // 20.34 (as run)
+    }
     w.flush_dirty();
     if !w.connecting.is_empty() {
         w.run_timers();

@@ -99,4 +99,4 @@ base-a/base-b (A/A), base --no-splice, new; epoxy + libcurl; m-busy, m-big100, 4
   regexes in `sites.json`; they are still counted in `leaks` / `leak_urls`.
 - A case origin must be an HTML page: Scramjet does not instrument a non-HTML document, so its fetch/WebSocket go direct.
 - epoxy and epoxy-v2 hold the last sent WebSocket frame until the next send. `ws-echo` sends one probe and records
-  `held_last_frame: true` (see REPORT-s64a-2026-10-24.md).
+  `held_last_frame: true`.

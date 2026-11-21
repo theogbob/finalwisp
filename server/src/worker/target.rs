@@ -23,7 +23,7 @@ pub(super) struct Target {
     pub(super) phead: usize,
     pub(super) since: u32,
     pub(super) rdhup: bool,
-    pub(super) blocked: bool,
+    pub(super) blocked: Park, // 20.35 (Park: Run / Parked / Released; one byte, as the bool it replaced)
     pub(super) raw: bool,
     pub(super) wrote_since_read: bool,
     // 20.25 the target sent TCP urgent data (EPOLLPRI seen; sticky). read() stops short at the urgent
@@ -77,6 +77,26 @@ pub(super) struct Target {
 }
 
 pub(super) const NOT_LISTED: usize = usize::MAX;
+
+/// 20.35 a target's park state (Target::blocked). A park (read_target, splice_target, read_udp) turns Run into Parked
+/// and lists the target once in its client's `blocked` or `blocked_bulk`. Only a release (Worker::release_parked, from
+/// flush_dirty and starve_check) un-lists it: Parked -> Released, with one entry in Worker::ready. Worker::resume then
+/// makes it Run and reads; a ready entry that finds it Parked is stale (pushed before the park: a read-budget
+/// continuation, or a second entry of the same release) and is dropped, since the target is still listed and its
+/// release is its wake. Before 20.35 any ready entry un-parked: on VPS1 such entries started 98 % of the download copy
+/// runs (the target copied while its own splice was still in the pipe) and re-parked it while it was still listed, so
+/// the lists filled with duplicates (the 20.35 note's diagnostic counts). Every other reader asks
+/// `!= Park::Run`, so a Released target is still parked for them until its entry runs: it reads nothing on its own
+/// events (lane order), a credit-pace grant stays held (60.42), bounds relief and the unread count see it parked.
+/// Invariant (debug: Worker::park_check): Parked <=> exactly one entry in its client's two lists; Run, Released => none.
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+#[repr(u8)]
+pub(super) enum Park {
+    Run,
+    Parked,
+    Released,
+}
+const _: () = assert!(std::mem::size_of::<Park>() == std::mem::size_of::<bool>()); // 20.35 no struct growth
 
 impl Target {
     /// 60.27 C6: connected to the upstream proxy, handshake running (Connecting with the proxy socket in fd; a direct
@@ -205,8 +225,8 @@ impl Worker {
         let mut slen = 0; // 60.46 splice length, fixed for this call at its first splice (no growth within one call)
         for _ in 0..BUDGET {
             let t = self.targets.at(ti);
-            if t.blocked {
-                return;
+            if t.blocked != Park::Run {
+                return; // 20.35 (Released too: it reads when its ready entry runs, Worker::resume)
             }
             let (fd, ci, sid, raw, rdhup) = (t.fd, t.client, t.sid, t.raw, t.rdhup);
             let (bulk, bulk_end) = (t.bulk, t.bulk_end);
@@ -220,7 +240,7 @@ impl Worker {
             let sroom = c.starve_room as usize;
             let past = (lane && pending >= self.st.out_high_bulk) || pending >= self.st.out_high;
             if lane && pending >= self.st.out_high_bulk && sroom == 0 {
-                self.targets.at(ti).blocked = true;
+                self.targets.at(ti).blocked = Park::Parked;
                 c.splice = c.splice.min(SPLICE_SLOW); // 60.46 backed up (also through the copy path): FAST -> SLOW, OFF stays
                                                       // Round-robin: the cap gap is only ~3 reads, so the first resumed stream refills it and the
                                                       // others park again without reading. Those keep their order at the front (behind earlier
@@ -241,7 +261,7 @@ impl Worker {
                 return;
             }
             if pending >= self.st.out_high && sroom == 0 {
-                self.targets.at(ti).blocked = true;
+                self.targets.at(ti).blocked = Park::Parked;
                 c.splice = c.splice.min(SPLICE_SLOW); // 60.46 (as above)
                 c.blocked.push(tok(K_TARGET, ti, tg));
                 return;
@@ -334,7 +354,7 @@ impl Worker {
                     // 50.02 B: one slice per stream per retry (review: else the first resumed stream took the
                     // whole room every time); parked again at the back until the next retry or the drain
                     let t = self.targets.at(ti);
-                    t.blocked = true;
+                    t.blocked = Park::Parked;
                     let c = self.clients.at(ci);
                     if lane {
                         c.blocked_bulk.push(tok(K_TARGET, ti, tg));
@@ -469,7 +489,7 @@ impl Worker {
             // `blocked` so flush_dirty resumes it — with EPOLLET a target whose data (and FIN) is
             // already buffered raises no new event, so without this the stream stalls forever.
             let tg = self.targets.gen(ti);
-            self.targets.at(ti).blocked = true;
+            self.targets.at(ti).blocked = Park::Parked;
             if self.cfg.prio && !raw {
                 c.blocked_bulk.push(tok(K_TARGET, ti, tg)); // oh256: a splicing stream is bulk mode (it read: back)
                 self.targets.at(ti).lane_read = false;
@@ -571,10 +591,11 @@ impl Worker {
             self.fd_put_c(t.client, t.cgen, closed); // (C: noted for the connection before the allowance can go back)
         }
         let Some(c) = self.clients.get(t.client, t.cgen) else { return };
-        if t.blocked {
+        if t.blocked != Park::Run {
+            // 20.35 Parked: its one entry (Released: listed nowhere, its ready entry fails the generation check)
             let tk = tok(K_TARGET, ti, tg);
             c.blocked.retain(|&x| x != tk);
-            // every copy (a BUDGET-continuation token can duplicate one); keep the non-reader prefix exact
+            // keep the non-reader prefix exact
             let (mut i, waiting) = (0, c.bulk_waiting);
             let mut gone_in_prefix = 0;
             c.blocked_bulk.retain(|&x| {
@@ -593,17 +614,25 @@ impl Worker {
         }
         if let Some(r) = reason {
             if !c.closing {
-                self.stats.close[r as usize].bump(); // 60.12
-                if t.bulk_end > c.bulk_sent {
-                    // 20.19 the stream still has DATA queued in the bulk lane: its CLOSE goes behind it
-                    let mut h = [0u8; 6];
-                    h[0] = PKT_CLOSE;
-                    h[1..5].copy_from_slice(&t.sid.to_le_bytes());
-                    h[5] = r;
-                    ws::push_frame(&mut c.bulk, OP_BIN, &[&h]);
-                    c.bulk_frame_done();
-                } else {
-                    c.push_wisp(PKT_CLOSE, t.sid, &[r]);
+                // 20.34 the CLOSE of an open TCP stream that its destination ended (FIN or error) waits for the PONG of a
+                // PING queued behind its DATA (worker/pinggate.rs); 0x49 = the server's own limits cut the stream: at once
+                let held = t.state == TState::Open
+                    && !t.udp
+                    && r != CLOSE_THROTTLED
+                    && pinggate::hold(&mut self.gate, c, &t, r, self.now, &self.stats);
+                if !held {
+                    self.stats.close[r as usize].bump(); // 60.12 (20.34: counted when sent)
+                    if t.bulk_end > c.bulk_sent {
+                        // 20.19 the stream still has DATA queued in the bulk lane: its CLOSE goes behind it
+                        let mut h = [0u8; 6];
+                        h[0] = PKT_CLOSE;
+                        h[1..5].copy_from_slice(&t.sid.to_le_bytes());
+                        h[5] = r;
+                        ws::push_frame(&mut c.bulk, OP_BIN, &[&h]);
+                        c.bulk_frame_done();
+                    } else {
+                        c.push_wisp(PKT_CLOSE, t.sid, &[r]);
+                    }
                 }
                 if !c.dirty {
                     c.dirty = true;

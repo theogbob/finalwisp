@@ -36,6 +36,7 @@ mod linger; // 60.78 bundle B3
 mod meter;
 mod migrate; // 60.64
 mod pace;
+mod pinggate; // 20.34
 mod proxy;
 mod slimits; // 60.72
 mod splicefar; // 60.78
@@ -63,7 +64,7 @@ pub use migrate::{answer, request, Census, MigBox};
 pub use migrate::{M_BACK, M_CENSUS, M_END, M_IMPORT, M_MOVE, R_BUSY, R_GONE, R_MOVED, R_NONE};
 use streamlog::SWhy;
 pub use target::LAZY_CAP;
-use target::{tcp_only_local, TState, Target, LOCAL_UNIX, NOT_LISTED};
+use target::{tcp_only_local, Park, TState, Target, LOCAL_UNIX, NOT_LISTED};
 #[cfg(any(test, fuzzing))]
 use upgrade::percent_decode;
 use upload::{next_allow, UpBucket};
@@ -206,7 +207,7 @@ const PEND_HARD: usize = 64 * 1024 * 1024; // misbehaving client cap per stream 
 const BIG_FRAME: usize = 256 * 1024;
 const PEND_CEIL: usize = PEND_HARD + BIG_FRAME;
 const _: () = assert!(BIG_FRAME == mem::STAGES[0].rbuf_max && MAX_FRAME + 64 * 1024 < PEND_HARD);
-const PEND_RESUME: usize = PEND_HARD / 4 * 3; // 48 MiB (parent): to resume within the hold a target drains 16 MiB in 4-6 s (~2.7-4 MiB/s; at /2: 5-8)
+const PEND_RESUME: usize = PEND_HARD / 4 * 3; // 48 MiB (design decision): to resume within the hold a target drains 16 MiB in 4-6 s (~2.7-4 MiB/s; at /2: 5-8)
 /// 20.27 0x49 hold: the hold lasts at most this many idle sweeps (2 s each: 4-6 s; the whole connection is not read meanwhile)
 const HOLD_SWEEPS: u32 = 3;
 const BUDGET: usize = 8; // reads per readiness turn (fairness)
@@ -521,6 +522,8 @@ pub struct Worker {
     bd: Option<Box<bounds::Wb>>,
     /// 60.64 --auto-balance: this worker's part of a move (None until the first request; worker/migrate.rs)
     mig: Option<Box<migrate::Mig>>,
+    /// 20.34 the CLOSEs held until the client's PONG (worker/pinggate.rs)
+    gate: pinggate::Gate,
 }
 
 #[must_use]
@@ -672,6 +675,7 @@ impl Worker {
             fd_pool: 0,
             bd: crate::bounds::global().map(bounds::Wb::new),
             mig: None,
+            gate: pinggate::Gate::new(),
         })
     }
 
@@ -697,17 +701,22 @@ impl Worker {
                 || mem::cache_held() > 0
                 || !self.pending.is_empty()
                 || self.dns_cache.capacity() != 0
+                || self.gate.reclaimable()
             {
                 // 20.11: wake for the idle sweep while clients exist (70.25 or the pool has a chunk mapped: remote frees
                 // reach only the owner, and empty chunks are unmapped by sweeps; 60.34 or PROXY headers are awaited:
-                // their timeout is the sweep; 60.41 or DNS cache entries wait to expire: at most DNS_TTL + a sweep)
+                // their timeout is the sweep; 60.41 or DNS cache entries wait to expire: at most DNS_TTL + a sweep; 20.34 or
+                // the ping gate has memory to give back)
                 self.next_sweep.saturating_duration_since(Instant::now()).as_millis().min(IDLE_SWEEP_MS as u128) as i32 + 1
             } else {
                 -1
             };
+            // 20.34 while CLOSEs are held: wake at the next cap
+            let timeout = if self.gate.live != 0 { self.gate_timeout(timeout) } else { timeout };
             let n = unsafe { libc::epoll_wait(self.ep, evs.as_mut_ptr(), evs.len() as i32, timeout) };
             if n < 0 {
                 if net::errno() == libc::EINTR {
+                    self.now = Instant::now(); // 20.34 (gate_timeout reads it: a signal does not restart a cap's wait)
                     continue;
                 }
                 panic!("epoll_wait: {}", std::io::Error::last_os_error());
@@ -733,6 +742,9 @@ impl Worker {
             self.run_deferred(); // safety net: targets created outside process_input
             if !self.starved.is_empty() {
                 self.starve_check();
+            }
+            if self.gate.live != 0 {
+                self.gate_expire(); // 20.34 the held CLOSEs whose cap came (sent by this turn's flush)
             }
             self.flush_dirty();
             if !self.connecting.is_empty() {
@@ -841,7 +853,12 @@ impl Worker {
             }
             K_TARGET => {
                 if let Some(tg) = self.targets.get(idx, gen) {
-                    tg.blocked = false;
+                    // 20.35 only a release un-parks (Park): an entry that finds the target Parked is stale
+                    if tg.blocked == Park::Parked {
+                        debug_assert!(self.park_listed(t), "20.35 a Parked target is listed");
+                        return;
+                    }
+                    tg.blocked = Park::Run;
                     if tg.state == TState::Open {
                         if tg.udp {
                             self.read_udp(idx);
@@ -889,6 +906,7 @@ impl Worker {
         }
         self.flush_upload(); // a staged CONTINUE must not land after our Close frame (as ws_fail)
         for ci in 0..self.clients.slots.len() as u32 {
+            let cg = self.clients.slots[ci as usize].0;
             let Some(c) = self.clients.slots[ci as usize].1.as_mut() else { continue };
             if c.dead || c.closing {
                 continue;
@@ -896,8 +914,16 @@ impl Worker {
             if stop >= net::STOP_CLOSE && matches!(c.state, CState::Tls | CState::Http) {
                 self.close_client(ci, Why::ServerClose); // no WebSocket yet
             } else if stop >= net::STOP_CLOSE
-                || (matches!(c.state, CState::Open | CState::WaitInfo) && c.streams.is_empty() && c.out_empty())
+                // 20.34 a connection with held CLOSEs is not idle: it waits for its PONG (at most pinggate::CAP_MS)
+                || (matches!(c.state, CState::Open | CState::WaitInfo)
+                    && c.streams.is_empty()
+                    && c.out_empty()
+                    && self.gate.held(ci, cg) == 0)
             {
+                if self.gate.live != 0 {
+                    // 20.34 the held CLOSEs go before the Close
+                    pinggate::flush_held(&mut self.gate, c, ci, cg, &self.stats);
+                }
                 ws::push_frame(&mut c.obuf, OP_CLOSE, &[&1001u16.to_be_bytes()]);
                 self.begin_close(ci, Why::ServerClose);
             }
@@ -1065,16 +1091,78 @@ impl Worker {
                 self.ready.push(tok(K_CLIENT, ci, g));
             }
             if !c.blocked.is_empty() && c.out_pending() < self.st.out_low {
-                self.ready.append(&mut c.blocked);
+                self.release_parked(ci, false);
             }
+            let c = self.clients.at(ci);
             if !c.blocked_bulk.is_empty() && c.out_pending() < self.st.out_low_bulk {
-                self.ready.append(&mut c.blocked_bulk); // order: see read_target (round-robin)
-                c.bulk_waiting = 0;
+                self.release_parked(ci, true); // order: see read_target (round-robin)
+                self.clients.at(ci).bulk_waiting = 0;
             }
         }
         list.clear();
         if self.dirty.is_empty() {
             self.dirty = list;
+        }
+        #[cfg(debug_assertions)]
+        self.park_check();
+    }
+
+    /// 20.35 release client `ci`'s parked list (`bulk`: blocked_bulk, else blocked) in its order: every Parked target
+    /// becomes Released with one entry in `ready` (Park). An entry for any other state, or for a closed target, is not
+    /// a park and goes (none by the invariant: close_target takes a target's entry out, a park lists a target once).
+    /// Out of line: about 4 calls per MiB of a backed-up download (flush_dirty and starve_check keep their code).
+    #[inline(never)]
+    pub(super) fn release_parked(&mut self, ci: u32, bulk: bool) {
+        let c = self.clients.at(ci);
+        let mut list = std::mem::take(if bulk { &mut c.blocked_bulk } else { &mut c.blocked });
+        for &tk in &list {
+            let (_, ti, tg) = untok(tk);
+            match self.targets.get(ti, tg) {
+                Some(t) if t.blocked == Park::Parked => {
+                    t.blocked = Park::Released;
+                    self.ready.push(tk);
+                }
+                _ => debug_assert!(false, "20.35 a parked list names only Parked targets, each once"),
+            }
+        }
+        list.clear();
+        let c = self.clients.at(ci);
+        *(if bulk { &mut c.blocked_bulk } else { &mut c.blocked }) = list; // (its capacity stays, as append left it)
+    }
+
+    /// 20.35 debug assertions: is target token `tk` in its client's parked lists
+    fn park_listed(&mut self, tk: u64) -> bool {
+        let (_, ti, tg) = untok(tk);
+        let Some(t) = self.targets.get(ti, tg) else { return false };
+        let (ci, cg) = (t.client, t.cgen);
+        self.clients.get(ci, cg).is_some_and(|c| c.blocked.contains(&tk) || c.blocked_bulk.contains(&tk))
+    }
+
+    /// 20.35 debug: the park invariant (Park) over the whole worker: a Parked target has exactly one entry, in its own
+    /// client's lists; a Run or Released target has none; every entry names a live target of that client. Bounded cost:
+    /// only while the worker holds at most PARK_CHECK_MAX target slots (unit tests), at the end of flush_dirty (debug
+    /// builds; tests call it in release builds too).
+    #[cfg(any(debug_assertions, test))]
+    pub(super) fn park_check(&mut self) {
+        const PARK_CHECK_MAX: usize = 256;
+        if self.targets.slots.len() > PARK_CHECK_MAX {
+            return;
+        }
+        let mut seen = vec![0u32; self.targets.slots.len()];
+        for (ci, s) in self.clients.slots.iter().enumerate() {
+            let Some(c) = s.1.as_ref() else { continue };
+            for &tk in c.blocked.iter().chain(c.blocked_bulk.iter()) {
+                let (kind, ti, tg) = untok(tk);
+                let t = self.targets.slots.get(ti as usize).filter(|s| s.0 & 0x3fff_ffff == tg).and_then(|s| s.1.as_ref());
+                let Some(t) = t else { panic!("20.35 a parked list entry names a closed target (client {ci})") };
+                assert!(kind == K_TARGET && t.client == ci as u32 && t.cgen == s.0, "20.35 entry of another client");
+                seen[ti as usize] += 1;
+            }
+        }
+        for (ti, s) in self.targets.slots.iter().enumerate() {
+            let Some(t) = s.1.as_ref() else { continue };
+            let want = u32::from(t.blocked == Park::Parked);
+            assert_eq!(seen[ti], want, "20.35 target {ti} ({:?}): {} list entries", t.blocked, seen[ti]);
         }
     }
 }

@@ -86,7 +86,7 @@ fn open_streams(w: &Worker) -> usize {
 }
 
 fn unread(w: &Worker) -> usize {
-    w.targets.slots.iter().filter_map(|s| s.1.as_ref()).filter(|t| t.blocked && !t.udp).count()
+    w.targets.slots.iter().filter_map(|s| s.1.as_ref()).filter(|t| t.blocked != Park::Run && !t.udp).count()
 }
 
 /// `n` more streams on `c` (ids from `sid`) to the listener `l`, and their target sides
@@ -210,10 +210,10 @@ fn tm_scenario(big: &str, xff: bool, gated: bool) {
     until(&mut w, "the UDP stream is open", |w| open_streams(w) == open + 1);
     // ... and is never an unread download in the count, also when it waits for its client's output
     let ui = w.targets.slots.iter().position(|s| s.1.as_ref().is_some_and(|t| t.udp)).unwrap() as u32;
-    w.targets.at(ui).blocked = true;
+    w.targets.at(ui).blocked = Park::Parked; // (by hand, unlisted: no flush_dirty before it is undone)
     w.bd_count(metrics::now_ms());
     assert_eq!(w.stats.tcpmem_unread.get(), 6);
-    w.targets.at(ui).blocked = false;
+    w.targets.at(ui).blocked = Park::Run;
     let _tb2 = streams(&mut w, &mut b, 2, 2, &l);
     assert_eq!(w.stats.refuse_tcpmem_share.get(), gated as u64);
     // the second client leaves: the big address is alone on the server and is not refused
@@ -2221,17 +2221,24 @@ fn rl_order_with(prio: bool, warm: bool, short: bool) {
     g.set_state(0);
     rl_sweep(&mut w);
     assert!(!w.rl_held(ti), "the pressure is over: lifted");
-    // the size from before as rl_lift sets it: SO_RCVBUF of half of it, which the kernel clamps to net.core.rmem_max and
-    // doubles (a buffer that autotuning grew past 2 x rmem_max comes back at that bound: CI's default rmem_max 212992).
-    // The expected size is measured the same way on a socket of its own (rmem_max may not be readable in a container)
+    assert_eq!(rl_lock_rcv(fd), (0, rl_restored(saved)), "min(the size from before, 2 x rmem_max), the lock bit clear");
+    end(w);
+}
+
+/// The size rl_lift gives back for `saved` (SO_RCVBUF before the relief, as reported): it sets SO_RCVBUF to half of
+/// it, which the kernel clamps to net.core.rmem_max and doubles. So the lift gives back min(saved, 2 x rmem_max), not
+/// always the size from before: a buffer that autotuning grew past 2 x rmem_max comes back at that bound (with the
+/// default rmem_max 212992, a saved 6 MiB comes back as 425984; how far autotuning grows it before the relief depends
+/// on the host's load). Every rl_ test compares with this exact value, never with `saved` itself. It is measured the
+/// same way, on a TCP socket of its own (what the kernel grants for saved / 2), not read from
+/// /proc/sys/net/core/rmem_max: that file may be missing or namespaced in a CI container.
+fn rl_restored(saved: i32) -> i32 {
     let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let half: libc::c_int = saved / 2;
     // SAFETY: setsockopt reads one c_int from `half`
     let r = unsafe { libc::setsockopt(probe.as_raw_fd(), libc::SOL_SOCKET, libc::SO_RCVBUF, &half as *const _ as *const _, 4) };
     assert_eq!(r, 0);
-    let back = rl_lock_rcv(probe.as_raw_fd()).1;
-    assert_eq!(rl_lock_rcv(fd), (0, back), "the size from before (its half doubled, rmem_max clamp), the lock bit clear");
-    end(w);
+    rl_lock_rcv(probe.as_raw_fd()).1
 }
 
 #[test]
@@ -2333,7 +2340,7 @@ fn rl_cap_foreign_lock_and_close() {
 }
 
 /// G70 the pressure ends while the stream is still parked: the lift at the next sweep gives back the size from before
-/// and clears the lock bit; a size someone else set since is left as it is
+/// (at most 2 x rmem_max: rl_restored) and clears the lock bit; a size someone else set since is left as it is
 #[test]
 fn rl_lifts_when_the_pressure_ends() {
     let (mut w, g, _c, _ci, mut t) = rl_rig(|_| {});
@@ -2347,9 +2354,9 @@ fn rl_lifts_when_the_pressure_ends() {
     assert!(w.rl_held(ti) && rl_lock_rcv(fd).0 == 2);
     g.set_state(0);
     rl_sweep(&mut w);
-    assert!(w.targets.at(ti).blocked, "still parked");
+    assert!(w.targets.at(ti).blocked == Park::Parked, "still parked");
     assert!(!w.rl_held(ti));
-    assert_eq!(rl_lock_rcv(fd), (0, saved & !1), "lock bit clear, the size from before");
+    assert_eq!(rl_lock_rcv(fd), (0, rl_restored(saved)), "lock bit clear, min(the size from before, 2 x rmem_max)");
     assert_eq!(w.stats.relief_streams.get(), 1);
     end(w);
     // a size set by someone else since (a cap of the memory budget and its uncap) is left as it is
@@ -2371,7 +2378,7 @@ fn rl_lifts_when_the_pressure_ends() {
 }
 
 /// G70 someone clears our lock bit while the pressure lasts (a caps episode's uncap, or another holder's lift): the next
-/// sweep sets it again; after the pressure the lift still gives back the size from before
+/// sweep sets it again; after the pressure the lift still gives back the size from before (at most 2 x rmem_max)
 #[test]
 fn rl_takes_the_lock_again_under_the_pressure() {
     let (mut w, g, _c, _ci, mut t) = rl_rig(|_| {});
@@ -2390,6 +2397,6 @@ fn rl_takes_the_lock_again_under_the_pressure() {
     assert_eq!(w.stats.relief_streams.get(), 1, "no second read-down");
     g.set_state(0);
     rl_sweep(&mut w);
-    assert_eq!(rl_lock_rcv(fd), (0, saved & !1));
+    assert_eq!(rl_lock_rcv(fd), (0, rl_restored(saved)), "lifted: min(the size from before, 2 x rmem_max)");
     end(w);
 }

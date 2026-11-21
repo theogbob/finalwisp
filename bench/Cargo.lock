@@ -377,6 +377,7 @@ dependencies = [
  "bytes",
  "clap",
  "hdrhistogram",
+ "libc",
  "rustls",
  "tokio",
 ]

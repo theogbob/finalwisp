@@ -139,7 +139,7 @@ impl Worker {
             phead: 0,
             since: 0,
             rdhup: false,
-            blocked: false,
+            blocked: Park::Run,
             raw,
             wrote_since_read: false,
             urg: false,

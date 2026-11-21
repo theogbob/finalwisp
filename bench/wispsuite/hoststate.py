@@ -103,6 +103,59 @@ def sample(prev_cpu, eph):
     return d, (tot, idle)
 
 
+# 80.04: host-state tags of ONE timed run, from the counters wbench --edges read at the two edges of its
+# measured window (bench/src/edges.rs). Shares of all CPU ticks of the window (ncpu x dt): steal (hypervisor),
+# softirq, irq, iowait; other = user + nice + system ticks NOT used by the server, the wbench client or the target,
+# per CPU (another process on the box). tcp_press = TCPMemoryPressures entries in the window. BAD marks: BAD_MARKS
+# (see bad()); thresholds from archived runs: bench/tools/timemarks.py (5104 A/A pairs of `wst ab` on two 2-vCPU VPS boxes: the
+# pair spread is 1.9 x the clean spread at steal 1-2 %, 1.4 x at 0.5-1 %, 2.5 x with TCP memory pressure; BAD = 1.5 x
+# or more). "other" has no archived counterpart: 5 % is PROVISIONAL until timebox A/A runs give the same table for it.
+CLK_TCK = os.sysconf("SC_CLK_TCK")
+BAD_MARKS = {"steal": 0.01, "other": 0.05, "tcp_press": 0}
+
+
+def cpu_mhz():
+    """mean "cpu MHz" of /proc/cpuinfo (a VM often shows a fixed value; None if absent)"""
+    try:
+        v = [float(l.split(":")[1]) for l in open("/proc/cpuinfo") if l.startswith("cpu MHz")]
+        return round(sum(v) / len(v), 1) if v else None
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def tags(edges, tgt_cpu_s=0.0, mhz=None):
+    """-> dict of host-state tags of one run (None values where wbench had no such counter)."""
+    e = edges or {}
+    h = e.get("host") or {}
+    tot = sum(h.values()) if h else 0
+    from .timedsum import srv_cpu_s
+    srv = srv_cpu_s(e, CLK_TCK)
+    cli = (e.get("cli_user_us", 0) + e.get("cli_sys_us", 0)) / 1e6
+    out = {"dt_s": e.get("dt_s"), "mhz": mhz, "tcp_press": e.get("tcp_press"), "tcp_press_ms": e.get("tcp_press_ms"),
+           "tcp_mem": e.get("tcp_mem"), "late_ms": round(max(e.get("late0_us", 0), e.get("late1_us", 0)) / 1000, 2)}
+    if tot > 0:
+        for k in ("steal", "softirq", "irq", "iowait"):
+            out[k] = round(h.get(k, 0) / tot, 4)
+        ncpu = tot / CLK_TCK / e["dt_s"] if e.get("dt_s") else None  # CPUs seen in the window's ticks
+        used = (h.get("user", 0) + h.get("nice", 0) + h.get("system", 0)) / CLK_TCK
+        if srv is not None and ncpu:
+            out["other"] = round(max(0.0, used - srv - cli - (tgt_cpu_s or 0)) / (ncpu * e["dt_s"]), 4)
+        out["busy"] = round(1 - (h.get("idle", 0) + h.get("iowait", 0)) / tot, 4)
+    return out
+
+
+def bad(t, marks=None):
+    """-> list of the marks one run's tags pass (empty = a clean run)"""
+    m = {**BAD_MARKS, **(marks or {})}
+    out = []
+    for k in ("steal", "other"):
+        if t.get(k) is not None and t[k] > m[k]:
+            out.append(f"{k} {t[k]} > {m[k]}")
+    if t.get("tcp_press") is not None and t["tcp_press"] > m["tcp_press"]:
+        out.append(f"tcp_press {t['tcp_press']}")
+    return out
+
+
 def main(argv):
     out, interval = argv[0], float(argv[1]) if len(argv) > 1 else 2.0
     stop = [False]

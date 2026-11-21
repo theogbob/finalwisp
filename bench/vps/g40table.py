@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""60.78 G40 (sb-robust): fd-admission off / on / off copy (A/A), churn 1x10, one `wst ab` on VPS1 (rotated arms, 100
+"""60.78 G40: fd-admission off / on / off copy (A/A), churn 1x10, one `wst ab` on VPS1 (rotated arms, 100
 rounds, dur 4 s, warmup 1 s). Pairs by round; verdicts of bench/wispsuite/stats.py compare (rules unchanged), key rps.
 usage: bench/vps/g40table.py RAW.jsonl [--check NOTE.md]"""
 import json, os, sys

@@ -66,6 +66,7 @@ impl Worker {
             if let Some(l) = connlog::entry(&mut self.connlog, ci) {
                 l.proto = if v2 { connlog::Proto::V2 } else { connlog::Proto::V1 };
             }
+            self.gate.begin(ci, self.clients.gen(ci), up.browser); // 20.34 (browser: its CLOSEs are never held)
             let c = self.clients.at(ci);
             if v2 {
                 // Wisp v2: INFO (ext::Ext::info: 2.0 + extension records); CONTINUE follows the

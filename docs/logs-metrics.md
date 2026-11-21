@@ -70,7 +70,9 @@ finalwisp: ev=stream_refused ts=... w=0 cid=0:1 ip=203.0.113.9 sid=5 t=tcp host=
 - `sid` is the Wisp stream id, `t` is `tcp`, `udp` or `wsproxy`, `host` and `port` are what the client asked for, and
   `dst` is the address finalwisp connected to. With `--upstream`, the line has `upstream=1` and `dst` is the proxy.
 - `up` and `down` are payload bytes to and from the target (UDP lines add `dgrams_up` and `dgrams_down`).
-- `reason` is the Wisp close code sent (table below), or `none` if the client closed the stream.
+- `reason` is the Wisp close code sent (table below), or `none` if the client closed the stream. The line is written
+  when the stream ends; a CLOSE that then [waits for a pong](#wisp-close-codes) is not sent if the client closes the
+  stream first or the connection ends.
 - `why` is one of `target_close`, `client_close`, `conn_close`, `dns_fail`, `connect_fail`, `upstream_fail`,
   `policy`, `limit`, `pressure`, `invalid`; `rule` names the rule that refused it (`ports`, `private`, `block_dest`,
   `max_streams_per_conn`, `stream_rate`, `dest_rate`, `dest_rate_minute`, `tcpmem_share`, `port_share`,
@@ -134,6 +136,18 @@ What a client sees when finalwisp closes a stream:
 WebSocket close codes: 1000 normal, 1001 server shutdown, 1002 protocol error, 1009 message too big, 1013 try again
 later (heavy memory pressure, plain `ws://` only).
 
+When a destination ends an open TCP stream (any code but `0x49`), finalwisp sends a WebSocket ping behind the stream's
+last data and sends the stream's CLOSE when the client's pong comes back, at most 1 second later. The CLOSE then
+reaches the client in a later socket read than the data: a client that read the last data and the CLOSE in one socket
+read could drop that data. (The pong shows that the client's WebSocket layer read the data, not that the application
+consumed it.) This costs about one round trip at each such stream end. Sent at once, as before: CLOSEs
+on connections whose upgrade request carried an `Origin` header (a browser's WebSocket always sends one), `0x49`
+(the server's own limits), UDP streams, and CLOSEs beyond 1024 waiting on one connection or 65536 in one worker
+thread. A connection that leaves the ping unanswered for 1 second gets its CLOSEs at once until it answers one.
+Known limits: a client that answers only the most recent of several pings (RFC 6455 allows it; the upload credit
+pings too) can leave this ping unanswered and wait 1 second once; a client that is not a browser but sends `Origin`
+gets no wait; a proxy that answers pings itself makes the wait a round trip to the proxy, not to the client.
+
 ## Metrics and Prometheus
 
 The counters always run; reading them is off by default. Two ways, usable together:
@@ -186,6 +200,15 @@ request with more data behind it), it first sends all that is queued, then ends 
 what the client sends until the client closes too. Then the client gets every byte, not a reset. This wait ends after
 5 seconds (10 with the built-in TLS) or 1 MiB read; a close at one of these bounds can reset the connection and is
 counted in `finalwisp_linger_capped_total`. A connection that waits this way still counts in `finalwisp_connections`.
+
+Stream ends: `finalwisp_ping_gate_held_total` counts the CLOSEs that waited for a pong (see
+[close codes](#wisp-close-codes)). Each of them then counts once in `finalwisp_ping_gate_released_total` (the pong
+came), `finalwisp_ping_gate_capped_total` (1 second passed, or the shutdown sent it) or
+`finalwisp_ping_gate_dropped_total` (never sent: the client closed the stream first or opened its id again, the
+connection ended, or the shutdown cut the stream's last data). CLOSEs sent at once count in `finalwisp_ping_gate_browser_total` (`Origin`),
+`finalwisp_ping_gate_nopong_total` (a ping left unanswered) and `finalwisp_ping_gate_full_total` (the 1024 / 65536
+limits); `finalwisp_ping_gate_pings_total` counts the pings. `finalwisp_close_total` counts a CLOSE when it is sent,
+so a dropped one is not counted. `capped` and `nopong` that grow together mean clients that do not answer pings.
 
 Name lookups: `finalwisp_dns_wait_seconds_total` is the time lookups waited for a free resolver thread; divided by
 `finalwisp_dns_miss_total` it is the mean wait of a new name (normally well under a millisecond).

@@ -33,6 +33,8 @@ repository; the comments carry their reasoning inline. This index gives the topi
 | 20.30 | Upload credit v2: acceptance bar, interim, design, spike |
 | 20.31 | Host TCP memory adaptation (B3): premise and design |
 | 20.33 | Upload batching across interleaved streams |
+| 20.34 | Ping gate: a destination-ended CLOSE waits for the client's PONG |
+| 20.35 | Only a release un-parks a download |
 | 30.01 | wbench load generator |
 | 30.02 | bench/showdown.py |
 | 30.03 | bench/wispmark.py |
@@ -118,7 +120,6 @@ repository; the comments carry their reasoning inline. This index gives the topi
 | 60.74 | Auto-balance stage 2: a move is judged by the server's total, A / B / A |
 | 60.75 | Knobs docs: `--no-splice` advice, `--adaptive-splice` out of the tables, the flush-first study |
 | 60.76 | v1.3.2 release: what it contains, the release text, the steps |
-| 60.77 | v1.3.3 release: what it contains, how it was evaluated, what is open |
 | 60.78 | gap inventory |
 | 70.01 | Fuzzing base-1.1 network parsers |
 | 70.02 | dead-peer detection |
@@ -143,3 +144,5 @@ repository; the comments carry their reasoning inline. This index gives the topi
 | 80.01 | ops hardening round |
 | 80.02 | Test pipeline: where the time goes and the design of a faster suite |
 | 80.03 | Test throughput phase |
+| 80.04 | Measurement layers |
+| 90.03 | Purge rule for local results and worktrees |

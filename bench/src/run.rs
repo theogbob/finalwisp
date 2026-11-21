@@ -2,7 +2,9 @@
 //! One tokio task per WebSocket connection owns the socket and all its streams.
 //! It uses readiness (`ready` + `try_read_buf`/`try_write`) so reads and writes are
 //! serviced fairly in one loop without locks.
+use crate::edges;
 use crate::errkind::ErrKinds;
+use crate::lat::{self, Dist};
 use crate::verify;
 use crate::ws::{self, MaskGen, OP_BIN, OP_CLOSE, OP_CONT, OP_PING, OP_PONG, OP_TEXT};
 use crate::{RunArgs, Test};
@@ -35,6 +37,8 @@ struct Shared {
     /// from the reported duration and once missed the whole window (duration 0, 60.12 scale tests).
     window: OnceLock<(Instant, Instant)>,
     printed: AtomicU64,
+    /// 80.04 --rate: the instant of "go" (start of the warm-up): every connection's arrival schedule starts here
+    go_at: OnceLock<Instant>,
 }
 
 impl Shared {
@@ -70,6 +74,75 @@ struct ConnResult {
     bulk_down: u64,
     v: VerifyStats,
     errk: ErrKinds, // 30.16: errors by kind (sums to `errors`)
+    lat: Option<Dist>,          // 80.04 --lat / --rate
+    ol: Option<Box<OpenLoop>>, // 80.04 --rate (counts after censoring)
+    cnt: Counts,                // 80.04 --counts
+}
+
+/// 80.04 --counts: exact counts over the measured window (wisp DATA packets each way, echo messages fully back)
+#[derive(Default, Clone, Copy)]
+struct Counts {
+    frames_up: u64,
+    frames_down: u64,
+    msgs: u64,
+}
+
+impl Counts {
+    fn add(&mut self, o: &Counts) {
+        self.frames_up += o.frames_up;
+        self.frames_down += o.frames_down;
+        self.msgs += o.msgs;
+    }
+}
+
+/// 80.04 per-message latency of one connection (--lat, --rate)
+struct LatTrack {
+    /// true: a message completes when its last byte has come back (byte offsets per stream: echo, and every --rate
+    /// test); false: rr / churn closed loop (complete() records the request's time)
+    bytes: bool,
+    /// per slot: (end offset, intended send time, actual send time) of the messages in flight
+    fl: Vec<VecDeque<(u64, Instant, Instant)>>,
+    tx: Vec<u64>,
+    rx: Vec<u64>,
+    lat: Dist,
+}
+
+/// 80.04 --rate: the open-loop state of one connection. Every arrival whose intended time is in the measured
+/// window [ms, stop) ends as exactly one of: completed (latency recorded from the intended time), censored (still
+/// unsent or in flight when the drain after the window ended: recorded at its age then, so a percentile that reaches
+/// into the censored share is a lower bound), or dropped (refused at a full backlog or for a dead stream; never sent,
+/// not in the histogram). sched = done + censored + dropped.
+struct OpenLoop {
+    sched: lat::Sched,
+    ms: Instant,
+    stop: Instant,
+    rr: usize,
+    pend: Vec<VecDeque<Instant>>, // per slot: intended times not sent yet (no credit, or the write buffer is full)
+    backlog: u64,
+    max_backlog: u64,
+    sched_n: u64,
+    out: u64, // window arrivals queued and not completed yet
+    dropped: u64,
+    censored: u64,
+    unsent: u64,
+    inflight: u64,
+    svc: Dist, // from the actual send (what the server and the path took)
+    lag: Dist, // intended -> actual send (this client's own delay: timer, runtime, credit, write buffer)
+}
+const OL_BACKLOG_MAX: u64 = 1 << 20;
+const OL_BATCH: u32 = 4096; // arrivals scheduled per io_round at most
+
+impl OpenLoop {
+    fn add(&mut self, o: &OpenLoop) {
+        self.max_backlog = self.max_backlog.max(o.max_backlog);
+        self.sched_n += o.sched_n;
+        self.dropped += o.dropped;
+        self.censored += o.censored;
+        self.unsent += o.unsent;
+        self.inflight += o.inflight;
+        self.svc.add(&o.svc);
+        self.lag.add(&o.lag);
+    }
 }
 
 /// 60.15 T06 per-run verify totals (all zero without --verify)
@@ -132,6 +205,7 @@ struct Slot {
     need: usize,
     t0: Instant,
     reqs_done: u32, // 20.19 browse: requests answered on this stream so far
+    rx_b: u64,      // 80.04 --counts echo: bytes back on this stream since it opened (message k is back at k * size)
 }
 
 struct Conn {
@@ -155,6 +229,7 @@ struct Conn {
     ops: u64,
     errors: u64,
     hist: Histogram<u64>,
+    cnt: Counts, // 80.04 --counts (counted always: a few adds per packet)
     /// Debug counters (printed with WBENCH_DEBUG=1).
     rx_continue: u64,
     rx_packets: u64,
@@ -185,6 +260,11 @@ struct Conn {
     draining: bool,
     vstray: u64,
     errk: ErrKinds, // 30.16: one key per counted error (errkind.rs)
+    lt: Option<Box<LatTrack>>, // 80.04 --lat / --rate
+    ol: Option<Box<OpenLoop>>, // 80.04 --rate (set at "go")
+    /// 80.04 --rate: the last read or write of this connection (the stall ping counts from here: arrival timer
+    /// wake-ups must not restart it)
+    idle_since: Instant,
 }
 const UDP_LOSS_TIMEOUT: Duration = Duration::from_millis(200);
 
@@ -228,6 +308,7 @@ impl Conn {
         let udp = self.test == Test::UdpRr;
         sl.credit = if udp { u32::MAX } else { self.initial_credit }; // 20.16: UDP has no credit
         sl.awaiting = false;
+        sl.rx_b = 0;
         let id = sl.id;
         let mut body = Vec::with_capacity(3 + self.host.len());
         body.push(if udp { 2u8 } else { 1u8 }); // UDP / TCP
@@ -277,6 +358,7 @@ impl Conn {
         }
         if self.sh.measuring() {
             self.up += size as u64;
+            self.cnt.frames_up += 1;
         }
     }
 
@@ -310,6 +392,7 @@ impl Conn {
         ws::push_frame(&mut self.wbuf, OP_BIN, &[&Self::wisp_hdr(T_DATA, id), &hdr], self.size - 8, key);
         if self.sh.measuring() {
             self.up += self.size as u64;
+            self.cnt.frames_up += 1;
         }
         let sl = &mut self.slots[s];
         sl.awaiting = true;
@@ -341,6 +424,10 @@ impl Conn {
                 self.send_end(s); // 60.15 T06: no new streams or data, only ENDs
                 continue;
             }
+            if self.ol.is_some() {
+                self.ol_fill(s); // 80.04 --rate: send what the schedule asked for, not what credit allows
+                continue;
+            }
             if self.slots[s].st == St::NeedOpen {
                 self.open(s);
                 match self.test {
@@ -365,6 +452,9 @@ impl Conn {
                 Test::Upload | Test::Echo => {
                     if sl.credit > 0 {
                         self.send_data(s, self.size);
+                        if self.lt.is_some() {
+                            self.lat_tx(s); // 80.04 --lat echo
+                        }
                         if self.slots[s].credit > 0 {
                             self.queue(s);
                         }
@@ -432,7 +522,11 @@ impl Conn {
         }
         if self.sh.measuring() {
             self.ops += 1;
-            self.hist.saturating_record(sl.t0.elapsed().as_micros() as u64);
+            let e = sl.t0.elapsed();
+            self.hist.saturating_record(e.as_micros() as u64);
+            if let Some(lt) = self.lt.as_deref_mut() {
+                lat_rec(lt, e); // 80.04 --lat
+            }
         }
         if self.test == Test::Churn {
             let id = sl.id;
@@ -440,6 +534,158 @@ impl Conn {
             self.push_wisp(T_CLOSE, id, &[0x02], 0);
         }
         self.queue(s);
+    }
+
+    /// 80.04: `n` bytes came back on slot s: complete every message whose last byte is now in.
+    #[inline(never)] // 80.04: out of on_packet's closed-loop path
+    fn lat_rx(&mut self, s: usize, n: usize) {
+        let now = Instant::now();
+        let measuring = self.sh.measuring();
+        let Some(lt) = self.lt.as_deref_mut() else { return };
+        lt.rx[s] += n as u64;
+        while let Some(&(end, ti, ts)) = lt.fl[s].front() {
+            if end > lt.rx[s] {
+                break;
+            }
+            lt.fl[s].pop_front();
+            let counted = match self.ol.as_deref_mut() {
+                Some(ol) => {
+                    let c = ti >= ol.ms && ti < ol.stop;
+                    if c {
+                        ol.svc.rec(now - ts);
+                        ol.out -= 1;
+                    }
+                    c
+                }
+                None => measuring,
+            };
+            if counted {
+                lt.lat.rec(now - ti);
+            }
+            if measuring {
+                self.ops += 1;
+            }
+        }
+    }
+
+    /// 80.04 --rate: every arrival that is due by now goes to the next stream's queue (round robin).
+    fn ol_schedule(&mut self) {
+        let Some(ol) = self.ol.as_deref_mut() else { return };
+        let now = Instant::now();
+        let n = self.slots.len();
+        let mut budget = OL_BATCH; // bounded catch-up per round: the socket is served between batches
+        while ol.sched.next() <= now && ol.sched.next() < ol.stop && budget > 0 {
+            budget -= 1;
+            let ti = ol.sched.advance();
+            let counted = ti >= ol.ms;
+            let s = ol.rr;
+            ol.rr = (ol.rr + 1) % n;
+            if ol.backlog >= OL_BACKLOG_MAX || self.slots[s].st == St::Dead {
+                if counted {
+                    ol.sched_n += 1;
+                    ol.dropped += 1;
+                }
+                continue;
+            }
+            ol.pend[s].push_back(ti);
+            ol.backlog += 1;
+            ol.max_backlog = ol.max_backlog.max(ol.backlog);
+            if counted {
+                ol.sched_n += 1;
+                ol.out += 1;
+            }
+            if !self.slots[s].queued {
+                self.slots[s].queued = true;
+                self.ready.push_back(s);
+            }
+        }
+    }
+
+    /// 80.04 --rate: slot s went dead (the server closed the stream): its window arrivals that wait or are in flight
+    /// can never complete: counted as dropped, out of the backlog and of `out`
+    #[cold]
+    #[inline(never)]
+    fn ol_retire(&mut self, s: usize) {
+        let (Some(ol), Some(lt)) = (self.ol.as_deref_mut(), self.lt.as_deref_mut()) else { return };
+        let (ms, stop) = (ol.ms, ol.stop);
+        let win = |t: Instant| t >= ms && t < stop;
+        let waiting = ol.pend[s].iter().filter(|&&t| win(t)).count() as u64;
+        let flying = lt.fl[s].iter().filter(|e| win(e.1)).count() as u64;
+        ol.backlog -= ol.pend[s].len() as u64;
+        ol.pend[s].clear();
+        lt.fl[s].clear();
+        ol.dropped += waiting + flying;
+        ol.out -= waiting + flying;
+    }
+
+    /// 80.04 --rate: the next arrival time, None when the window has no more arrivals
+    fn ol_next(&self) -> Option<Instant> {
+        self.ol.as_deref().map(|o| o.sched.next()).filter(|&t| self.ol.as_deref().is_some_and(|o| t < o.stop))
+    }
+
+    /// 80.04 --lat echo: the message just sent on slot s completes when its last byte is back (out of line)
+    #[inline(never)]
+    fn lat_tx(&mut self, s: usize) {
+        let Some(lt) = self.lt.as_mut() else { return };
+        let now = Instant::now();
+        lt.tx[s] += self.size as u64;
+        lt.fl[s].push_back((lt.tx[s], now, now));
+    }
+
+    /// 80.04 --rate: slot s is ready: open it if needed, then send its oldest waiting message if it has credit.
+    #[cold]
+    #[inline(never)] // 80.04: out of line, so the closed loop's fill stays as small as before 80.04
+    fn ol_fill(&mut self, s: usize) {
+        if self.slots[s].st == St::NeedOpen {
+            self.open(s);
+        }
+        if self.slots[s].st != St::Open || self.slots[s].credit == 0 {
+            return; // a CONTINUE queues it again
+        }
+        let Some(ti) = self.ol.as_deref().and_then(|o| o.pend[s].front().copied()) else { return };
+        self.send_data(s, self.size);
+        let now = Instant::now();
+        let size = self.size as u64;
+        let (Some(ol), Some(lt)) = (self.ol.as_deref_mut(), self.lt.as_deref_mut()) else { return };
+        ol.pend[s].pop_front();
+        ol.backlog -= 1;
+        if ti >= ol.ms && ti < ol.stop {
+            ol.lag.rec(now - ti);
+        }
+        lt.tx[s] += size;
+        lt.fl[s].push_back((lt.tx[s], ti, now));
+        let more = !ol.pend[s].is_empty();
+        if more && self.slots[s].credit > 0 {
+            self.queue(s);
+        }
+    }
+
+    /// 80.04 --rate, at the end: every window arrival still unsent or in flight is recorded at its age now (censored).
+    fn ol_censor(&mut self) {
+        let (Some(ol), Some(lt)) = (self.ol.as_deref_mut(), self.lt.as_deref_mut()) else { return };
+        let now = Instant::now();
+        let (ms, stop) = (ol.ms, ol.stop);
+        let win = |t: Instant| t >= ms && t < stop;
+        for q in &ol.pend {
+            for &ti in q.iter().filter(|&&t| win(t)) {
+                lt.lat.rec(now - ti);
+                ol.censored += 1;
+                ol.unsent += 1;
+            }
+        }
+        for q in &lt.fl {
+            for &(_, ti, _) in q.iter().filter(|e| win(e.1)) {
+                lt.lat.rec(now - ti);
+                ol.censored += 1;
+                ol.inflight += 1;
+            }
+        }
+        for q in ol.pend.iter_mut() {
+            q.clear();
+        }
+        for q in lt.fl.iter_mut() {
+            q.clear();
+        }
     }
 
     fn proto_err(&mut self, msg: impl FnOnce() -> String) {
@@ -460,8 +706,26 @@ impl Conn {
         self.rx_packets += 1;
         match ty {
             T_DATA => {
-                if self.sh.measuring() {
+                let measuring = self.sh.measuring();
+                if measuring {
                     self.down += body.len() as u64;
+                    self.cnt.frames_down += 1;
+                }
+                if self.test == Test::Echo && self.size > 0 {
+                    // 80.04 --counts: echo message k of a stream is back when its k * size-th byte is
+                    if let Some(s) = self.lookup(id) {
+                        let (sz, sl) = (self.size as u64, &mut self.slots[s]);
+                        let before = sl.rx_b / sz;
+                        sl.rx_b += body.len() as u64;
+                        if measuring {
+                            self.cnt.msgs += sl.rx_b / sz - before;
+                        }
+                    }
+                }
+                if self.lt.as_ref().is_some_and(|l| l.bytes) {
+                    if let Some(s) = self.lookup(id) {
+                        self.lat_rx(s, body.len()); // 80.04
+                    }
                 }
                 if !self.ver.is_empty() {
                     match self.lookup(id) {
@@ -525,6 +789,7 @@ impl Conn {
                         self.queue(s);
                     } else {
                         sl.st = St::Dead;
+                        self.ol_retire(s); // 80.04 --rate (no-op without)
                     }
                 }
             }
@@ -589,12 +854,22 @@ enum Io {
     Deadline,
 }
 
+/// 80.04 --lat: one request's latency (out of line, so complete() stays as small as before 80.04)
+#[inline(never)]
+fn lat_rec(lt: &mut LatTrack, e: Duration) {
+    lt.lat.rec(e);
+}
+
 /// One readiness round: read what is available and write what is pending.
-async fn io_round(
+/// One read/write round of a connection. OL = the connection runs --rate (c.ol is Some): the open-loop code is compiled
+/// only into the OL instantiation, so the closed loop runs the same per-round work as before 80.04 (counted: the
+/// unconditional open-loop code cost the closed loop +6 % user instructions per request on rr 1x1, counted)
+async fn io_round<const OL: bool>(
     c: &mut Conn,
     sock: &mut crate::tls::Sock,
     rbuf: &mut BytesMut,
     sleep: &mut std::pin::Pin<&mut tokio::time::Sleep>,
+    tm: &mut Option<lat::Timer>,
 ) -> Result<Io, String> {
     if c.woff == c.wbuf.len() {
         c.wbuf.clear();
@@ -602,6 +877,10 @@ async fn io_round(
     } else if c.woff > 4 * WBUF_HIGH {
         c.wbuf.drain(..c.woff);
         c.woff = 0;
+    }
+    debug_assert_eq!(OL, c.ol.is_some());
+    if OL {
+        c.ol_schedule(); // 80.04 --rate
     }
     c.fill();
     let pending = c.woff < c.wbuf.len() || sock.wants_write(); // 20.13: TLS records queued in rustls
@@ -611,25 +890,67 @@ async fn io_round(
     // Only tests that can block on credit (churn uses 1 credit/stream, download sends nothing).
     let can_starve = matches!(c.test, Test::Upload | Test::Echo | Test::Rr | Test::UdpRr);
     let stall = if !pending && can_starve && c.stall_ping > Duration::ZERO { Some(c.stall_ping) } else { None };
+    let stall_at = if OL { Some(c.idle_since + c.stall_ping) } else { None }; // 80.04 --rate: absolute
     let udp = c.test == Test::UdpRr;
     let loss_at = c.next_loss_scan;
     let page_at = c.page_next; // 20.19 browse: next page after the gap
-    let ready = tokio::select! {
-        _ = tokio::time::sleep_until(loss_at.into()), if udp => {
-            c.udp_loss_scan();
-            return Ok(Io::Progress);
+    // 80.04 --rate: the timerfd wakes the task at the next arrival (only while the window still has arrivals)
+    let tm_on = OL
+        && match (tm.as_mut(), c.ol_next()) {
+            (Some(t), Some(at)) => {
+                t.arm(at).map_err(|e| format!("timerfd: {e}"))?;
+                true
+            }
+            _ => false,
+        };
+    // 80.04: the closed loop (OL = false) keeps the pre-80.04 select! exactly (no timer branch, relative stall sleep)
+    let ready = if OL {
+        tokio::select! {
+            r = async { tm.as_mut().unwrap().wait().await }, if tm_on => {
+                r.map_err(|e| format!("timerfd: {e}"))?;
+                return Ok(Io::Progress);
+            }
+            _ = tokio::time::sleep_until(loss_at.into()), if udp => {
+                c.udp_loss_scan();
+                return Ok(Io::Progress);
+            }
+            _ = tokio::time::sleep_until(page_at.unwrap_or(loss_at).into()), if page_at.is_some() => {
+                c.start_page();
+                return Ok(Io::Progress);
+            }
+            r = sock.ready(interest) => r.map_err(|e| format!("socket: {e}"))?,
+            _ = sleep.as_mut() => return Ok(Io::Deadline),
+            _ = async {
+                match stall_at {
+                    Some(t) => tokio::time::sleep_until(t.into()).await,
+                    None => tokio::time::sleep(stall.unwrap()).await,
+                }
+            }, if stall.is_some() => {
+                let key = c.mg.next();
+                ws::push_frame(&mut c.wbuf, OP_PING, &[b"wbench"], 0, key);
+                c.stall_pings += 1;
+                c.idle_since = Instant::now();
+                return Ok(Io::Progress);
+            }
         }
-        _ = tokio::time::sleep_until(page_at.unwrap_or(loss_at).into()), if page_at.is_some() => {
-            c.start_page();
-            return Ok(Io::Progress);
-        }
-        r = sock.ready(interest) => r.map_err(|e| format!("socket: {e}"))?,
-        _ = sleep.as_mut() => return Ok(Io::Deadline),
-        _ = async { tokio::time::sleep(stall.unwrap()).await }, if stall.is_some() => {
-            let key = c.mg.next();
-            ws::push_frame(&mut c.wbuf, OP_PING, &[b"wbench"], 0, key);
-            c.stall_pings += 1;
-            return Ok(Io::Progress);
+    } else {
+        tokio::select! {
+            _ = tokio::time::sleep_until(loss_at.into()), if udp => {
+                c.udp_loss_scan();
+                return Ok(Io::Progress);
+            }
+            _ = tokio::time::sleep_until(page_at.unwrap_or(loss_at).into()), if page_at.is_some() => {
+                c.start_page();
+                return Ok(Io::Progress);
+            }
+            r = sock.ready(interest) => r.map_err(|e| format!("socket: {e}"))?,
+            _ = sleep.as_mut() => return Ok(Io::Deadline),
+            _ = async { tokio::time::sleep(stall.unwrap()).await }, if stall.is_some() => {
+                let key = c.mg.next();
+                ws::push_frame(&mut c.wbuf, OP_PING, &[b"wbench"], 0, key);
+                c.stall_pings += 1;
+                return Ok(Io::Progress);
+            }
         }
     };
     if ready.is_readable() || ready.is_read_closed() {
@@ -638,14 +959,24 @@ async fn io_round(
         }
         match sock.try_read_buf(rbuf) {
             Ok(0) => return Err("websocket TCP connection closed by server".into()),
-            Ok(_) => c.process(rbuf)?,
+            Ok(_) => {
+                if OL {
+                    c.idle_since = Instant::now(); // 80.04 --rate's absolute stall timer only
+                }
+                c.process(rbuf)?
+            }
             Err(e) if e.kind() == ErrorKind::WouldBlock => {}
             Err(e) => return Err(format!("read: {e}")),
         }
     }
     if pending && ready.is_writable() {
         match sock.try_write(&c.wbuf[c.woff..]) {
-            Ok(n) => c.woff += n,
+            Ok(n) => {
+                c.woff += n;
+                if OL && n > 0 {
+                    c.idle_since = Instant::now();
+                }
+            }
             Err(e) if e.kind() == ErrorKind::WouldBlock => {}
             Err(e) => return Err(format!("write: {e}")),
         }
@@ -669,6 +1000,13 @@ struct Plan {
     bulk: usize,
     bulk_size: usize,
     verify: bool,
+    // 80.04
+    lat: bool,
+    rate: Option<f64>,
+    poisson: bool,
+    drain: Duration,
+    src_port: Option<u16>,
+    conns: usize,
 }
 
 /// 60.15 T06: how long the END handshake may take after the measured window (in-flight data drains first)
@@ -694,7 +1032,7 @@ async fn conn_task(
         initial_credit: 0,
         handshake_done: false,
         slots: (0..streams)
-            .map(|_| Slot { id: 0, gen: 0, st: St::NeedOpen, credit: 0, queued: false, awaiting: false, need: 0, t0: now, reqs_done: 0 })
+            .map(|_| Slot { id: 0, gen: 0, st: St::NeedOpen, credit: 0, queued: false, awaiting: false, need: 0, t0: now, reqs_done: 0, rx_b: 0 })
             .collect(),
         ready: VecDeque::with_capacity(streams),
         wbuf: Vec::with_capacity(WBUF_HIGH * 2),
@@ -708,6 +1046,7 @@ async fn conn_task(
         ops: 0,
         errors: 0,
         hist: new_hist(),
+        cnt: Counts::default(),
         rx_continue: 0,
         rx_packets: 0,
         stall_ping: plan.stall_ping,
@@ -738,6 +1077,13 @@ async fn conn_task(
         draining: false,
         vstray: 0,
         errk: ErrKinds::default(),
+        lt: plan.lat.then(|| {
+            let bytes = plan.test == Test::Echo || plan.rate.is_some();
+            let k = if bytes { streams } else { 0 }; // rr / churn closed loop: complete() records, no byte offsets
+            Box::new(LatTrack { bytes, fl: vec![VecDeque::new(); k], tx: vec![0; k], rx: vec![0; k], lat: Dist::new() })
+        }),
+        ol: None,
+        idle_since: now,
     };
     let fail = |c: &mut Conn, msg: String| {
         c.errors += 1;
@@ -747,7 +1093,8 @@ async fn conn_task(
 
     // --- setup: WS upgrade + Wisp v1 handshake (CONTINUE on stream 0) ---
     let setup = async {
-        let (mut sock, mut rbuf) = ws::connect(&plan.url, plan.tls.as_ref()).await.map_err(|e| e.to_string())?;
+        let local = plan.src_port.map(|b| b + idx as u16); // 80.04 --src-port (range checked in run())
+        let (mut sock, mut rbuf) = ws::connect(&plan.url, plan.tls.as_ref(), local).await.map_err(|e| e.to_string())?;
         let far = tokio::time::sleep_until(setup_deadline.into());
         tokio::pin!(far);
         while !c.handshake_done {
@@ -755,7 +1102,7 @@ async fn conn_task(
             if c.handshake_done {
                 break;
             }
-            if let Io::Deadline = io_round(&mut c, &mut sock, &mut rbuf, &mut far).await? {
+            if let Io::Deadline = io_round::<false>(&mut c, &mut sock, &mut rbuf, &mut far, &mut None).await? {
                 return Err("timeout waiting for Wisp CONTINUE handshake".to_string());
             }
         }
@@ -785,6 +1132,39 @@ async fn conn_task(
             return c.into_result();
         }
     };
+    let mut tm: Option<lat::Timer> = None;
+    if let Some(rate) = plan.rate {
+        // 80.04 --rate: arrivals from the shared "go" instant (the warm-up has load; arrivals before the window are not
+        // recorded; a task that sees "go" late catches up at once), connections staggered by idx / conns of a gap
+        let (ms, stop) = *sh.window.get().expect("window is set before go");
+        let k = plan.streams;
+        let seed = 0x9E37_79B9_7F4A_7C15u64.wrapping_mul(idx as u64 + 1);
+        c.ol = Some(Box::new(OpenLoop {
+            sched: lat::Sched::new(rate / plan.conns as f64, plan.poisson, seed, *sh.go_at.get().unwrap_or(&ms), idx as f64 / plan.conns as f64),
+            ms,
+            stop,
+            rr: 0,
+            pend: vec![VecDeque::new(); k],
+            backlog: 0,
+            max_backlog: 0,
+            sched_n: 0,
+            out: 0,
+            dropped: 0,
+            censored: 0,
+            unsent: 0,
+            inflight: 0,
+            svc: Dist::new(),
+            lag: Dist::new(),
+        }));
+        c.idle_since = Instant::now(); // the closed-loop handshake rounds do not advance it: the stall timer starts at go
+        match lat::Timer::new() {
+            Ok(t) => tm = Some(t),
+            Err(e) => {
+                fail(&mut c, format!("timerfd: {e}"));
+                return c.into_result();
+            }
+        }
+    }
 
     if c.test == Test::Browse {
         c.start_page();
@@ -804,11 +1184,19 @@ async fn conn_task(
         return c.into_result();
     }
     loop {
-        match io_round(&mut c, &mut sock, &mut rbuf, &mut sleep).await {
+        let r = if c.ol.is_some() {
+            io_round::<true>(&mut c, &mut sock, &mut rbuf, &mut sleep, &mut tm).await
+        } else {
+            io_round::<false>(&mut c, &mut sock, &mut rbuf, &mut sleep, &mut tm).await
+        };
+        match r {
             Ok(Io::Progress) => {}
             Ok(Io::Deadline) => {
                 if !c.ver.is_empty() {
                     drain(&mut c, &mut sock, &mut rbuf).await;
+                }
+                if c.ol.is_some() {
+                    ol_drain(&mut c, &mut sock, &mut rbuf, &mut tm, plan.drain).await;
                 }
                 break;
             }
@@ -835,7 +1223,30 @@ async fn drain(c: &mut Conn, sock: &mut crate::tls::Sock, rbuf: &mut BytesMut) {
     tokio::pin!(far);
     let done = |c: &Conn| c.slots.iter().all(|sl| sl.st != St::Open);
     while !done(c) {
-        match io_round(c, sock, rbuf, &mut far).await {
+        let r = if c.ol.is_some() {
+            io_round::<true>(c, sock, rbuf, &mut far, &mut None).await
+        } else {
+            io_round::<false>(c, sock, rbuf, &mut far, &mut None).await
+        };
+        match r {
+            Ok(Io::Progress) => {}
+            Ok(Io::Deadline) | Err(_) => break,
+        }
+    }
+}
+
+/// 80.04 --rate: after the window, no new arrivals; read and write on until every window arrival has completed or the
+/// window end + `d` has passed (one absolute cutoff; what is still open then is censored in into_result). The arrivals
+/// still due before the window end (a late task: the deadline won select! first) are scheduled before anything else.
+async fn ol_drain(c: &mut Conn, sock: &mut crate::tls::Sock, rbuf: &mut BytesMut, tm: &mut Option<lat::Timer>, d: Duration) {
+    let Some(stop) = c.ol.as_deref().map(|o| o.stop) else { return };
+    while c.ol_next().is_some_and(|t| t <= Instant::now()) {
+        c.ol_schedule(); // OL_BATCH per call
+    }
+    let far = tokio::time::sleep_until((stop + d).into());
+    tokio::pin!(far);
+    while c.ol.as_deref().is_some_and(|o| o.out > 0) {
+        match io_round::<true>(c, sock, rbuf, &mut far, tm).await {
             Ok(Io::Progress) => {}
             Ok(Io::Deadline) | Err(_) => break,
         }
@@ -843,7 +1254,8 @@ async fn drain(c: &mut Conn, sock: &mut crate::tls::Sock, rbuf: &mut BytesMut) {
 }
 
 impl Conn {
-    fn into_result(self) -> ConnResult {
+    fn into_result(mut self) -> ConnResult {
+        self.ol_censor(); // 80.04 --rate: whatever is still open now (every path ends here)
         if std::env::var_os("WBENCH_DEBUG").is_some() {
             let credits: Vec<u32> = self.slots.iter().take(8).map(|s| s.credit).collect();
             eprintln!(
@@ -876,7 +1288,7 @@ impl Conn {
                 }
             }
         }
-        ConnResult { up: self.up, down: self.down, ops: self.ops, errors: self.errors, stall_pings: self.stall_pings, lost: self.lost, udp_continues: self.udp_continues, hist: self.hist, pages: self.pages, page_hist: self.page_hist, bulk_down: self.bulk_down, v, errk: self.errk }
+        ConnResult { up: self.up, down: self.down, ops: self.ops, errors: self.errors, stall_pings: self.stall_pings, lost: self.lost, udp_continues: self.udp_continues, hist: self.hist, pages: self.pages, page_hist: self.page_hist, bulk_down: self.bulk_down, v, errk: self.errk, lat: self.lt.map(|l| l.lat), ol: self.ol, cnt: self.cnt }
     }
 }
 
@@ -911,6 +1323,33 @@ pub async fn run(a: RunArgs) -> Result<i32, String> {
     if a.verify && a.conns.saturating_mul(a.streams) >= 1 << 24 {
         return Err("--verify: at most 2^24 - 1 streams (pattern key)".into());
     }
+    // 80.04 options
+    if let Some(r) = a.rate {
+        if !r.is_finite() || r < 0.001 * a.conns as f64 || r > 1e7 {
+            return Err("--rate: from 0.001 per connection to 1e7 messages per second".into());
+        }
+        if !matches!(a.test, Test::Echo | Test::Rr) {
+            return Err("--rate (open loop) supports --test echo and rr (80.04)".into());
+        }
+    }
+    let lat_on = a.lat || a.rate.is_some();
+    if lat_on && !matches!(a.test, Test::Echo | Test::Rr | Test::Churn) {
+        return Err("--lat supports --test echo, rr and churn (80.04; connchurn and browse have their own latency)".into());
+    }
+    if a.test == Test::ConnChurn && (a.edges || a.cpu_cgroup.is_some() || !a.cpu_pids.is_empty()) {
+        return Err("--edges / --cpu-cgroup / --cpu-pids: not for connchurn (80.04)".into());
+    }
+    if a.cpu_cgroup.is_some() || !a.cpu_pids.is_empty() {
+        edges::check(&edges::Cfg { cgroup: a.cpu_cgroup.clone(), pids: a.cpu_pids.clone() })?;
+    }
+    if let Some(b) = a.src_port {
+        if a.test == Test::ConnChurn {
+            return Err("--src-port: not for connchurn (a new connection per request)".into());
+        }
+        if b < 1024 || b as usize + a.conns - 1 > 65535 {
+            return Err(format!("--src-port {b}: BASE >= 1024 and BASE + conns - 1 <= 65535"));
+        }
+    }
     let resp_sizes: Vec<usize> = a.resp.split(',').map(|s| s.trim().parse::<usize>().map_err(|_| format!("bad --resp value {s:?}"))).collect::<Result<_, _>>()?;
     if resp_sizes.is_empty() {
         return Err("--resp needs at least one size".into());
@@ -935,6 +1374,12 @@ pub async fn run(a: RunArgs) -> Result<i32, String> {
         bulk: if a.test == Test::Browse { a.bulk } else { 0 },
         bulk_size: a.bulk_size.max(1),
         verify: a.verify,
+        lat: lat_on,
+        rate: a.rate,
+        poisson: a.arrival == crate::Arrival::Poisson,
+        drain: Duration::from_secs_f64(a.drain),
+        src_port: a.src_port,
+        conns: a.conns,
     });
     if a.test == Test::ConnChurn {
         let start = Instant::now();
@@ -952,13 +1397,21 @@ pub async fn run(a: RunArgs) -> Result<i32, String> {
         );
         if a.json {
             println!(
-                "{{\"test\":\"connchurn\",\"conns\":{},\"streams\":{},\"size\":{size},\"duration\":{elapsed:.3},\"mib_s_up\":0.00,\"mib_s_down\":0.00,\"rps\":{rps:.1},\"p50_us\":{p50},\"p90_us\":{p90},\"p99_us\":{p99},\"p999_us\":{p999},\"errors\":{errors},\"conns_ok\":{ok},\"stall_pings\":0,\"lost\":0,\"pages_s\":0.00,\"page_p50_us\":0,\"page_p99_us\":0,\"bulk_mib_s\":0.00,\"error_kinds\":{}}}",
-                a.conns, a.streams, errk.json()
+                "{{\"test\":\"connchurn\",\"conns\":{},\"streams\":{},\"size\":{size},\"duration\":{elapsed:.3},\"mib_s_up\":0.00,\"mib_s_down\":0.00,\"rps\":{rps:.1},\"p50_us\":{p50},\"p90_us\":{p90},\"p99_us\":{p99},\"p999_us\":{p999},\"errors\":{errors},\"conns_ok\":{ok},\"stall_pings\":0,\"lost\":0,\"pages_s\":0.00,\"page_p50_us\":0,\"page_p99_us\":0,\"bulk_mib_s\":0.00,\"error_kinds\":{}{}}}",
+                a.conns, a.streams, errk.json(),
+                if a.counts {
+                    // 80.04 --counts: per completed loop (CONNECT, one size-byte DATA, echoed back); the DATA packets
+                    // that carried the echo are not counted (null); "derived": from the loops, not counted per packet
+                    let b = ops * size as u64;
+                    format!(",\"counts\":{{\"window_s\":{elapsed},\"frames_up\":{ops},\"frames_down\":null,\"bytes_up\":{b},\"bytes_down\":{b},\"msgs\":{ops},\"derived\":true}}")
+                } else {
+                    String::new()
+                }
             );
         }
         return Ok(if ok == 0 { 3 } else { 0 });
     }
-    let sh = Arc::new(Shared { window: OnceLock::new(), printed: AtomicU64::new(0) });
+    let sh = Arc::new(Shared { window: OnceLock::new(), printed: AtomicU64::new(0), go_at: OnceLock::new() });
     let (ready_tx, mut ready_rx) = mpsc::channel(a.conns.min(4096));
     let (go_tx, go_rx) = watch::channel(None);
     let setup_deadline = Instant::now() + Duration::from_secs(15);
@@ -985,23 +1438,55 @@ pub async fn run(a: RunArgs) -> Result<i32, String> {
     let measure_start = start + Duration::from_secs_f64(a.warmup);
     let end = measure_start + Duration::from_secs_f64(a.duration);
     let _ = sh.window.set((measure_start, end));
+    let _ = sh.go_at.set(start);
     let _ = go_tx.send(Some(end));
+    // 80.04 --edges: counters at the window's start and end, read by an OS thread of its own (a tokio timer on a
+    // saturated box fired up to 10 ms late; "late0_us" / "late1_us" say how late the thread was)
+    let ecfg = (a.edges || a.cpu_cgroup.is_some() || !a.cpu_pids.is_empty())
+        .then(|| edges::Cfg { cgroup: a.cpu_cgroup.clone(), pids: a.cpu_pids.clone() });
+    let eth = ecfg.map(|c| {
+        std::thread::spawn(move || {
+            let at = |t: Instant| std::thread::sleep(t.saturating_duration_since(Instant::now()));
+            at(measure_start);
+            let e0 = edges::sample(&c);
+            at(end);
+            (e0, edges::sample(&c))
+        })
+    });
     tokio::time::sleep_until(end.into()).await;
     // how late the end timer fired (diagnostic: > ~10 ms means a starved client runtime)
     let timer_late_ms = end.elapsed().as_secs_f64() * 1000.0;
+    let (e0, e1) = match eth.map(|h| h.join()) {
+        Some(Ok((x, y))) => (Some(x), Some(y)),
+        _ => (None, None),
+    };
     let elapsed = a.duration;
 
     let (mut up, mut down, mut ops, mut errors, mut pings) = (0u64, 0u64, 0u64, 0u64, 0u64);
     let (mut lost, mut udp_continues) = (0u64, 0u64);
     let (mut pages, mut bulk_down) = (0u64, 0u64);
+    let mut cnt = Counts::default();
     let mut hist = new_hist();
     let mut page_hist = new_hist();
     let mut v = VerifyStats::default();
     let mut errk = ErrKinds::default();
+    let mut lat_all = lat_on.then(Dist::new);
+    let mut ol_all: Option<Box<OpenLoop>> = None;
+    let mut lat_lost = 0u64; // 80.04 connections whose latency never came back (join timeout)
     for h in handles {
-        // Tasks exit at `end` (+ DRAIN with --verify); bound the join anyway.
-        match tokio::time::timeout(Duration::from_secs(5) + if a.verify { DRAIN } else { Duration::ZERO }, h).await {
-            Ok(Ok(r)) => {
+        // Tasks exit at `end` (+ DRAIN with --verify, + --drain with --rate); bound the join anyway.
+        let more = if a.verify { DRAIN } else { Duration::ZERO } + if a.rate.is_some() { plan.drain } else { Duration::ZERO };
+        match tokio::time::timeout(Duration::from_secs(5) + more, h).await {
+            Ok(Ok(mut r)) => {
+                if let (Some(all), Some(l)) = (lat_all.as_mut(), r.lat.as_ref()) {
+                    all.add(l);
+                }
+                if let Some(o) = r.ol.take() {
+                    match ol_all.as_mut() {
+                        Some(all) => all.add(&o),
+                        None => ol_all = Some(o),
+                    }
+                }
                 v.add(&r.v);
                 up += r.up;
                 down += r.down;
@@ -1013,11 +1498,13 @@ pub async fn run(a: RunArgs) -> Result<i32, String> {
                 udp_continues += r.udp_continues;
                 pages += r.pages;
                 bulk_down += r.bulk_down;
+                cnt.add(&r.cnt);
                 let _ = hist.add(&r.hist);
                 let _ = page_hist.add(&r.page_hist);
             }
             _ => {
                 errors += 1;
+                lat_lost += 1;
                 errk.key("join_timeout");
                 if a.verify {
                     // 60.15 T06: this conn's streams were never reconciled
@@ -1055,6 +1542,66 @@ pub async fn run(a: RunArgs) -> Result<i32, String> {
         ),
         Test::ConnChurn => unreachable!("connchurn returns early"),
     }
+    // 80.04: the new keys of the --json line (empty without the new flags: the line is unchanged)
+    let mut x = String::new();
+    if let Some(l) = &lat_all {
+        let us = |ns: u64| ns as f64 / 1000.0;
+        let q = |p: f64| if l.n() == 0 { 0 } else { l.h.value_at_quantile(p) };
+        let cens = ol_all.as_ref().map_or(0, |o| o.censored);
+        println!(
+            "lat: n={} mean={:.1}us p50={:.1}us p90={:.1}us p99={:.1}us p999={:.1}us max={:.1}us{}",
+            l.n(),
+            if l.n() == 0 { 0.0 } else { l.sum as f64 / l.n() as f64 / 1000.0 },
+            us(q(0.5)),
+            us(q(0.9)),
+            us(q(0.99)),
+            us(q(0.999)),
+            us(l.max),
+            if cens > 0 { format!(" (censored {cens}: tail percentiles are lower bounds)") } else { String::new() }
+        );
+        x.push_str(&format!(",\"lat\":{},\"lat_lost_conns\":{lat_lost}", l.json(true)));
+    }
+    if let (Some(r), Some(o)) = (a.rate, ol_all.as_ref()) {
+        let done = o.sched_n - o.censored - o.dropped;
+        println!(
+            "open loop: offered {:.0}/s ({:?}), scheduled {} in the window, completed {done}, censored {} (unsent {}, in flight {}), dropped {}, max backlog {}",
+            r, a.arrival, o.sched_n, o.censored, o.unsent, o.inflight, o.dropped, o.max_backlog
+        );
+        x.push_str(&format!(
+            ",\"ol\":{{\"rate\":{r},\"arrival\":\"{}\",\"offered_rps\":{:.1},\"sched\":{},\"done\":{done},\"censored\":{},\"unsent\":{},\"inflight\":{},\"dropped\":{},\"max_backlog\":{},\"drain_s\":{},\"svc\":{},\"lag\":{}}}",
+            if a.arrival == crate::Arrival::Poisson { "poisson" } else { "fixed" },
+            o.sched_n as f64 / elapsed,
+            o.sched_n,
+            o.censored,
+            o.unsent,
+            o.inflight,
+            o.dropped,
+            o.max_backlog,
+            a.drain,
+            o.svc.json(true),
+            o.lag.json(false)
+        ));
+    }
+    if let (Some(e0), Some(e1)) = (&e0, &e1) {
+        x.push_str(&format!(",\"edges\":{}", edges::json(e0, e1, (measure_start, end))));
+    }
+    if let Some(b) = a.src_port {
+        x.push_str(&format!(",\"src_port\":{b}"));
+    }
+    if a.counts {
+        // 80.04 exact counts over the window: wisp DATA packets and payload bytes each way; msgs = echo messages fully
+        // back (k-th message of a stream at its k * size-th byte), rr / churn / udp-rr / browse requests done; null for
+        // upload / download (a message is a frame there)
+        let msgs = match a.test {
+            Test::Echo => cnt.msgs.to_string(),
+            Test::Rr | Test::Churn | Test::UdpRr | Test::Browse => ops.to_string(),
+            _ => "null".to_string(),
+        };
+        x.push_str(&format!(
+            ",\"counts\":{{\"window_s\":{elapsed},\"frames_up\":{},\"frames_down\":{},\"bytes_up\":{up},\"bytes_down\":{down},\"msgs\":{msgs}}}",
+            cnt.frames_up, cnt.frames_down
+        ));
+    }
     if a.verify {
         println!(
             "verify: streams ok {}/{}, content errors {}, count mismatches {}, missing END {}; pattern bytes received {} (targets sent {}), sent {} (targets received {})",
@@ -1071,7 +1618,7 @@ pub async fn run(a: RunArgs) -> Result<i32, String> {
             String::new()
         };
         println!(
-            "{{\"test\":\"{name}\",\"conns\":{},\"streams\":{},\"size\":{size},\"duration\":{elapsed:.3},\"mib_s_up\":{mib_up:.2},\"mib_s_down\":{mib_down:.2},\"rps\":{rps:.1},\"p50_us\":{p50},\"p90_us\":{p90},\"p99_us\":{p99},\"p999_us\":{p999},\"errors\":{errors},\"conns_ok\":{ok},\"stall_pings\":{pings},\"lost\":{lost},\"pages_s\":{:.2},\"page_p50_us\":{pg50},\"page_p99_us\":{pg99},\"bulk_mib_s\":{bulk_mib:.2},\"timer_late_ms\":{timer_late_ms:.1},\"error_kinds\":{}{vj}}}",
+            "{{\"test\":\"{name}\",\"conns\":{},\"streams\":{},\"size\":{size},\"duration\":{elapsed:.3},\"mib_s_up\":{mib_up:.2},\"mib_s_down\":{mib_down:.2},\"rps\":{rps:.1},\"p50_us\":{p50},\"p90_us\":{p90},\"p99_us\":{p99},\"p999_us\":{p999},\"errors\":{errors},\"conns_ok\":{ok},\"stall_pings\":{pings},\"lost\":{lost},\"pages_s\":{:.2},\"page_p50_us\":{pg50},\"page_p99_us\":{pg99},\"bulk_mib_s\":{bulk_mib:.2},\"timer_late_ms\":{timer_late_ms:.1},\"error_kinds\":{}{vj}{x}}}",
             a.conns, a.streams, pages as f64 / elapsed, errk.json()
         );
     }

@@ -778,7 +778,7 @@ fn v4_class(a: Ipv4Addr) -> u8 {
     (loop_like as u8 * LOOP) | (private as u8 * PRIV)
 }
 
-/// 60.21 (PENDING USER, parent's proposal is the default): the NAT64 well-known prefix 64:ff9b::/96 is judged by the
+/// 60.21 (decided, 60.18 #15: as built): the NAT64 well-known prefix 64:ff9b::/96 is judged by the
 /// IPv4 address it carries, like ::ffff:0:0/96 (an IPv6-only box with DNS64 gets every IPv4 target in this form). false =
 /// treat it as the other embedding forms (blocked unless --allow-embedded-v4). The one line that decides: v6_class_with.
 const NAT64_WKP_BY_V4: bool = true;

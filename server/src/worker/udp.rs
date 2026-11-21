@@ -101,14 +101,14 @@ impl Worker {
         }
         for _ in 0..BUDGET {
             let t = self.targets.at(ti);
-            if t.blocked {
-                return;
+            if t.blocked != Park::Run {
+                return; // 20.35 (as read_target)
             }
             let (fd, ci, sid, err_pending) = (t.fd, t.client, t.sid, t.rdhup);
             let c = self.clients.at(ci);
             let pending = c.out_pending();
             if pending >= self.st.out_high {
-                self.targets.at(ti).blocked = true;
+                self.targets.at(ti).blocked = Park::Parked;
                 c.blocked.push(tok(K_TARGET, ti, tg));
                 return;
             }

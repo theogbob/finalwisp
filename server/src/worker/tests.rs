@@ -938,7 +938,7 @@ fn starved_client_reads_a_bounded_slice() {
     for &ti in &tis {
         w.read_target(ti); // parks: pending >= out_high
     }
-    let parked = |w: &mut Worker| tis.iter().all(|&ti| w.targets.at(ti).blocked);
+    let parked = |w: &mut Worker| tis.iter().all(|&ti| w.targets.at(ti).blocked == Park::Parked);
     assert!(parked(&mut w));
     for p in &mut peers {
         assert!(p.write(&[7u8; 64 * 1024]).unwrap() > 2 * STARVE_SLICE); // queued in the parked targets' receive buffers
@@ -974,6 +974,7 @@ fn starved_client_reads_a_bounded_slice() {
     w.starve_check();
     assert_eq!(w.clients.at(ci).starve_room as usize, 4 * STARVE_SLICE);
     assert_eq!(w.ready.len(), 4);
+    assert!(tis.iter().all(|&ti| w.targets.at(ti).blocked == Park::Released), "20.35 starve_check releases as flush_dirty does");
     let p0 = w.clients.at(ci).out_pending();
     run_ready(&mut w);
     assert_eq!(read(&w) as usize, 4 * STARVE_SLICE, "exactly the room");
@@ -1007,7 +1008,7 @@ fn starved_client_reads_a_bounded_slice() {
     c.blocked_bulk.clear();
     for &ti in &tis {
         let t = w.targets.at(ti);
-        (t.bulk, t.blocked) = (true, false);
+        (t.bulk, t.blocked) = (true, Park::Run);
         w.read_target(ti); // parks in the bulk lane: pending >= out_high_bulk
     }
     let c = w.clients.at(ci);
@@ -1195,7 +1196,7 @@ fn splice_length_steps(adaptive: bool) {
         c.blocked.clear();
         c.blocked_bulk.clear();
         let t = w.targets.at(ti);
-        (t.blocked, t.bulk) = (false, true);
+        (t.blocked, t.bulk) = (Park::Run, true);
     };
     // more than SPLICE_FEW open streams (placeholders: only their count is read; removed before the close)
     let many = |w: &mut Worker, on: bool| {
@@ -1238,7 +1239,7 @@ fn splice_length_steps(adaptive: bool) {
         w.read_target(ti);
         let c = w.clients.at(ci);
         assert!((SPLICE_SLICE + 1..=SPLICE_PIPE).contains(&c.splice_pending), "{}", c.splice_pending);
-        assert!(c.splice == SPLICE_SLOW && w.targets.at(ti).blocked);
+        assert!(c.splice == SPLICE_SLOW && w.targets.at(ti).blocked == Park::Parked);
         // 3. SLOW + many streams, socket full: at most SPLICE_SLICE with --adaptive-splice, else up to SPLICE_PIPE (v1.1.1)
         empty_client(&mut w);
         refill(&mut peer);
@@ -1248,7 +1249,7 @@ fn splice_length_steps(adaptive: bool) {
         let c = w.clients.at(ci);
         let want = if adaptive { 1..=SPLICE_SLICE } else { SPLICE_SLICE + 1..=SPLICE_PIPE };
         assert!(want.contains(&c.splice_pending), "adaptive {adaptive}: {}", c.splice_pending);
-        assert!(c.splice == SPLICE_SLOW && w.targets.at(ti).blocked);
+        assert!(c.splice == SPLICE_SLOW && w.targets.at(ti).blocked == Park::Parked);
         // 3b. (60.51) the same for a near client (min RTT at accept < SPLICE_FAR_RTT_US): up to SPLICE_PIPE, as v1.1.1
         if adaptive {
             set_far(&mut w, ci, false);
@@ -1259,7 +1260,7 @@ fn splice_length_steps(adaptive: bool) {
             w.read_target(ti);
             let c = w.clients.at(ci);
             assert!((SPLICE_SLICE + 1..=SPLICE_PIPE).contains(&c.splice_pending), "near: {}", c.splice_pending);
-            assert!(c.splice == SPLICE_SLOW && w.targets.at(ti).blocked);
+            assert!(c.splice == SPLICE_SLOW && w.targets.at(ti).blocked == Park::Parked);
             set_far(&mut w, ci, true);
         }
         // 4. SLOW + few streams (<= SPLICE_FEW): SPLICE_PIPE, as v1.1.1
@@ -1271,7 +1272,7 @@ fn splice_length_steps(adaptive: bool) {
         w.read_target(ti);
         let c = w.clients.at(ci);
         assert!((SPLICE_SLICE + 1..=SPLICE_PIPE).contains(&c.splice_pending), "{}", c.splice_pending);
-        assert!(c.splice == SPLICE_SLOW && w.targets.at(ti).blocked);
+        assert!(c.splice == SPLICE_SLOW && w.targets.at(ti).blocked == Park::Parked);
         empty_client(&mut w);
     }
     // 5. a client that backs up through the copy path (parks at out_high) loses FAST too (review)
@@ -1282,7 +1283,7 @@ fn splice_length_steps(adaptive: bool) {
     unpark(&mut w);
     w.read_target(ti);
     let c = w.clients.at(ci);
-    assert!(c.splice == SPLICE_SLOW && w.targets.at(ti).blocked);
+    assert!(c.splice == SPLICE_SLOW && w.targets.at(ti).blocked == Park::Parked);
     (c.obuf, c.ohead) = (Vec::new(), 0);
     many(&mut w, false);
     w.close_client(ci, Why::ServerClose);
@@ -1588,7 +1589,7 @@ fn udp_read_stays_near_out_high() {
     w.read_udp(ti);
     let c = w.clients.at(0);
     assert!(c.out_pending() < oh + frame, "pending {} with out_high {oh}: one datagram may pass it, not a batch", c.out_pending());
-    assert!(w.targets.at(ti).blocked, "parked at out_high");
+    assert!(w.targets.at(ti).blocked == Park::Parked, "parked at out_high");
     // everything sent: resume until the socket is empty; the sent prefix must be compacted, not kept
     let mut got: Vec<Vec<u8>> = Vec::new();
     let mut first = true;
@@ -1610,8 +1611,10 @@ fn udp_read_stays_near_out_high() {
         if got.len() == N {
             break;
         }
-        w.targets.at(ti).blocked = false;
-        w.read_udp(ti);
+        w.release_parked(0, false); // 20.35 (as flush_dirty: Released, then its ready entry reads it)
+        for t in std::mem::take(&mut w.ready) {
+            w.resume(t);
+        }
         assert!(w.clients.at(0).out_pending() < oh + frame);
     }
     assert_eq!(got.len(), N, "every datagram delivered");
@@ -4604,10 +4607,12 @@ fn dest_rate_charges_a_udp_stream_once_across_early_and_final_answers() {
 
 /// 60.42 --credit-pace: a due CONTINUE waits while the stream's target is parked (Target::blocked) and goes out when a
 /// resume reads the target without parking it again (pace_resume); a resume that parks it again keeps it held; off, it
-/// goes out at once. Base rule (refill 128 at half) and the credit v2 top-up both; slot reuse does not inherit a hold.
+/// goes out at once. 20.35: parks go through the lists and the release (Park): a stale entry while Parked releases
+/// nothing, and a Released target whose entry has not run yet still holds (its own EPOLLIN reads nothing). Base rule (refill 128 at half) and the credit v2 top-up both; slot reuse does not inherit a hold.
 #[test]
 fn credit_pace_holds_grants_while_the_target_is_parked() {
     use super::*;
+    use std::io::Write as _;
     for (v2, pace) in [(false, false), (false, true), (true, true)] {
         let cfg = Arc::new(Config {
             addr: "127.0.0.1:0".parse().unwrap(),
@@ -4678,6 +4683,7 @@ fn credit_pace_holds_grants_while_the_target_is_parked() {
             w.target_event(ti, tg, libc::EPOLLOUT as u32);
             std::thread::sleep(Duration::from_millis(1));
         }
+        let mut feed = peer.try_clone().unwrap(); // 20.35 (the target's data, beside the closure that reads `peer`)
         let mut msg = vec![2u8, 1, 0, 0, 0];
         msg.resize(5 + 16384, 7);
         let mut sink = vec![0u8; 1 << 20];
@@ -4707,9 +4713,22 @@ fn credit_pace_holds_grants_while_the_target_is_parked() {
             out
         };
         let cont = |n: u32| (OP_BIN, [&[3u8, 1, 0, 0, 0][..], &n.to_le_bytes()].concat());
+        let tk = tok(K_TARGET, ti, tg);
+        // 20.35 a park by hand: Parked and listed once (Park), as read_target leaves it
+        let park = |w: &mut Worker| {
+            w.targets.at(ti).blocked = Park::Parked;
+            w.clients.at(ci).blocked.push(tk);
+        };
+        // the release (flush_dirty's: Worker::release_parked), then the ready entries as the loop runs them
+        let release_run = |w: &mut Worker| {
+            w.release_parked(ci, false);
+            for t in std::mem::take(&mut w.ready) {
+                w.resume(t);
+            }
+        };
         // base rule: the 64th packet makes CONTINUE(128) due; the target is parked on the client's output
         data(&mut w, 63);
-        w.targets.at(ti).blocked = true;
+        park(&mut w);
         data(&mut w, 1);
         let ping1 = (OP_PING, 1u64.to_le_bytes().to_vec());
         if !pace {
@@ -4723,23 +4742,50 @@ fn credit_pace_holds_grants_while_the_target_is_parked() {
         data(&mut w, 2);
         assert!(frames(&mut w).is_empty(), "still parked: still held, counted once");
         assert_eq!(w.stats.cpace_holds.get(), 1);
-        // a resume whose read parks the target again (the client's output is still at out_high): still held
+        // 20.35 a stale entry (pushed before the park: a read-budget continuation) finds it Parked: dropped, still held
+        w.resume(tk);
+        assert!(w.targets.at(ti).blocked == Park::Parked && w.clients.at(ci).blocked == [tk], "a stale entry un-parks nothing");
+        assert!(frames(&mut w).is_empty(), "still held");
+        // a release whose read parks the target again (the client's output is still at out_high): still held
         let high = w.st.out_high;
         w.clients.at(ci).obuf = vec![0; high];
-        w.resume(tok(K_TARGET, ti, tg));
-        assert!(w.targets.at(ti).blocked, "parked again");
+        release_run(&mut w);
+        assert!(w.targets.at(ti).blocked == Park::Parked && w.clients.at(ci).blocked == [tk], "parked again, listed once");
         assert_eq!(w.clients.at(ci).obuf.len(), high, "nothing granted");
         w.clients.at(ci).obuf.clear();
-        w.clients.at(ci).blocked.clear();
-        // the resume that reads without parking releases it
-        w.resume(tok(K_TARGET, ti, tg));
-        let want = if v2 { vec![cont(128), ping1] } else { vec![cont(128)] };
+        // 20.35 released, its entry not run yet: still parked for every other reader. Its own EPOLLIN reads nothing (lane
+        // order) and the grant stays held (pace_hold: not PACE_GO, which would let credit v2 count starvation, 60.42 r1 P2)
+        w.release_parked(ci, false);
+        assert!(w.targets.at(ti).blocked == Park::Released && w.ready == [tk] && w.clients.at(ci).blocked.is_empty());
+        feed.write_all(&[9u8; 100]).unwrap();
+        let tfd = w.targets.at(ti).fd;
+        let end = Instant::now() + Duration::from_secs(10);
+        loop {
+            let mut q: libc::c_int = 0;
+            // SAFETY: FIONREAD writes one c_int
+            assert_eq!(unsafe { libc::ioctl(tfd, libc::FIONREAD, &mut q) }, 0);
+            if q == 100 {
+                break; // (the bytes are there before the event: a read on it would take them)
+            }
+            assert!(Instant::now() < end, "the 100 bytes did not arrive ({q})");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        w.target_event(ti, tg, libc::EPOLLIN as u32);
+        assert!(frames(&mut w).is_empty(), "Released: no read on its own event, the grant still held");
+        assert!(w.pace_hold(ti) == pace::PACE_HOLD, "a grant due now is held too");
+        // its entry reads (the 100 bytes, no park) and re-decides the grant
+        for t in std::mem::take(&mut w.ready) {
+            w.resume(t);
+        }
+        assert_eq!(w.targets.at(ti).blocked, Park::Run);
+        let data100 = (OP_BIN, [&[2u8, 1, 0, 0, 0][..], &[9u8; 100][..]].concat());
+        let want = if v2 { vec![data100, cont(128), ping1] } else { vec![data100, cont(128)] };
         assert_eq!(frames(&mut w), want, "released when the target runs again");
         if v2 {
             // the v2 top-up path (after the first pong)
             w.on_frame(ci, true, OP_PONG, &1u64.to_le_bytes());
             std::thread::sleep(credit::PING_GAP);
-            w.targets.at(ti).blocked = true;
+            park(&mut w);
             let h0 = w.stats.cpace_holds.get();
             for _ in 0..300 {
                 data(&mut w, 1);
@@ -4749,16 +4795,17 @@ fn credit_pace_holds_grants_while_the_target_is_parked() {
             }
             assert_eq!(w.stats.cpace_holds.get(), h0 + 1, "a v2 top-up came due while parked");
             assert!(frames(&mut w).is_empty(), "v2 grant held while parked");
-            w.resume(tok(K_TARGET, ti, tg));
+            release_run(&mut w);
             let f = frames(&mut w);
             assert!(matches!(f.first(), Some((OP_BIN, p)) if p[0] == 3), "v2 CONTINUE after the release: {f:?}");
         }
         // held, then closed: a new target in the same slot starts unheld
         let since = w.targets.at(ti).since;
-        w.targets.at(ti).blocked = true;
+        park(&mut w);
         data(&mut w, 128 - since as usize);
         assert!(w.cpace_st[ti as usize].held);
         w.close_target(ti, None);
+        assert!(w.clients.at(ci).blocked.is_empty(), "20.35 close_target takes its one entry out");
         let (t2, g2) = w.new_target(ci, 3, "127.0.0.1".into(), l.local_addr().unwrap().port(), false, false).unwrap();
         assert_eq!(t2, ti, "slot reused");
         frames(&mut w);
@@ -4860,6 +4907,10 @@ fn proxy_chain_hints_count_and_change_nothing() {
 // 60.57 the fd count and the refusals when fds are short (its own file)
 #[path = "fdtests.rs"]
 mod fd;
+
+// 20.35 only a release un-parks a target (its own file)
+#[path = "parktests.rs"]
+mod park;
 
 /// v1.3.1 K1: the first sweep that finds a TCP client idle gives it its own keepalive idle time (net::keep_idle of its
 /// slot), once per connection (a reused slot gets it again); a unix client and --no-keepalive are left alone
@@ -5138,3 +5189,6 @@ mod cov;
 // 60.78 the adaptive-splice class (its own file)
 #[path = "sftests.rs"]
 mod sf;
+// 20.34 the ping gate (its own file)
+#[path = "pgtests.rs"]
+mod pg;

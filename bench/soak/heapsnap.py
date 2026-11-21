@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""30.17 heap check (parent, 2026-10-31): cycle.py --floor-hook. At a floor (servers idle, after the floor sample),
+"""30.17 heap check (2026-10-31): cycle.py --floor-hook. At a floor (servers idle, after the floor sample),
 dump glibc malloc_info XML of each server via gdb (brief stop): OUTDIR/<cycle>-<S>.xml.
 usage: heapsnap.py OUTDIR CYCLE A=PID B=PID"""
 import os, subprocess, sys, time

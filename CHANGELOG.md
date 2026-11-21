@@ -1,5 +1,38 @@
 # Changelog
 
+## v1.5.0
+
+A minor release because a default changed for connections without an `Origin` header (browsers send one): when a
+destination ends an open TCP stream, its CLOSE now waits up to 1 second for the client's answer to a WebSocket ping
+(below). This release adds no option.
+
+Changed:
+
+- **A stream's CLOSE waits for the client's answer to a WebSocket ping.** When a destination ends an open TCP
+  stream, finalwisp sends a ping behind the stream's last data and sends the Wisp CLOSE when the pong comes back, at
+  most 1 second later. A pong from the client shows that its WebSocket layer has read the stream's last data (not that
+  the application has used it), so that data no longer arrives in the same read as the CLOSE. Connections whose upgrade
+  request carried an `Origin` header (browsers send one), `0x49` and UDP streams are not affected. No option; it costs
+  about one round trip at each such stream end. Details and known limits (a proxy that answers pings itself, the 1 s
+  cap): [close codes](docs/logs-metrics.md#wisp-close-codes).
+- `finalwisp_close_total` counts CLOSE packets sent: a held CLOSE that is never sent (the client closed the stream
+  while it waited, or the connection ended) is not counted. New counters `finalwisp_ping_gate_*_total`
+  ([metrics](docs/logs-metrics.md#metrics-and-prometheus)).
+- Graceful shutdown: an idle connection whose CLOSEs wait for a pong gets its 1001 once they are sent, at most 1 s
+  later.
+
+Fixed:
+
+- **Downloads move less data through user space when the client is slow.** A download that waits for its client
+  pauses and is resumed when the client has taken data. A wake-up left over from before the pause could resume it
+  early, while its last data was still on its way out; the server then moved that download's next bytes with
+  `read()` and `send()` instead of `splice()`. Now a paused download resumes only when it is released (its client
+  took data, or a retry of a stalled kTLS send). On a 2-core VPS, in a download test with 10 connections of one stream
+  each, 17 % of the bytes went that way before and 4 % now (one stream on one connection: 13 % and 8 %; medians of
+  3 runs each); with two streams per connection the share did not change. In a single-stream download test on the
+  same VPS the download rate rose by 5 % (two sessions of 16 rounds each), and the server's CPU time per GiB fell by
+  8 % (measured in the second session). No option.
+
 ## v1.4.0
 
 A minor release because `--preset public` changed: it now turns on `--unread-close`. A plain `finalwisp` starts as

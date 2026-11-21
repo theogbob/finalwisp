@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""60.78 G59 E3 (sb-robust): 60.63 T-e3-slow's one open cell on the candidate: a page of 70 streams (30 at once + 40,
+"""60.78 G59 E3: 60.63 T-e3-slow's one open cell on the candidate: a page of 70 streams (30 at once + 40,
 one per 200 ms) from a host that answers only the 5th SYN, --dest-failfast on (and off as the control), another client
 connected. In ONE VM (root): an nft table on lo drops the first NTH SYNs of every connection to the sink port (per
 source port), as kit/synfix.sh did on the sink host. 60.63: the first rule refused 1 of 70 (single run), not repeated

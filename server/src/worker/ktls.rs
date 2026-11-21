@@ -221,11 +221,13 @@ impl Worker {
                     if !std::mem::replace(&mut c.starve_b, true) {
                         self.stats.ktls_starve_slices.bump();
                     }
-                    self.ready.append(&mut c.blocked);
-                    self.ready.append(&mut c.blocked_bulk);
-                    c.bulk_waiting = 0;
+                    // 20.35 a release like flush_dirty's (Park): Parked -> Released, one ready entry each
+                    self.release_parked(ci, false);
+                    self.release_parked(ci, true);
+                    self.clients.at(ci).bulk_waiting = 0;
                 }
             }
+            let c = self.clients.at(ci);
             if !c.dirty {
                 c.dirty = true;
                 self.dirty.push((ci, g));

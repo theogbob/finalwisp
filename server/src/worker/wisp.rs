@@ -111,10 +111,17 @@ impl Worker {
             return;
         }
         match ty {
-            PKT_CONNECT => self.on_connect(ci, sid, body),
+            PKT_CONNECT => {
+                if self.gate.live != 0 {
+                    self.gate_client_close(ci, sid); // 20.34 the client opens a held id again: its old CLOSE is not sent
+                }
+                self.on_connect(ci, sid, body)
+            }
             PKT_CLOSE => {
                 if let Some(ti) = self.clients.at(ci).streams.remove(&sid) {
                     self.close_target(ti, None);
+                } else if self.gate.live != 0 {
+                    self.gate_client_close(ci, sid); // 20.34 its CLOSE may be held: it is not sent then
                 }
             }
             _ => {} // CONTINUE/INFO from client after handshake: ignore

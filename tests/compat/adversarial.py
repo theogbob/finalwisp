@@ -565,7 +565,12 @@ while time.time() < end and (bulk_close is None or any(len(got[k]) < len(small[k
             if len(buf) < 10: break
             ln = struct.unpack(">Q", buf[2:10])[0]; hl = 10
         if len(buf) < hl + ln: break
-        op = buf[0] & 0x0f; p = bytes(buf[hl:hl + ln]); del buf[:hl + ln]
+        b0 = buf[0]; op = b0 & 0x0f; masked = buf[1] & 0x80; p = bytes(buf[hl:hl + ln]); del buf[:hl + ln]
+        if b0 == 0x89 and not masked and hl == 2:
+            # 20.34: the server's ping (behind a stream's last DATA), a well-formed control frame (FIN, no RSV bit,
+            # unmasked, the 7-bit length form: payload <= 125); a client answers it (RFC 6455 5.5.2). Any other
+            # non-binary frame still counts as malformed
+            s.sendall(frame(0xA, p)); continue
         if op != 0x2 or len(p) < 5:
             order_ok = False; continue
         sid = struct.unpack("<I", p[1:5])[0]

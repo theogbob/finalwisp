@@ -1042,7 +1042,7 @@ mod tests {
         }
     }
 
-    /// 60.45 (parent review) a gap up to the end of u64 refills exactly the burst (saturating milli-units: no overflow),
+    /// 60.45 (review) a gap up to the end of u64 refills exactly the burst (saturating milli-units: no overflow),
     /// and a reordered older `now` refills nothing and leaves the entry's time where it was
     #[test]
     fn huge_gap_and_reordered_now() {

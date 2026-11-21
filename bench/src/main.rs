@@ -2,7 +2,9 @@
 //! `wbench target` = plain TCP echo/sink/source server.
 //! `wbench run`    = Wisp v1 load generator over a hand-rolled WebSocket client.
 
+mod edges;
 mod errkind;
+mod lat;
 mod run;
 mod target;
 mod tls;
@@ -28,6 +30,13 @@ pub enum TargetMode {
     /// 20.19 request/response: a request starts with [u32 LE response_len][u32 LE request_len];
     /// after request_len bytes the target writes response_len bytes (HTTP-like keep-alive).
     Reply,
+}
+
+/// 80.04 --rate arrival gaps
+#[derive(Clone, Copy, ValueEnum, Debug, PartialEq, Eq)]
+pub enum Arrival {
+    Fixed,
+    Poisson,
 }
 
 #[derive(Clone, Copy, ValueEnum, Debug, PartialEq, Eq)]
@@ -90,7 +99,7 @@ enum Cmd {
         verify: bool,
     },
     /// Wisp v1 load generator.
-    Run(RunArgs),
+    Run(Box<RunArgs>), // boxed: RunArgs is large (clippy::large_enum_variant)
 }
 
 #[derive(clap::Args, Clone, Debug)]
@@ -152,6 +161,44 @@ pub struct RunArgs {
     /// Verify errors are counted apart from `errors`; any of them: exit status 4.
     #[arg(long)]
     pub verify: bool,
+    /// 80.04 per-message latency in ns (echo: matched by byte offset per stream; rr / churn: per request); --json gets
+    /// "lat" {n, mean, p50, p90, p99, p999, max, sat, b: [[ns, count], ...]} (non-empty HDR buckets: runs merge exactly).
+    /// Echo also counts completed messages in "rps".
+    #[arg(long)]
+    pub lat: bool,
+    /// 80.04 open loop (echo, rr): R messages per second in total, spread over the connections (a connection's arrivals
+    /// go to its streams in turn), sent whatever is in flight (rr pipelines). Latency from the INTENDED send time (no
+    /// coordinated omission). Implies --lat; --json gets "ol" {offered, completed, censored, backlog, svc, lag}.
+    #[arg(long)]
+    pub rate: Option<f64>,
+    /// 80.04 --rate arrival gaps.
+    #[arg(long, value_enum, default_value_t = Arrival::Fixed)]
+    pub arrival: Arrival,
+    /// 80.04 --rate: seconds after the window for the window's messages to complete; one still open then is recorded
+    /// at its age and counted as censored (its percentiles are then lower bounds).
+    #[arg(long, default_value_t = 1.0, value_parser = secs)]
+    pub drain: f64,
+    /// 80.04 counters at the two edges of the measured window ("edges" in --json): host CPU ticks, TCP memory
+    /// pressure, this client's CPU, and the server's CPU with --cpu-cgroup / --cpu-pids (both imply --edges).
+    /// Read by an OS thread at the window's start and end; use a --warmup > 0 so that the load runs at the start.
+    #[arg(long)]
+    pub edges: bool,
+    /// 80.04 the server's cgroup directory (its transient unit), read at the window edges (cpu.stat).
+    #[arg(long)]
+    pub cpu_cgroup: Option<String>,
+    /// 80.04 the server's pids (comma list), read at the window edges (every thread's schedstat, stat ticks).
+    #[arg(long, value_delimiter = ',')]
+    pub cpu_pids: Vec<u32>,
+    /// 80.04 connection i binds local port BASE + i before it connects (the same SO_REUSEPORT hash, so the same
+    /// server worker, for every arm of a pair) and is closed with a RST (no TIME_WAIT on the fixed port).
+    #[arg(long)]
+    pub src_port: Option<u16>,
+    /// 80.04 exact counts over the measured window in --json: "counts" {window_s, frames_up, frames_down (wisp DATA
+    /// packets), bytes_up, bytes_down (payload), msgs (echo: messages fully back; rr, churn, udp-rr: requests done;
+    /// browse: page requests done, bulk excluded; upload, download: null)}. connchurn: per completed loop ("derived":
+    /// true, frames_down null).
+    #[arg(long)]
+    pub counts: bool,
 }
 
 /// Longest --duration / --warmup: 30 days (soak runs are hours). Larger values would overflow Instant + Duration.
@@ -197,8 +244,11 @@ fn main() {
         }
         Cmd::Run(args) => {
             ws::XFF_KEYS.store(args.xff_keys, std::sync::atomic::Ordering::Relaxed);
+            if args.rate.is_some() {
+                lat::tight_timer_slack(); // 80.04: before the runtime's threads exist (they inherit it)
+            }
             let rt = runtime(args.threads);
-            match rt.block_on(run::run(args)) {
+            match rt.block_on(run::run(*args)) {
                 Ok(code) => std::process::exit(code),
                 Err(e) => {
                     eprintln!("run: {e}");

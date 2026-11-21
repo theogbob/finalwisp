@@ -12,6 +12,8 @@ pub struct Request {
 pub struct Upgrade {
     pub accept: String,
     pub protocol: Option<String>,
+    /// 20.34 the request had an Origin header (a browser's WebSocket always sends one): the ping gate skips it
+    pub browser: bool,
 }
 
 pub enum Parsed {
@@ -42,7 +44,7 @@ pub fn parse_capture(buf: &[u8], capture: Option<&str>) -> Parsed {
         return Parsed::Bad;
     }
     let path = req.path.unwrap_or("/").to_string();
-    let (mut up, mut conn, mut key, mut ver, mut proto) = (false, false, None, false, None);
+    let (mut up, mut conn, mut key, mut ver, mut proto, mut origin) = (false, false, None, false, None, false);
     let mut fwd = Vec::new();
     for h in req.headers.iter() {
         let name = h.name;
@@ -60,11 +62,15 @@ pub fn parse_capture(buf: &[u8], capture: Option<&str>) -> Parsed {
         } else if name.eq_ignore_ascii_case("sec-websocket-protocol") {
             // Echo the first offered subprotocol, otherwise browsers abort the socket.
             proto = std::str::from_utf8(h.value).ok().and_then(|s| s.split(',').next()).map(|s| s.trim().to_string());
+        } else if name.eq_ignore_ascii_case("origin") {
+            origin = true; // 20.34
         }
     }
     let upgrade = match (up && conn && ver, key) {
         // RFC 6455 4.2.1: key is base64 of 16 bytes -> 24 chars ending in "=="
-        (true, Some(k)) if k.len() == 24 && k.ends_with("==") => Some(Upgrade { accept: crate::ws::accept_key(&k), protocol: proto }),
+        (true, Some(k)) if k.len() == 24 && k.ends_with("==") => {
+            Some(Upgrade { accept: crate::ws::accept_key(&k), protocol: proto, browser: origin })
+        }
         (true, _) => return Parsed::Bad,
         _ => None,
     };
@@ -113,6 +119,11 @@ mod tests {
         assert!(matches!(parse(ok.replace(k, "short").as_bytes()), Parsed::Bad));
         let p = up(&ok.replace("\r\n\r\n", "\r\nSec-WebSocket-Protocol: wisp-v2, other\r\n\r\n")).unwrap();
         assert_eq!(p.protocol.as_deref(), Some("wisp-v2"));
+        // 20.34 an Origin header (any case, any value) marks a browser
+        assert!(!p.browser && !up(&ok).unwrap().browser);
+        assert!(up(&ok.replace("Host: x", "Host: x\r\nOrigin: https://a.example")).unwrap().browser);
+        assert!(up(&ok.replace("Host: x", "Host: x\r\nORIGIN: null")).unwrap().browser);
+        assert!(!up(&ok.replace("Host: x", "Host: x\r\nOrigins: x\r\nX-Origin: y")).unwrap().browser);
     }
 
     /// 60.78 G46: request parse table (Partial / Bad / Done with or without an upgrade), consumed length, responses
@@ -164,13 +175,13 @@ mod tests {
         assert!(matches!(parse(&raw), Parsed::Done(Request { upgrade: None, .. }, _)));
         // responses: the 101 echoes a non-empty first subprotocol only
         let mut out = Vec::new();
-        switching(&mut out, &Upgrade { accept: "A=".into(), protocol: Some(String::new()) });
+        switching(&mut out, &Upgrade { accept: "A=".into(), protocol: Some(String::new()), browser: false });
         assert_eq!(
             out,
             b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: A=\r\n\r\n"
         );
         out.clear();
-        switching(&mut out, &Upgrade { accept: "A=".into(), protocol: Some("wisp-v2".into()) });
+        switching(&mut out, &Upgrade { accept: "A=".into(), protocol: Some("wisp-v2".into()), browser: true });
         assert!(out.ends_with(b"Sec-WebSocket-Accept: A=\r\nSec-WebSocket-Protocol: wisp-v2\r\n\r\n"));
         out.clear();
         simple(&mut out, "400 Bad Request", "bad\n");

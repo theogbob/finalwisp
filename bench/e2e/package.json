@@ -1,0 +1,10 @@
+{
+ "name": "finalwisp-e2e",
+ "private": true,
+ "type": "module",
+ "dependencies": {
+  "@mercuryworkshop/epoxy-tls": "2.1.20-1",
+  "libcurl.js": "0.7.5",
+  "@mercuryworkshop/wisp-js": "0.5.3"
+ }
+}

@@ -12,6 +12,8 @@ tests/compat/node_modules/
 # a worktree's node_modules may be a symlink; the slash form above does not match a symlink (dcae5d2 committed one)
 node_modules
 an internal note (not published)
+# 90.03 purge rule: quarantine batches (bench/tools/purge_stale.py)
+bench/results/.quarantine/
 bench/results/wispmark-cfg/
 baselines/wispurr/wispurr
 baselines/wispurr/wispurr-*

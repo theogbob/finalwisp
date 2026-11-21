@@ -51,7 +51,7 @@ Running finalwisp in a unit also gives it its own cgroup, which makes the memory
 
 ## Docker
 
-The image is `ghcr.io/theogbob/finalwisp`. Each release has a tag (`v1.4.0`), and `latest` is the newest release.
+The image is `ghcr.io/theogbob/finalwisp`. Each release has a tag (`v1.5.0`), and `latest` is the newest release.
 
 ```sh
 docker run -d --name finalwisp -p 6001:6001 --stop-timeout 35 --memory 1g ghcr.io/theogbob/finalwisp:latest
@@ -144,7 +144,8 @@ The other rules of the Docker section apply too: the memory limit of the contain
 A graceful shutdown:
 
 1. Stops accepting. Connections already waiting in the queue are accepted first, then the listeners close.
-2. Closes idle Wisp connections at once with WebSocket close code 1001 ("going away").
+2. Closes idle Wisp connections at once with WebSocket close code 1001 ("going away"). A connection whose stream
+   CLOSEs wait for a [pong](logs-metrics.md#wisp-close-codes) is idle once they are sent, at most 1 s later.
 3. Lets the other connections continue until they end or `--drain-timeout` (default 30 s) passes.
 4. Sends 1001 to the rest and exits with status 0, at most 2 s later.
 

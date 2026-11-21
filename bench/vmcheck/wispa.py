@@ -1,4 +1,4 @@
-"""60.78 (sb-robust) small asyncio Wisp v1 client for the VM checks (bench/vmcheck): stdlib only.
+"""60.78 small asyncio Wisp v1 client for the VM checks (bench/vmcheck): stdlib only.
 Wisp(host, port, src=None, tls=False): src = a client address sent in a PROXY v1 header (the server needs
 --proxy-protocol tcp --proxy-protocol-from 127.0.0.0/8), so the rules of section E see a public client.
 stream(port, host) -> sid; data(sid, bytes); await w.first(sid, timeout) -> ("d", bytes) | ("c", reason) | ("x", None)."""

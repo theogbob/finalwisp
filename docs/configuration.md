@@ -62,7 +62,7 @@ Before the topics: [how options are read](#how-options-are-read), the [config fi
 | `--print-preset` | `NAME` |  | Print the preset's settings on stdout and exit with status 0. See [presets](#presets). |
 | `--show-config` |  |  | Check the options, print every setting in effect with the layer that set it and what this host allows, then exit. Nothing is started. |
 | `--help` | `[TOPIC]` |  | Print a short overview and exit with status 0. With a topic (the section names of this page, or `all`): the options of that topic. Short form: `-h`. |
-| `--version` |  |  | Print the version (`finalwisp 1.4.0`) and exit. Short form: `-V`. |
+| `--version` |  |  | Print the version (`finalwisp 1.5.0`) and exit. Short form: `-V`. |
 
 ## Config file
 
@@ -176,11 +176,11 @@ effect, and names the layer when another one overrides it. Every other setting t
 under the layer that decides it (`config file` or `command line`). Here the file's `max-streams-per-conn 256` replaced
 the preset's 1024:
 
-<!-- sample: real output of finalwisp 1.4.0 (md5 2fce78f4) on a terminal (2026-11-17, a 15-thread machine; the file stood in /tmp for the run); printed by bench/tools/startsample.py -->
+<!-- sample: real output of finalwisp 1.5.0 (md5 d614f410) on a terminal (2026-11-21, a 15-thread machine; the file stood in /tmp for the run); printed by bench/tools/startsample.py -->
 ```text
 $ finalwisp --config /etc/finalwisp.conf
 finalwisp listening on ws://127.0.0.1:6001/
-  version      1.4.0
+  version      1.5.0
   threads      15
   memory       up to 31410 MiB (half of this machine's memory)
   open files   up to 524288

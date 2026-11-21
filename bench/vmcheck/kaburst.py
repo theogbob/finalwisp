@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""60.78 G59 keepalive TLS arm (sb-robust): 60.67's keepalive finding (a burst of idle connections accepted together;
+"""60.78 G59 keepalive TLS arm: 60.67's keepalive finding (a burst of idle connections accepted together;
 the server's TCP keepalive probes leave in one instant, some are dropped, live idle clients are reset at ~182 s) and
 the v1.3.1 K1 fix (spread of the idle time), with a TLS arm. N idle Wisp connections opened at once (THREADS threads),
 never read or written after the handshake; held HOLD s; a connection the server closed shows POLLRDHUP/POLLHUP/POLLERR.

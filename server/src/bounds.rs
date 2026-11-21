@@ -540,7 +540,7 @@ pub fn ct_warn(count: u64, max: u64) -> Option<String> {
 }
 
 /// E4 the --show-config row of the table against `fds` (the file descriptors the server may use for connections and
-/// streams): a plain row, not a warning (the parent, 60.73: with nofile raised most hosts have the smaller table).
+/// streams): a plain row, not a warning (60.73: with nofile raised most hosts have the smaller table).
 /// Each connection and stream takes an entry (on loopback both sides of a stream), and a closed one keeps it for up to
 /// 2 minutes: a table smaller than the descriptors can fill first. None: --net-watch off or no readable table.
 pub fn ct_row(watch: bool, fds: Option<u64>) -> Option<(&'static str, String)> {

@@ -38,6 +38,7 @@ impl Worker {
             self.bd_sweep();
         }
         self.fd_trim(true); // 60.57 A2 allowance above one unused block goes back to the process count
+        self.gate.shrink(); // 20.34 nothing held: its memory goes back
         if self.fd_mask & crate::fdgate::MARK_SHARE != 0 {
             self.sfd_sweep(); // 60.57 C
         }

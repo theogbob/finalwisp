@@ -334,6 +334,25 @@ stats! {
     /// 60.78 lingering close: closing connections closed at a bound (5 s plain, 10 s with the built-in TLS, or 1 MiB
     /// read and discarded) instead of at the client's EOF (such a close may reset the connection)
     linger_capped,
+    /// 20.34 ping gate: Wisp CLOSEs of open TCP streams that their destination ended, held until the client answered
+    /// a WebSocket ping sent behind the stream's data (at most 1 s)
+    ping_gate_held,
+    /// 20.34 ping gate: held CLOSEs sent when the client's pong came
+    ping_gate_released,
+    /// 20.34 ping gate: held CLOSEs sent without the pong: after 1 s, or at shutdown
+    ping_gate_capped,
+    /// 20.34 ping gate: held CLOSEs never sent: the client closed the stream itself first, opened its id again, the
+    /// connection ended, or the shutdown cut the stream's last data
+    ping_gate_dropped,
+    /// 20.34 ping gate: CLOSEs sent at once because 1024 were held on the connection or 65536 in the worker thread
+    ping_gate_full,
+    /// 20.34 ping gate: CLOSEs sent at once because the connection left a ping unanswered for 1 s (until it answers)
+    ping_gate_nopong,
+    /// 20.34 ping gate: CLOSEs sent at once because the connection is a browser's (its upgrade request had an Origin
+    /// header)
+    ping_gate_browser,
+    /// 20.34 ping gate: WebSocket pings sent by the ping gate (one in flight per connection at most)
+    ping_gate_pings,
 }
 
 impl Stats {

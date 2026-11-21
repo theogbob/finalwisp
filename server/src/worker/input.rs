@@ -289,6 +289,10 @@ impl Worker {
             }
             OP_PONG => {
                 self.flush_upload(); // 20.33 (review): also for a PONG on_pong does not take
+                if p.len() == 6 && p[..2] == pinggate::TAG {
+                    self.gate_pong(ci, p); // 20.34 (credit v2's PONGs carry 8 bytes)
+                    return;
+                }
                 let c = self.clients.at(ci);
                 if let Some(pong) = c.cv.as_mut().and_then(|pg| pg.on_pong(p, Instant::now())) {
                     self.credit_pong(ci, pong);

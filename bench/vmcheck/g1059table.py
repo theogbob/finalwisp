@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""60.78 G10 + G59 tables (sb-robust) from the raw files of bench/vmcheck/g10g59.sh (OUT = its out/ directory):
+"""60.78 G10 + G59 tables from the raw files of bench/vmcheck/g10g59.sh (OUT = its out/ directory):
 g10/portshare.jsonl, e3/e3five.jsonl, ka/kaburst.jsonl, kad/keepalive_dead.txt, t6.txt. usage: g1059table.py OUT [--check NOTE.md]"""
 import json, os, sys
 O = sys.argv[1]; rows = []

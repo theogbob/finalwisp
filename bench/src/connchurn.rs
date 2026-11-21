@@ -40,7 +40,7 @@ fn close_code(p: &[u8]) -> u16 {
 /// One connection up to the echo + the client close frame: Ok((latency in us, socket, buffer)) for `close`.
 async fn one(plan: &Plan, mg: &mut MaskGen) -> Result<(u64, crate::tls::Sock, BytesMut), String> {
     let t0 = Instant::now();
-    let (mut sock, mut rbuf) = ws::connect(&plan.url, plan.tls.as_ref()).await.map_err(|e| format!("connect/upgrade: {e}"))?;
+    let (mut sock, mut rbuf) = ws::connect(&plan.url, plan.tls.as_ref(), None).await.map_err(|e| format!("connect/upgrade: {e}"))?;
     // Wisp v1: the server opens with CONTINUE on stream 0 (initial credit).
     loop {
         let (op, p) = frame(&mut sock, &mut rbuf).await.map_err(|e| format!("waiting for CONTINUE: {e}"))?;
@@ -100,7 +100,7 @@ async fn close(mut sock: crate::tls::Sock, mut rbuf: BytesMut) {
 /// Runs the measurement; returns (completed connections, errors, latency histogram, loops with >= 1 success,
 /// errors by kind).
 pub(super) async fn run(plan: Arc<Plan>, loops: usize, measure_start: Instant, end: Instant) -> (u64, u64, Histogram<u64>, usize, ErrKinds) {
-    let sh = Arc::new(Shared { window: OnceLock::new(), printed: AtomicU64::new(0) }); // only err() is used here;
+    let sh = Arc::new(Shared { window: OnceLock::new(), printed: AtomicU64::new(0), go_at: OnceLock::new() }); // only err() is used here;
     let mut handles = Vec::with_capacity(loops);
     for i in 0..loops {
         let (plan, sh) = (plan.clone(), sh.clone());

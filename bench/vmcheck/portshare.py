@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""60.78 G10 (sb-robust): the --port-share help sentence "without it connects slow down past half of the ports", as a
+"""60.78 G10: the --port-share help sentence "without it connects slow down past half of the ports", as a
 paired off/on cell in ONE VM (root; it writes net.ipv4.ip_local_port_range of THAT VM and puts it back).
 usage: portshare.py FINALWISP OUTDIR [--rounds off,on,on,off] [--lo 40000] [--hi 48191] [--fill 7168] [--clients 16] [--rate 300]
 Per round: a fresh server (bare + --allow-loopback + PROXY protocol from loopback; "on" adds --port-share), a holder

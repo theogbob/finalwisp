@@ -48,10 +48,10 @@ HEAVY_UNITS = ("fuzz",)
 # v2ext judges medians of handshake times within 100 us: it failed once beside the fast gate on a host at load1 36
 # (medians 36 to 155 us; 15 to 47 us in every run alone). cargo: the unit tests listen on ports that the kernel
 # chooses, as the helper listeners of the compat tests do; three unit-test runs side by side gave a false FAIL in 3 of
-# 27 rounds (pf-unit3), so the unit tests keep the host to themselves. pacing, uplimit (the parent's decision B,
+# 27 rounds (pf-unit3), so the unit tests keep the host to themselves. pacing, uplimit (design decision of
 # 2026-11-13): the rate faults failed beside the lane, but the judged rates spread wider there than alone (pacing up
 # to 1.045 against 1.006, uplimit up to 1.094 against 1.016) and pacing failed once there with no fault to explain it
-# (a client send timed out, load1 32): a rate step leaves the serial lane only on a clean proof (REPORT-T, X5b, X15).
+# (a client send timed out, load1 32): a rate step leaves the serial lane only on a clean proof (80.03).
 ALONE_FIRST = ("cargo", "v2ext", "pacing", "uplimit")
 # 80.03 --shards: which variable tells the test which part of its cases to run (k/n), per step.
 FAST_SHARDS = "upstream=4,adv=3,tls=5,form=3"

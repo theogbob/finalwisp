@@ -62,8 +62,8 @@ fn xff_line(k: u64) -> String {
 }
 
 /// Connect + upgrade. Returns the socket and any bytes read past the HTTP response.
-pub async fn connect(url: &Url, tls: Option<&Arc<ClientConfig>>) -> std::io::Result<(Sock, BytesMut)> {
-    let mut sock = Sock::connect(url.host.as_str(), url.port, tls).await?;
+pub async fn connect(url: &Url, tls: Option<&Arc<ClientConfig>>, local: Option<u16>) -> std::io::Result<(Sock, BytesMut)> {
+    let mut sock = Sock::connect(url.host.as_str(), url.port, tls, local).await?;
     // No Sec-WebSocket-Protocol header => Wisp v1.
     let req = format!(
         "GET {} HTTP/1.1\r\nHost: {}:{}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\

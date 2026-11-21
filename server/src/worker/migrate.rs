@@ -112,6 +112,8 @@ pub struct Moved {
     /// a move of a trial: its traffic rate (bytes per second) before the move (0: not known), and the number of the
     /// request that moved it; the worker it goes to notes it as the connection under trial (M_BACK)
     before: Option<(u64, u32)>,
+    /// 20.34 its ping-gate flags and gate PING in flight (it holds no CLOSE: mig_quiet)
+    gate: pinggate::Carry,
 }
 
 impl Moved {
@@ -303,7 +305,7 @@ fn target_rest(t: &Target) -> bool {
         umax: _,
         cv: _, // (its pool bytes go back to the source's pool and are taken from the destination's: credit::Stream::rehome)
         local: _,
-        blocked: _, // (parked: stays in its client's list under the new token, or is resumed)
+        blocked: _, // (20.35 Parked: stays in its client's list under the new token; Released: a ready entry there)
         // ---- rebuilt by the destination
         client: _,
         cgen: _,
@@ -389,6 +391,7 @@ fn inventory(w: &Worker) {
         splice_far: _,
         ka_spread: _, // v1.3.1 K1 (its socket keeps the idle time; the flag travels: Moved::ka)
         sfds: _,      // (published back at the source, noted again at the destination)
+        gate: _,      // 20.34 flags and the PING in flight travel (Moved::gate); held CLOSEs: not at rest (mig_quiet)
         // ---- sums over the worker's connections: the source subtracts, the destination adds
         pend_total: _,
         pend_clients: _,
@@ -445,6 +448,9 @@ impl Worker {
         }
         if self.fd_mask & bounds::HOLD_BOUNDS != 0 {
             return false; // 60.63 E a mark is set (hold mode): the host is short of something, as at a memory level
+        }
+        if self.gate.held(ci, cg) != 0 {
+            return false; // 20.34 its held CLOSEs wait for its PONG here (at most pinggate::CAP_MS)
         }
         let Some(c) = self.clients.get(ci, cg) else { return false };
         if !client_rest(c) {
@@ -505,6 +511,7 @@ impl Worker {
         let meter = self.meters.get_mut(ci as usize).map(std::mem::take);
         let far = self.splice_out(ci);
         let ka = self.ka_spread.get_mut(ci as usize).is_some_and(std::mem::take); // (as reap_dead: the slot is free)
+        let gate = self.gate.export(ci, self.clients.gen(ci)); // 20.34
         let mut c = self.clients.remove(ci).expect("60.64 the client");
         ep_del(self.ep, c.fd);
         fds += c.pipe.iter().filter(|&&p| p >= 0).count() as u32;
@@ -518,14 +525,14 @@ impl Worker {
         if let Some(m) = self.mig.as_deref_mut() {
             m.moves += 1; // 60.74
         }
-        Box::new(Moved { c, peer, log, meter, far, ka, streams, before: None })
+        Box::new(Moved { c, peer, log, meter, far, ka, streams, before: None, gate })
     }
 
     /// A connection arrives (its fds counted by the sender's allowance units, Inbox::load already raised). Returns its
     /// slot and generation; None = an fd could not be registered and the connection was reset.
     pub(super) fn mig_import(&mut self, m: Box<Moved>) -> Option<(u32, u32)> {
         let fds = m.fds();
-        let Moved { mut c, peer, log, meter, far, ka, streams, before } = *m;
+        let Moved { mut c, peer, log, meter, far, ka, streams, before, gate } = *m;
         self.mig.get_or_insert_with(Default::default).moves += 1; // 60.74 (also when the import fails: it was a change)
         let own = fds - 1; // 60.57 C its counted fds besides its socket: the pipe and every stream fd
         for _ in 0..fds {
@@ -565,6 +572,7 @@ impl Worker {
             self.meters[i] = mt;
         }
         self.splice_in(ci, cg, far);
+        self.gate.import(ci, cg, gate); // 20.34
         if ka {
             let i = ci as usize;
             if self.ka_spread.len() <= i {
@@ -598,7 +606,7 @@ impl Worker {
             } else {
                 c.streams.insert(sid, ti);
             }
-            if blocked {
+            if blocked != Park::Run {
                 parked.push(new);
             }
             self.slog_in(ti, log);
@@ -624,9 +632,15 @@ impl Worker {
         c.blocked = old_blocked.iter().filter_map(|t| map.get(t).copied()).collect();
         c.bulk_waiting = old_bulk.iter().take(waiting).filter(|t| map.contains_key(t)).count();
         c.blocked_bulk = old_bulk.iter().filter_map(|t| map.get(t).copied()).collect();
-        // parked but on neither list: flush_dirty had moved it to the source's `ready` and it was not resumed yet
+        // 20.35 parked but on neither list: Released (a release had moved it to the source's `ready` and it was not
+        // resumed yet). Its entry there is gone with the slot, so it gets one here; it stays Released (a held credit-pace
+        // grant is re-decided when that entry reads it). The ADD below reports no edge for an empty socket.
         for t in parked {
             if !c.blocked.contains(&t) && !c.blocked_bulk.contains(&t) {
+                let (_, ti, _) = untok(t);
+                let s = &mut self.targets.at(ti).blocked;
+                debug_assert_eq!(*s, Park::Released, "20.35 a Parked target arrives listed");
+                *s = Park::Released; // (a Parked one would wait for a release that never comes)
                 self.ready.push(t);
             }
         }
