@@ -18,13 +18,13 @@ finalwisp is that server.
 finalwisp is one file for Linux on x86_64. It needs nothing else on the machine.
 
 ```sh
-V=v1.5.0
+V=v1.6.0
 curl -LO https://github.com/theogbob/finalwisp/releases/download/$V/finalwisp-$V-x86_64-linux.tar.gz
 curl -LO https://github.com/theogbob/finalwisp/releases/download/$V/SHA256SUMS
 tar -xzf finalwisp-$V-x86_64-linux.tar.gz
 sha256sum -c SHA256SUMS      # must print OK twice: the download, and the binary inside it
 sudo install -m 0755 finalwisp-$V-x86_64-linux/finalwisp /usr/local/bin/finalwisp
-finalwisp --version          # finalwisp 1.5.0
+finalwisp --version          # finalwisp 1.6.0
 ```
 
 All versions are on the [Releases](https://github.com/theogbob/finalwisp/releases) page. To build it yourself, see

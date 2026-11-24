@@ -30,7 +30,7 @@ pub(super) struct Client {
     pub(super) closing: bool, // stop reading input; close when output drained
     pub(super) streams: StreamMap,
     pub(super) blocked: Vec<u64>,
-    pub(super) blocked_bulk: Vec<u64>, // oh256: targets parked by OUT_HIGH_BULK (bulk lane), resumed below OUT_LOW_BULK
+    pub(super) blocked_bulk: Vec<u64>, // oh256 / 20.37: parked bulk lane targets, resumed below OUT_LOW_BULK once the pipe drained
     pub(super) bulk_waiting: usize,    // oh256: blocked_bulk[..bulk_waiting] parked without reading since the last drain
     pub(super) frag: Option<(u8, Vec<u8>)>,
     pub(super) proxy_target: Option<(u32, u32)>,

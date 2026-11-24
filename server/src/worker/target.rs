@@ -239,7 +239,18 @@ impl Worker {
             // 50.02 B: a starved kTLS client's streams may read `starve_room` bytes past the caps (Worker::starve_check)
             let sroom = c.starve_room as usize;
             let past = (lane && pending >= self.st.out_high_bulk) || pending >= self.st.out_high;
-            if lane && pending >= self.st.out_high_bulk && sroom == 0 {
+            // 20.37 rule S: a bulk lane stream whose read cannot splice now waits (splice_wait) instead of copying behind
+            // the pipe's payload or the lane's frames; the same park as at out_high_bulk. Not past a cap, not in a kTLS
+            // starve episode (its slices), not without a pipe or with splicing off (copy path as before)
+            let swait = bulk
+                && lane
+                && !past
+                && c.starve == 0
+                && c.splice != SPLICE_OFF
+                && c.pipe[0] >= 0
+                && !(c.splice_pending == 0 && c.obuf.len() == c.ohead && c.bulk.len() == c.bhead)
+                && splice_wait(c, &mut self.lane_fence, ti, tg, bulk_end);
+            if (lane && pending >= self.st.out_high_bulk && sroom == 0) || swait {
                 self.targets.at(ti).blocked = Park::Parked;
                 c.splice = c.splice.min(SPLICE_SLOW); // 60.46 backed up (also through the copy path): FAST -> SLOW, OFF stays
                                                       // Round-robin: the cap gap is only ~3 reads, so the first resumed stream refills it and the
@@ -275,6 +286,9 @@ impl Worker {
             }
             let c = self.clients.at(ci);
             if bulk && !past && c.splice != SPLICE_OFF && c.splice_pending == 0 && c.obuf.len() == c.ohead && c.bulk.len() == c.bhead {
+                if let Some(f) = self.lane_fence.get_mut(ti as usize) {
+                    f.0 = 0; // 20.37 G: a splice ends the stream's L2 wait (splice_wait)
+                }
                 if slen == 0 {
                     // off (--no-adaptive-splice): SPLICE_PIPE always, the v1.1.1 length (Client::splice is still kept up to date)
                     // 60.51 and only for a far client (60.78 classified here at its first need: worker/splicefar.rs)
@@ -640,6 +654,45 @@ impl Worker {
                 }
             }
         }
+    }
+}
+
+/// 20.37 rule S, for a bulk lane stream whose read cannot splice now (Worker::read_target): true = park it. S1: a payload
+/// is in the client's pipe (the read could only copy behind it). L1: its own frames are in the lane (a splice would
+/// overtake them). L2: only other streams' frames are in the lane and obuf is empty: wait until the frames queued now are
+/// sent, by a fence at the lane's end in `fences` (per target slot: the generation's 30 bits + 1, 0 = none; absolute lane
+/// position; another generation is no fence). Target::bulk_end is not touched: the lane choice, CLOSE placement and the
+/// ping gate read it as "this stream's last real lane frame" (pinggate flush_held drops a held CLOSE whose stream has
+/// DATA in the lane).
+/// G: at most one L2 wait between two reads: a passed fence is cleared and the stream copies behind the frames (as
+/// before 20.37); a splice clears it too (read_target). Otherwise (obuf busy, no fence) it copies, as before.
+/// A wait ends when the pipe drained (flush_dirty's release gate), the frames before the stream's own last frame or its
+/// fence went out, and the connection's output fell below out_low_bulk (the release rule before 20.37: a sibling that
+/// keeps it above holds every parked bulk stream, in base too; 20.37 parks a stream sooner). Out of line: at most once
+/// per read that cannot splice.
+#[inline(never)]
+fn splice_wait(c: &Client, fences: &mut Vec<(u32, u64)>, ti: u32, tg: u32, bulk_end: u64) -> bool {
+    if c.splice_pending > 0 || bulk_end > c.bulk_sent {
+        return true; // S1, L1
+    }
+    let g1 = (tg & 0x3fff_ffff) + 1; // never 0 (= cleared); the token's 30 bits, as Slab::get compares them
+    match fences.get_mut(ti as usize) {
+        Some(f) if f.0 == g1 => {
+            if f.1 > c.bulk_sent {
+                return true; // L2 goes on: the frames before the fence are not all sent
+            }
+            f.0 = 0; // G: passed: this read copies
+            false
+        }
+        _ if c.bulk.len() != c.bhead && c.obuf.len() == c.ohead => {
+            let i = ti as usize;
+            if fences.len() <= i {
+                fences.resize(i + 1, (0, 0)); // (grown only here)
+            }
+            fences[i] = (g1, c.bulk_sent + (c.bulk.len() - c.bhead) as u64); // L2: the lane's end now (Client::bulk_end)
+            true
+        }
+        _ => false,
     }
 }
 

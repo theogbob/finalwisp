@@ -92,6 +92,11 @@ fn moves_every_turn(variant: u8) {
     const DOWN: usize = 6 << 20;
     let mut cfg = fd_cfg();
     cfg.connect_timeout = Duration::from_secs(30);
+    // the worker listens on an address of its own in 127/8 (as a_connection_moves_to_another_worker_with_its_counts):
+    // a connection that another test sends to a port of 127.0.0.1 the kernel gave out before (a freed port it probes,
+    // or the next SYN of a connect that waited on a full accept queue that has closed since) cannot reach it. Seen
+    // once as a second live client in only() (CI run 602, credit_v2_pace).
+    cfg.addr = "127.73.74.2:0".parse().unwrap();
     match variant {
         1 => (cfg.credit_v2, cfg.credit_pace, cfg.adaptive_splice) = (true, true, true),
         2 => {
@@ -315,7 +320,8 @@ fn a_connection_moves_to_another_worker_with_its_counts() {
         })
         .collect();
     let held = |w: &Worker| w.cfg.clientip.as_ref().unwrap().table.as_ref().unwrap().held(clientip::key(IP.parse().unwrap()));
-    // both listeners share the port (SO_REUSEPORT): the client lands on one of them
+    // each worker binds 127.73.74.1:0 on its own (two ports): the client connects to worker 0's port; the loop below
+    // still finds the worker that took it
     let port = unsafe { <TcpListener as std::os::fd::FromRawFd>::from_raw_fd(libc::dup(ws[0].lfd)) }.local_addr().unwrap().port();
     let hello = [format!("PROXY TCP4 {IP} 192.0.2.1 1000 443\r\n").as_bytes(), &b"GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"[..]].concat();
     let mut c = TcpStream::connect(("127.73.74.1", port)).unwrap();

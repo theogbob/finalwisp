@@ -153,7 +153,9 @@ pub(super) fn client(w: &mut Worker, port: u16) -> (TcpStream, u32) {
 /// `client` with its own first bytes (a PROXY header before the request, a request with a forwarding header)
 pub(super) fn client_with(w: &mut Worker, port: u16, hello: &[u8]) -> (TcpStream, u32) {
     let before = w.stats.accepted.get();
-    let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    // the worker's listen address (127.0.0.1 in fd_cfg; a test may give its worker an address of its own in 127/8)
+    let ip = Some(w.cfg.addr.ip()).filter(|a| !a.is_unspecified()).unwrap_or(IpAddr::from([127, 0, 0, 1]));
+    let mut c = TcpStream::connect((ip, port)).unwrap();
     c.write_all(hello).unwrap();
     until(w, "client accepted", |w| w.stats.accepted.get() > before);
     let fd_of = |w: &Worker, ci: usize| w.clients.slots[ci].1.as_ref().filter(|c| !c.dead).map(|c| c.fd);

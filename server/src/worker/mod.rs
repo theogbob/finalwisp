@@ -524,6 +524,9 @@ pub struct Worker {
     mig: Option<Box<migrate::Mig>>,
     /// 20.34 the CLOSEs held until the client's PONG (worker/pinggate.rs)
     gate: pinggate::Gate,
+    /// 20.37 rule S: per target slot the L2 fence of a bulk stream waiting for other streams' lane frames (the generation's
+    /// 30 bits + 1, 0 = none; absolute lane position; target.rs splice_wait). Grown only there; empty until a first L2 wait
+    lane_fence: Vec<(u32, u64)>,
 }
 
 #[must_use]
@@ -676,6 +679,7 @@ impl Worker {
             bd: crate::bounds::global().map(bounds::Wb::new),
             mig: None,
             gate: pinggate::Gate::new(),
+            lane_fence: Vec::new(),
         })
     }
 
@@ -1094,7 +1098,10 @@ impl Worker {
                 self.release_parked(ci, false);
             }
             let c = self.clients.at(ci);
-            if !c.blocked_bulk.is_empty() && c.out_pending() < self.st.out_low_bulk {
+            // 20.37 S1: not while a payload is in the pipe (a released bulk stream could only park on it again or copy
+            // behind it): it went out partly, so the socket is full and its EPOLLOUT edge brings the next pass. In a
+            // kTLS starve episode as before (starve_check's slices need the release)
+            if !c.blocked_bulk.is_empty() && c.out_pending() < self.st.out_low_bulk && (c.splice_at == NO_MARK || c.starve > 0) {
                 self.release_parked(ci, true); // order: see read_target (round-robin)
                 self.clients.at(ci).bulk_waiting = 0;
             }

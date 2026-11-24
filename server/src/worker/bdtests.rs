@@ -874,6 +874,17 @@ fn port_share_tries_the_next_address() {
 
 /// A destination that does not answer: a listener whose accept queue is full drops every SYN (the kernel of the
 /// connecting socket sends it again after 1 s, 2 s, 3 s). `revive`: it answers from now on.
+///
+/// Its port stays reserved after the drop: a holder socket, bound to the same address and port and never listening,
+/// stays open until the process ends. A connect that still waits (a test's target, or one whose worker the test left
+/// with its fds open) then gets a reset at its next SYN, as the tests that drop a Dead expect. Without the holder the
+/// kernel could give the freed port to a listener of another test (bind to port 0), and that next SYN would connect
+/// there (dest_failfast_a_destination_that_refuses_is_no_suspect saw its connects not refused; a possible source of
+/// the stray that was a second client of moves_every_turn's worker in CI run 602). The two sockets share the port by
+/// SO_REUSEPORT. What the holder guarantees (current Linux; checked on 7.0): a TCP bind to port 0 does not take
+/// 127.0.0.1:port while a socket is bound there. It does not keep the port number on other addresses, and an explicit
+/// bind to 127.0.0.1:port with SO_REUSEPORT by this user would join the Dead's port (none does: the workers bind port
+/// 0). About 165 holders stay open per run of the test binary (the large E3 cases make 65 and 72 Deads).
 struct Dead {
     fd: RawFd,
     port: u16,
@@ -882,7 +893,18 @@ struct Dead {
 
 impl Dead {
     fn new() -> Dead {
-        let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM | libc::SOCK_CLOEXEC | libc::SOCK_NONBLOCK, 0) };
+        let socket = || {
+            let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM | libc::SOCK_CLOEXEC | libc::SOCK_NONBLOCK, 0) };
+            assert!(fd >= 0, "socket: {}", std::io::Error::last_os_error());
+            let one: libc::c_int = 1;
+            let size = std::mem::size_of_val(&one) as u32;
+            assert_eq!(
+                unsafe { libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_REUSEPORT, &one as *const _ as *const libc::c_void, size) },
+                0
+            );
+            fd
+        };
+        let fd = socket();
         let mut sa: libc::sockaddr_in = unsafe { std::mem::zeroed() };
         (sa.sin_family, sa.sin_addr.s_addr) = (libc::AF_INET as u16, u32::from_be_bytes([127, 0, 0, 1]).to_be());
         let mut len = std::mem::size_of_val(&sa) as u32;
@@ -891,6 +913,9 @@ impl Dead {
             assert_eq!(libc::listen(fd, 0), 0);
             assert_eq!(libc::getsockname(fd, &mut sa as *mut _ as *mut libc::sockaddr, &mut len), 0);
         }
+        // deliberate: the holder is never closed (one fd per Dead for the life of the test binary)
+        let hold = socket();
+        assert_eq!(unsafe { libc::bind(hold, &sa as *const _ as *const libc::sockaddr, len) }, 0, "the holder of the port");
         let port = u16::from_be(sa.sin_port);
         let fillers =
             (0..2).filter_map(|_| TcpStream::connect_timeout(&([127, 0, 0, 1], port).into(), Duration::from_millis(200)).ok()).collect();
@@ -920,7 +945,7 @@ impl Dead {
 
 impl Drop for Dead {
     fn drop(&mut self) {
-        unsafe { libc::close(self.fd) };
+        unsafe { libc::close(self.fd) }; // (the holder keeps the port: see Dead)
     }
 }
 

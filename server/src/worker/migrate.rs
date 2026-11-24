@@ -402,7 +402,8 @@ fn inventory(w: &Worker) {
         ready: _,
         ready_spare: _,
         tls_deadlines: _,
-        sdone: _, // (lines of streams already closed: written by the source)
+        sdone: _,      // (lines of streams already closed: written by the source)
+        lane_fence: _, // 20.37 by target slot, generation-checked, not moved: a moved stream's L2 fence is lost (order-safe)
         // ---- lists a moving connection must not be on (mig_quiet / client_rest / target_rest), or is taken off
         dead: _,
         connecting: _, // (taken off, listed again at the destination)

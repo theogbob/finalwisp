@@ -35,6 +35,7 @@ repository; the comments carry their reasoning inline. This index gives the topi
 | 20.33 | Upload batching across interleaved streams |
 | 20.34 | Ping gate: a destination-ended CLOSE waits for the client's PONG |
 | 20.35 | Only a release un-parks a download |
+| 20.37 | Rule S: a bulk download stream waits for the pipe or the lane instead of copying: ships in v1.6.0 |
 | 30.01 | wbench load generator |
 | 30.02 | bench/showdown.py |
 | 30.03 | bench/wispmark.py |

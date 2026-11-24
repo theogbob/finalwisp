@@ -208,6 +208,30 @@
    ],
    "note": "UNOFFICIAL: holyWisp (github.com/Fracital/holyWisp, C) upstream 179dbfd (2026-11-16), built with `make release` in ref/holywisp-179dbfd (a fresh git clone); its flood limits, per-IP connection rate and reputation are on by default and would throttle a loopback benchmark (all streams to one target from one IP), so they are off here, like the other servers' (they have none on)"
   },
+  "holywisp-5ca1aa4": {
+   "cmd": "{root}/ref/holywisp-5ca1aa4/build/release/holywisp --host 127.0.0.1 --port {port} --allow-loopback on --allow-private on --allow-direct-ip on --flood-protection off --connections-limit-per-ip 0 --connection-window-s 0 --reputation off --max-handshakes-per-ip 0 --max-pending-lookups-per-ip 0 --server-queue-max-per-ip 0 --log-level error",
+   "extra": [
+    "--stall-ping-ms",
+    "1"
+   ],
+   "note": "UNOFFICIAL: holyWisp upstream 5ca1aa4 (2026-11-20, 108 commits after 179dbfd), built with `make release` on Ubuntu 24.04 (glibc 2.39) in ref/holywisp-5ca1aa4 (a fresh git clone); the flags of 'holywisp' plus the three per-IP limits that are new since 179dbfd (max-handshakes-per-ip 128, max-pending-lookups-per-ip 128, server-queue-max-per-ip 1 GiB), set to 0 = off"
+  },
+  "holywisp-5ca1aa4-crb0": {
+   "cmd": "{root}/ref/holywisp-5ca1aa4/build/release/holywisp --host 127.0.0.1 --port {port} --allow-loopback on --allow-private on --allow-direct-ip on --flood-protection off --connections-limit-per-ip 0 --connection-window-s 0 --reputation off --max-handshakes-per-ip 0 --max-pending-lookups-per-ip 0 --server-queue-max-per-ip 0 --client-recv-buffer 0 --log-level error",
+   "extra": [
+    "--stall-ping-ms",
+    "1"
+   ],
+   "note": "UNOFFICIAL, echo diagnosis: holywisp-5ca1aa4 with --client-recv-buffer 0: no SO_RCVBUF on client sockets (kernel autotuning), instead of the 8 MiB default from fc9cd24"
+  },
+  "holywisp-5ca1aa4-br64": {
+   "cmd": "{root}/ref/holywisp-5ca1aa4/build/release/holywisp --host 127.0.0.1 --port {port} --allow-loopback on --allow-private on --allow-direct-ip on --flood-protection off --connections-limit-per-ip 0 --connection-window-s 0 --reputation off --max-handshakes-per-ip 0 --max-pending-lookups-per-ip 0 --server-queue-max-per-ip 0 --buffer-remaining 64 --log-level error",
+   "extra": [
+    "--stall-ping-ms",
+    "1"
+   ],
+   "note": "UNOFFICIAL, echo diagnosis: holywisp-5ca1aa4 with --buffer-remaining 64: its handshake CONTINUE and its refill window become 64 packets instead of 128. 64 packets is a size reference only (the size of finalwisp's credit-v2 1 MiB top-up target at wbench's 16 KiB packets), not finalwisp's value: finalwisp's handshake grant is 128 packets, like holyWisp's default"
+  },
   "holywisp-1758e6a": {
    "cmd": "{root}/ref/holywisp-1758e6a/build/release/holywisp --host 127.0.0.1 --port {port} --allow-loopback on --allow-private on --allow-direct-ip on --flood-protection off --connections-limit-per-ip 0 --connection-window-s 0 --reputation off --log-level error",
    "extra": [
@@ -215,6 +239,30 @@
     "1"
    ],
    "note": "UNOFFICIAL: the holyWisp build of 60.71 (1758e6a, ref/holywisp-1758e6a); same flags as 'holywisp'"
+  },
+  "holywisp-fc9cd24": {
+   "cmd": "{root}/ref/holywisp-fc9cd24/build/release/holywisp --host 127.0.0.1 --port {port} --allow-loopback on --allow-private on --allow-direct-ip on --flood-protection off --connections-limit-per-ip 0 --connection-window-s 0 --reputation off --log-level error",
+   "extra": [
+    "--stall-ping-ms",
+    "1"
+   ],
+   "note": "UNOFFICIAL, echo diagnosis ladder: holyWisp fc9cd24 (2026-11-09, per-stream relay pipes, park, upload batching, 128-packet window, 8 MiB client recv buffer), built with `make release` (Ubuntu 26.04, GCC 15.2.0; an ephemeral VM) in ref/holywisp-fc9cd24; same flags as 'holywisp-1758e6a'"
+  },
+  "holywisp-5d01e8f": {
+   "cmd": "{root}/ref/holywisp-5d01e8f/build/release/holywisp --host 127.0.0.1 --port {port} --allow-loopback on --allow-private on --allow-direct-ip on --flood-protection off --connections-limit-per-ip 0 --connection-window-s 0 --reputation off --log-level error",
+   "extra": [
+    "--stall-ping-ms",
+    "1"
+   ],
+   "note": "UNOFFICIAL, echo diagnosis ladder: holyWisp 5d01e8f (2026-11-10, version 0.5.3 = the commit before 6010eb3; includes fcbf0b6, batched small client frames), built with `make release` (Ubuntu 26.04, GCC 15.2.0; an ephemeral VM) in ref/holywisp-5d01e8f; same flags as 'holywisp-1758e6a'"
+  },
+  "holywisp-6010eb3": {
+   "cmd": "{root}/ref/holywisp-6010eb3/build/release/holywisp --host 127.0.0.1 --port {port} --allow-loopback on --allow-private on --allow-direct-ip on --flood-protection off --connections-limit-per-ip 0 --connection-window-s 0 --reputation off --log-level error",
+   "extra": [
+    "--stall-ping-ms",
+    "1"
+   ],
+   "note": "UNOFFICIAL, echo diagnosis ladder: holyWisp 6010eb3 (2026-11-11, audit fixes, even connection placement, DATA frames capped at 128 KiB, HW_HARDEN default), built with `make release` (Ubuntu 26.04, GCC 15.2.0; an ephemeral VM) in ref/holywisp-6010eb3; same flags as 'holywisp-1758e6a'"
   },
   "holywisp-cb2510a": {
    "cmd": "{root}/ref/holywisp/build/release/holywisp --host 127.0.0.1 --port {port} --allow-loopback on --allow-private on --allow-direct-ip on --flood-protection off --connections-limit-per-ip 0 --connection-window-s 0 --reputation off --log-level error",

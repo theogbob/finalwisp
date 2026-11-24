@@ -16,13 +16,13 @@ finalwisp          # after the install below: serves ws://127.0.0.1:6001/
 ## Install
 
 ```sh
-V=v1.5.0
+V=v1.6.0
 curl -LO https://github.com/theogbob/finalwisp/releases/download/$V/finalwisp-$V-x86_64-linux.tar.gz
 curl -LO https://github.com/theogbob/finalwisp/releases/download/$V/SHA256SUMS
 tar -xzf finalwisp-$V-x86_64-linux.tar.gz
 sha256sum -c SHA256SUMS      # must print OK twice: the download, and the binary inside it
 sudo install -m 0755 finalwisp-$V-x86_64-linux/finalwisp /usr/local/bin/finalwisp
-finalwisp --version          # finalwisp 1.5.0
+finalwisp --version          # finalwisp 1.6.0
 ```
 
 finalwisp is one static binary for Linux on x86_64. It has no runtime dependencies and no minimum glibc version.
@@ -43,10 +43,10 @@ The tarball also holds `BUILDINFO`: the commit, toolchain and checksum of the bu
 finalwisp
 ```
 
-<!-- sample: real output of finalwisp 1.5.0 (md5 d614f410) on a terminal (2026-11-21, a 15-thread machine); printed by bench/tools/startsample.py -->
+<!-- sample: real output of finalwisp 1.6.0 (md5 e2742abe) on a terminal (2026-11-24, a 15-thread machine); printed by bench/tools/startsample.py -->
 ```text
 finalwisp listening on ws://127.0.0.1:6001/
-  version     1.5.0
+  version     1.6.0
   threads     15
   memory      up to 31410 MiB (half of this machine's memory)
   open files  up to 524288

@@ -4912,6 +4912,10 @@ mod fd;
 #[path = "parktests.rs"]
 mod park;
 
+// 20.37 rule S: a bulk stream waits for the pipe or the lane instead of copying (its own file)
+#[path = "s37tests.rs"]
+mod s37;
+
 /// v1.3.1 K1: the first sweep that finds a TCP client idle gives it its own keepalive idle time (net::keep_idle of its
 /// slot), once per connection (a reused slot gets it again); a unix client and --no-keepalive are left alone
 #[test]

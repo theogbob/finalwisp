@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.6.0
+
+A minor release because the way download streams move data changed: with the priority lane (the default), a download
+stream can now wait for the splice pipe instead of copying its next bytes (below). This release adds no option.
+
+Changed:
+
+- **A download stream can wait for the splice pipe instead of copying.** With the priority lane (the default;
+  `--no-prio` turns it off), a bulk download stream whose next read cannot use `splice()` can now pause instead of
+  moving its next bytes at once with `read()` and `send()`: while the connection's pipe still holds data, while its own
+  frames are queued in the bulk lane, or until the other streams' bulk frames queued at that moment have gone out. That
+  last wait starts only when nothing waits in the priority queue and happens at most once between two reads (a
+  connection moved to another thread starts afresh); after it the stream reads as before (by `splice()` when it can,
+  else by copy). The new wait does not apply past the output caps, during a kTLS send-starvation episode, or without
+  splicing. The caps are unchanged, but a paused download stream, also one paused at a cap, now resumes only once the
+  pipe has drained, except during a kTLS send-starvation episode. On a 2-core VPS, a download test with 10 connections
+  of two streams each moved about 11 % of its bytes by copy before and 0.1 % now (two connections of two streams: 10 %
+  and 0.02 %). In VM page tests on a full 100 Mbit link, downloads gave up 1-2 % of their throughput to the page loads
+  in two of five setups, and two downloads on one connection shared the link more evenly; with real Wisp clients on a
+  similar link, no throughput loss was reproduced. No option.
+
 ## v1.5.0
 
 A minor release because a default changed for connections without an `Origin` header (browsers send one): when a
